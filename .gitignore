@@ -1,0 +1,234 @@
+# ============================================================================
+# ENVIRONMENT & SECRETS - NEVER COMMIT THESE!
+# ============================================================================
+.env                                    # Root .env file
+.env.local                              # Local development overrides
+.env.*.local                            # Environment-specific local overrides
+.env.development
+.env.production
+.env.staging
+.env.test
+.env.example.local                      # Local-only examples (use .env.example instead)
+*.key
+*.pem
+secrets/
+credentials/
+
+# ============================================================================
+# PYTHON BACKEND (Django/FastAPI)
+# ============================================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+env.bak/
+venv.bak/
+.python-version
+poetry.lock
+
+# Django specific
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media/*
+!/media/.gitkeep
+/staticfiles
+/static/*
+!/static/.gitkeep
+/uploads/*
+!/uploads/.gitkeep
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+
+# ============================================================================
+# NODE.JS & FRONTEND (Next.js)
+# ============================================================================
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# Development
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vercel
+.eslintcache
+*.tsbuildinfo
+
+# ============================================================================
+# IDE & EDITOR
+# ============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.vim/
+.emacs*
+tags
+cscope.out
+
+# ============================================================================
+# OS-SPECIFIC
+# ============================================================================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ============================================================================
+# DATABASE & DATA
+# ============================================================================
+*.db
+*.sqlite
+*.sqlite3
+qdrant_data/
+postgres_data/
+redis_data/
+*.bson
+
+# ============================================================================
+# DOCKER & VIRTUALIZATION
+# ============================================================================
+docker-compose.local.yml
+.env.docker
+docker_volumes/
+
+# ============================================================================
+# CACHE & TEMPORARY
+# ============================================================================
+.cache/
+.mypy_cache/
+.ruff_cache/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*~
+
+# ============================================================================
+# MEDIA & UPLOADS (except examples)
+# ============================================================================
+/media/*
+!/media/.gitkeep
+/uploads/*
+!/uploads/.gitkeep
+/files/*
+!/files/.gitkeep
+/downloads/*
+!/downloads/.gitkeep
+
+# ============================================================================
+# GENERATED FILES (usually auto-generated, not version controlled)
+# ============================================================================
+# Keep these if they're part of source, comment out if not needed
+# dist/
+# build/
+# *.generated.*
+
+# ============================================================================
+# MONITORING & LOGS
+# ============================================================================
+logs/
+*.log
+*.log.*
+var/log/
+sentry.log
+
+# ============================================================================
+# TESTING & COVERAGE
+# ============================================================================
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# ============================================================================
+# DEVELOPMENT TOOLS
+# ============================================================================
+.pre-commit-config.yaml.bak
+.ruff_cache/
+.mypy_cache/
+.pylint.d/
+
+# ============================================================================
+# PROJECT-SPECIFIC
+# ============================================================================
+# Local development overrides
+local_settings/
+dev_settings/
+.local/
+.secrets/
+
+# Auto-generated schemas (if applicable)
+# schema.graphql
+# schema.json
+
+# Binary files (screenshots, generated images)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.ico
+
+# ============================================================================
+# CI/CD (Keep workflow files but ignore logs)
+# ============================================================================
+# .github/ is tracked for CI/CD workflows
+# But ignore any generated files inside
+.github/**/*.log
+.github/**/*.tmp
