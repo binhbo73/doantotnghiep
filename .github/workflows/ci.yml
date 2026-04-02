@@ -1,0 +1,78 @@
+name: CI/CD - RAG Graduation Project
+
+# Trigger CI on push to main or pull requests
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # 1. Backend Testing Job
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest pytest-asyncio
+
+      - name: Run Backend Tests
+        working-directory: ./backend
+        env:
+          # Use dummy env vars for CI tests
+          MONGODB_URI: "mongodb://localhost:27018"
+          DATABASE_NAME: "test_db"
+          CHROMA_HOST: "localhost"
+          CHROMA_PORT: "8000"
+          SECRET_KEY: "test_secret_key"
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          pytest test/test_basic.py
+
+  # 2. Frontend Check Job (Next.js Build Check)
+  frontend-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: './frontend/pnpm-lock.yaml'
+
+      - name: Install Dependencies
+        working-directory: ./frontend
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Next.js Build (Check for errors)
+        working-directory: ./frontend
+        run: pnpm run build
+        env:
+          NEXT_PUBLIC_API_URL: "http://localhost:8000"
+
+  # 3. Docker-Compose Validation
+  docker-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Docker Compose
+        run: docker compose config -q

@@ -1,0 +1,50 @@
+# ============================================================
+# DJANGO & REST FRAMEWORK
+# ============================================================
+Django>=5.2.0
+djangorestframework>=3.14.0          # DRF - viết API nhanh
+djangorestframework-simplejwt>=5.3.0 # JWT Authentication (access + refresh token)
+django-cors-headers>=4.3.0           # CORS cho Frontend
+django-extensions>=3.2.0             # TimeStampedModel + custom management commands
+django-filter>=23.0                  # Filter nâng cao cho DRF ListView
+django-redis>=5.4.0                  # Kết nối Redis
+redis>=5.0.1                         # Redis client
+drf-spectacular>=0.27.0              # Swagger UI tự động từ ViewSet
+
+# ============================================================
+# DATABASE
+# ============================================================
+psycopg2-binary>=2.9.9               # Kết nối PostgreSQL
+
+# ============================================================
+# SERVER
+# ============================================================
+gunicorn>=21.2.0                     # Production server (WSGI)
+python-dotenv>=1.0.0                 # Load biến môi trường từ .env
+
+# ============================================================
+# VECTOR DATABASE & AI
+# ============================================================
+qdrant-client==1.17.1                # Kết nối Qdrant Vector DB
+ollama>=0.1.0                        # Gọi Ollama LLM (Embedding + Chat)
+openai>=1.0.0                        # Gọi llama.cpp qua API chuẩn OpenAI
+
+# ============================================================
+# DOCUMENT PROCESSING (RAG Pipeline)
+# ============================================================
+docling>=1.0.0                       # Trích xuất text từ PDF/DOCX
+flashrank>=0.2.0                     # Re-ranking kết quả RAG
+langgraph>=0.0.10                    # Workflow AI (RAG orchestration)
+
+# ============================================================
+# UTILITIES
+# ============================================================
+email-validator>=2.0.0               # Validate email
+python-multipart>=0.0.6              # Xử lý file upload (multipart/form-data)
+
+# ============================================================
+# TESTING
+# ============================================================
+pytest>=8.2.0                        # Test runner
+pytest-django>=4.7.0                 # Plugin pytest cho Django
+httpx>=0.25.0                        # HTTP client để test API

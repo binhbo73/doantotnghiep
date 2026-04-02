@@ -1,0 +1,177 @@
+services:
+  # 1. PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: rag_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag_system}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_network
+
+  # 2. Qdrant - Vector Database (Embeddings & Search) - Production-ready alternative to ChromaDB
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag_qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    environment:
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    networks:
+      - rag_network
+
+  # 3. Django Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # PostgreSQL Database
+      POSTGRES_DB: ${POSTGRES_DB:-rag_system}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+
+      # Redis Cache
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Django Settings
+      SECRET_KEY: ${SECRET_KEY:-django-insecure-change-me-in-production}
+      DEBUG: ${DEBUG:-false}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-["localhost","127.0.0.1","backend"]}
+      
+      # App Config
+      APP_NAME: RAG System API
+      APP_VERSION: 1.0.0
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      
+      # CORS
+      CORS_ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000","http://localhost:8000"]}
+      
+      # File Upload
+      MAX_FILE_SIZE: 52428800
+      UPLOAD_DIR: /app/uploads
+      
+      # Qdrant (Vector Database)
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+      QDRANT_PERSIST_DIRECTORY: /app/qdrant_data
+      
+      # LLM Configuration (Switching from Ollama to llama.cpp server)
+      # llama-server sử dụng URL chuẩn OpenAI /v1
+      LLM_BASE_URL: http://llama-server:8080/v1
+      LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+      EMBEDDING_BASE_URL: http://llama-server:8080/v1
+      EMBEDDING_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf # llama.cpp server có thể dùng chung 1 model cho cả chat và embed
+      
+    volumes:
+      - ./backend:/app
+      - backend_logs:/app/logs
+      - backend_uploads:/app/uploads
+      - backend_qdrant:/app/qdrant_data
+      - backend_static:/app/staticfiles
+      - backend_media:/app/media
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      llama-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag_network
+
+  # 4. Redis - Caching & Task Queue Broker
+  redis:
+    image: redis:7-alpine
+    container_name: rag_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - rag_network
+
+  # 5. Llama.cpp Server - Specialized GGUF Runner
+  llama-server:
+    image: ghcr.io/ggml-org/llama.cpp:full-cuda
+    container_name: rag_llama_server
+    restart: unless-stopped
+    ports:
+      - "11435:8080"
+    volumes:
+      - ./models:/models
+    environment:
+      LLAMA_ARG_MODEL: /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: 8080
+      LLAMA_ARG_CTX_SIZE: 8192
+      LLAMA_ARG_N_GPU_LAYERS: 35
+      LLAMA_ARG_EMBEDDING: "true"
+    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 2048 --embedding
+    networks:
+      - rag_network
+
+# Networks
+networks:
+  rag_network:
+    driver: bridge
+
+# Volumes
+volumes:
+  postgres_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  qdrant_snapshots:
+    driver: local
+  redis_data:
+    driver: local
+  backend_logs:
+    driver: local
+  backend_uploads:
+    driver: local
+  backend_qdrant:
+    driver: local
+  backend_static:
+    driver: local
+  backend_media:
+    driver: local

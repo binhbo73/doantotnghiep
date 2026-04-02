@@ -1,8 +1,8 @@
 # ============================================================================
 # ENVIRONMENT & SECRETS - NEVER COMMIT THESE!
 # ============================================================================
-.env                                    # Root .env file
-.env.local                              # Local development overrides
+.env
+.env.local
 .env.*.local                            # Environment-specific local overrides
 .env.development
 .env.production
@@ -76,12 +76,13 @@ coverage.xml
 # NODE.JS & FRONTEND (Next.js)
 # ============================================================================
 # Dependencies
+# Dependencies
 node_modules/
 /.pnp
 .pnp.js
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
+# package-lock.json   # Nên commit để đảm bảo tính nhất quán của môi trường
+# pnpm-lock.yaml      # Nên commit
+# yarn.lock           # Nên commit
 
 # Build outputs
 .next/
@@ -135,7 +136,11 @@ Desktop.ini
 qdrant_data/
 postgres_data/
 redis_data/
+chroma_data/
+milvus_data/
 *.bson
+*.jsonl
+*.parquet
 
 # ============================================================================
 # DOCKER & VIRTUALIZATION
@@ -150,12 +155,25 @@ docker_volumes/
 .cache/
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
+.ipynb_checkpoints/
 tmp/
 temp/
 *.tmp
 *.temp
 *.bak
+*.swp
 *~
+
+# Archives & Backups
+*.zip
+*.tar.gz
+*.tar
+*.7z
+*.rar
+*.iso
+*.old
+*.bak
 
 # ============================================================================
 # MEDIA & UPLOADS (except examples)
@@ -218,12 +236,14 @@ dev_settings/
 # schema.json
 
 # Binary files (screenshots, generated images)
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.bmp
-*.ico
+# Binary files (screenshots, generated images)
+# Nếu bạn muốn commit ảnh cho README, hãy comment các dòng này hoặc để chúng vào thư mục docs/assets/
+# *.png
+# *.jpg
+# *.jpeg
+# *.gif
+# *.bmp
+# *.ico
 
 # ============================================================================
 # CI/CD (Keep workflow files but ignore logs)
@@ -232,3 +252,15 @@ dev_settings/
 # But ignore any generated files inside
 .github/**/*.log
 .github/**/*.tmp
+
+# ============================================================================
+# AI MODELS & LARGE BINARIES
+# ============================================================================
+models/
+*.gguf
+*.bin
+*.onnx
+*.weights
+*.h5
+*.pth
+*.pkl

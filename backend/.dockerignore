@@ -1,0 +1,66 @@
+# Version control
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.env
+.env.local
+venv
+env
+.venv
+*.egg
+
+# Virtual environments
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+postgres_data/
+mongodb_data/
+chroma_data/
+
+# Frontend build
+dist/
+build/
+.next/
+out/
+
+# Uploads
+uploads/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Documentation
+*.md
+!README.md
+src_fastapi_backup/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
