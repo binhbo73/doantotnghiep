@@ -142,17 +142,24 @@ class AuditLoggingMiddleware(MiddlewareMixin):
         
         # Create AuditLog entry
         try:
+            # Validate resource_id is UUID format (AuditLog.resource_id is UUIDField)
+            # If it's not, set to None to avoid validation errors
+            import re
+            import uuid
+            final_resource_id = None
+            if resource_id:
+                uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                if re.match(uuid_pattern, str(resource_id).lower()):
+                    final_resource_id = resource_id
+                # If not UUID format, just skip it (set to None)
+            
             audit_log = AuditLog(
                 account=request.user,
                 action=action or 'MUTATION',
-                resource_type=resource_type or 'Unknown',
-                resource_id=resource_id,
+                resource_id=final_resource_id,  # Only UUIDs or None
                 query_text=query_text,
-                request_id=request_id,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                request_data=getattr(request, '_body_data', {}),
-                response_status=response.status_code,
             )
             audit_log.save()
             

@@ -12,13 +12,18 @@ APP_ENVIRONMENT = "development"  # development | staging | production
 
 
 # ============================================================
-# ROLE DEFINITIONS (Fixed IDs for Database)
+# ROLE DEFINITIONS (Changed from integer IDs to UUID)
 # ============================================================
+import uuid
+
+# UUID mappings for roles (MUST MATCH database actual role IDs)
+# These are populated from actual database roles
+# Run: python manage.py shell with: Role.objects.filter(is_deleted=False).values_list('code', 'id')
 class RoleIds:
-    """Role IDs - KHÔNG ĐƯỢC THAY ĐỔI sau khi deploy"""
-    ADMIN = 1
-    MANAGER = 2
-    USER = 3
+    """Role UUIDs - MUST match actual database role IDs"""
+    ADMIN = uuid.UUID('c7a5723e-c7e4-485a-bae7-d68d1455954e')
+    MANAGER = uuid.UUID('243d9952-4c18-45cc-bc33-9d5efe312ff7')
+    USER = uuid.UUID('a2584097-84ec-441b-9c24-2efc52c7d445')
 
 class RoleNames:
     """Role names"""
@@ -27,15 +32,15 @@ class RoleNames:
     USER = "user"
 
 ROLES = {
-    RoleIds.ADMIN: {
+    str(RoleIds.ADMIN): {
         "name": RoleNames.ADMIN,
         "description": "Administrator - Full access to system"
     },
-    RoleIds.MANAGER: {
+    str(RoleIds.MANAGER): {
         "name": RoleNames.MANAGER,
         "description": "Department Manager - Manage department resources"
     },
-    RoleIds.USER: {
+    str(RoleIds.USER): {
         "name": RoleNames.USER,
         "description": "Regular User - Basic access"
     },
@@ -156,6 +161,24 @@ ACCESS_SCOPES = [
     (AccessScope.PERSONAL, "Personal - Only Owner"),
     (AccessScope.DEPARTMENT, "Department - Department Members"),
     (AccessScope.COMPANY, "Company - All Employees"),
+]
+
+
+# ============================================================
+# DOCUMENT STATUS
+# ============================================================
+class DocumentStatus:
+    """Document processing status"""
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+DOCUMENT_STATUSES = [
+    (DocumentStatus.PENDING, "Pending"),
+    (DocumentStatus.PROCESSING, "Processing"),
+    (DocumentStatus.COMPLETED, "Completed"),
+    (DocumentStatus.FAILED, "Failed"),
 ]
 
 

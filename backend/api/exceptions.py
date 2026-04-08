@@ -57,102 +57,67 @@ class GlobalExceptionHandler:
                 'detail': data
             }
         )
-        return Response(response_data, status=exc.status_code)
+        return response_data
     
     @staticmethod
-    def handle_drf_validation_error(exc: DRFValidationError, request):
+    def handle_drf_validation_error(exc, request):
         """Handle DRF ValidationError"""
-        # Convert error format
         if isinstance(exc.detail, dict):
             data = exc.detail
         elif isinstance(exc.detail, list):
             data = {"detail": exc.detail}
         else:
             data = {"detail": [str(exc.detail)]}
-        
-        response_data = ResponseBuilder.error(
+        return ResponseBuilder.error(
             message="Validation error",
             status_code=status.HTTP_400_BAD_REQUEST,
             data=data,
             request_id=getattr(request, '_request_id', None)
         )
-        logger.warning(
-            f"Validation error",
-            extra={
-                'request_id': getattr(request, '_request_id', None),
-                'user': getattr(request, 'user', None),
-                'errors': data
-            }
-        )
-        return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
     
     @staticmethod
-    def handle_drf_not_found(exc: NotFound, request):
+    def handle_drf_not_found(exc, request):
         """Handle DRF NotFound"""
-        response_data = ResponseBuilder.error(
+        return ResponseBuilder.error(
             message="Resource not found",
             status_code=status.HTTP_404_NOT_FOUND,
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        logger.info(
-            f"Resource not found: {request.path}",
-            extra={'request_id': getattr(request, '_request_id', None)}
-        )
-        return Response(response_data, status=status.HTTP_404_NOT_FOUND)
     
     @staticmethod
-    def handle_drf_permission_denied(exc: PermissionDenied, request):
+    def handle_drf_permission_denied(exc, request):
         """Handle DRF PermissionDenied"""
-        response_data = ResponseBuilder.error(
+        return ResponseBuilder.error(
             message=str(exc.detail) if exc.detail else "Permission denied",
             status_code=status.HTTP_403_FORBIDDEN,
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        logger.warning(
-            f"Permission denied",
-            extra={
-                'request_id': getattr(request, '_request_id', None),
-                'user': getattr(request, 'user', None),
-                'path': request.path
-            }
-        )
-        return Response(response_data, status=status.HTTP_403_FORBIDDEN)
     
     @staticmethod
-    def handle_drf_authentication_failed(exc: AuthenticationFailed, request):
+    def handle_drf_authentication_failed(exc, request):
         """Handle DRF AuthenticationFailed"""
-        response_data = ResponseBuilder.error(
+        return ResponseBuilder.error(
             message=str(exc.detail) if exc.detail else "Authentication failed",
             status_code=status.HTTP_401_UNAUTHORIZED,
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        logger.warning(
-            f"Authentication failed",
-            extra={'request_id': getattr(request, '_request_id', None)}
-        )
-        return Response(response_data, status=status.HTTP_401_UNAUTHORIZED)
     
     @staticmethod
-    def handle_drf_throttled(exc: Throttled, request):
+    def handle_drf_throttled(exc, request):
         """Handle DRF Throttled (rate limit)"""
         retry_after = exc.wait() if hasattr(exc, 'wait') else 60
-        response_data = ResponseBuilder.error(
+        return ResponseBuilder.error(
             message=f"Rate limit exceeded. Retry after {int(retry_after)} seconds",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        return Response(
-            response_data,
-            status=status.HTTP_429_TOO_MANY_REQUESTS,
-            headers={'Retry-After': str(int(retry_after))}
-        )
     
     @staticmethod
-    def handle_django_validation_error(exc: DjangoValidationError, request):
+    def handle_django_validation_error(exc, request):
         """Handle Django ValidationError"""
         if hasattr(exc, 'message_dict'):
             data = exc.message_dict
@@ -160,54 +125,37 @@ class GlobalExceptionHandler:
             data = {"detail": exc.messages}
         else:
             data = {"detail": [str(exc)]}
-        
-        response_data = ResponseBuilder.error(
+        return ResponseBuilder.error(
             message="Validation error",
             status_code=status.HTTP_400_BAD_REQUEST,
             data=data,
             request_id=getattr(request, '_request_id', None)
         )
-        return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
     
     @staticmethod
-    def handle_integrity_error(exc: DjangoIntegrityError, request):
-        """Handle Django IntegrityError (duplicate key, FK violation...)"""
-        response_data = ResponseBuilder.error(
+    def handle_integrity_error(exc, request):
+        """Handle Django IntegrityError"""
+        logger.error(f"Database integrity error", exc_info=True, extra={'request_id': getattr(request, '_request_id', None)})
+        return ResponseBuilder.error(
             message="Data conflict or constraint violation",
             status_code=status.HTTP_409_CONFLICT,
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        logger.error(
-            f"Database integrity error",
-            exc_info=True,
-            extra={'request_id': getattr(request, '_request_id', None)}
-        )
-        return Response(response_data, status=status.HTTP_409_CONFLICT)
     
     @staticmethod
-    def handle_generic_exception(exc: Exception, request):
+    def handle_generic_exception(exc, request):
         """Handle generic/unexpected exceptions"""
-        response_data = ResponseBuilder.error(
+        logger.error(f"Unhandled exception: {str(exc)}", exc_info=True, extra={'request_id': getattr(request, '_request_id', None)})
+        return ResponseBuilder.error(
             message="Internal server error",
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        logger.error(
-            f"Unhandled exception: {str(exc)}",
-            exc_info=True,
-            extra={
-                'request_id': getattr(request, '_request_id', None),
-                'user': getattr(request, 'user', None),
-                'path': request.path,
-                'method': request.method,
-            }
-        )
-        return Response(response_data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def global_exception_handler(exc, context) -> Tuple[Response, int]:
+def global_exception_handler(exc, context) -> Response:
     """
     Entry point cho DRF exception handler.
     Gọi từ settings: REST_FRAMEWORK['EXCEPTION_HANDLER']
@@ -217,7 +165,7 @@ def global_exception_handler(exc, context) -> Tuple[Response, int]:
         context: Dict with request, view, etc.
     
     Returns:
-        (Response, status_code)
+        Response object with appropriate status code
     """
     request = context.get('request')
     
@@ -227,23 +175,23 @@ def global_exception_handler(exc, context) -> Tuple[Response, int]:
     
     # Handle AppException (Custom)
     if isinstance(exc, AppException):
-        return GlobalExceptionHandler.handle_app_exception(exc, request), exc.status_code
+        return Response(GlobalExceptionHandler.handle_app_exception(exc, request), status=exc.status_code)
     
     # Handle DRF Built-in Exceptions
     if isinstance(exc, DRFValidationError):
-        return GlobalExceptionHandler.handle_drf_validation_error(exc, request), status.HTTP_400_BAD_REQUEST
+        return Response(GlobalExceptionHandler.handle_drf_validation_error(exc, request), status=status.HTTP_400_BAD_REQUEST)
     
     if isinstance(exc, NotFound):
-        return GlobalExceptionHandler.handle_drf_not_found(exc, request), status.HTTP_404_NOT_FOUND
+        return Response(GlobalExceptionHandler.handle_drf_not_found(exc, request), status=status.HTTP_404_NOT_FOUND)
     
     if isinstance(exc, PermissionDenied):
-        return GlobalExceptionHandler.handle_drf_permission_denied(exc, request), status.HTTP_403_FORBIDDEN
+        return Response(GlobalExceptionHandler.handle_drf_permission_denied(exc, request), status=status.HTTP_403_FORBIDDEN)
     
     if isinstance(exc, AuthenticationFailed):
-        return GlobalExceptionHandler.handle_drf_authentication_failed(exc, request), status.HTTP_401_UNAUTHORIZED
+        return Response(GlobalExceptionHandler.handle_drf_authentication_failed(exc, request), status=status.HTTP_401_UNAUTHORIZED)
     
     if isinstance(exc, Throttled):
-        return GlobalExceptionHandler.handle_drf_throttled(exc, request), status.HTTP_429_TOO_MANY_REQUESTS
+        return Response(GlobalExceptionHandler.handle_drf_throttled(exc, request), status=status.HTTP_429_TOO_MANY_REQUESTS)
     
     if isinstance(exc, (MethodNotAllowed, NotAcceptable, ParseError)):
         response_data = ResponseBuilder.error(
@@ -252,17 +200,17 @@ def global_exception_handler(exc, context) -> Tuple[Response, int]:
             data={},
             request_id=getattr(request, '_request_id', None)
         )
-        return Response(response_data, status=exc.status_code), exc.status_code
+        return Response(response_data, status=exc.status_code)
     
     # Handle Django Exceptions
     if isinstance(exc, ObjectDoesNotExist):
-        return GlobalExceptionHandler.handle_drf_not_found(exc, request), status.HTTP_404_NOT_FOUND
+        return Response(GlobalExceptionHandler.handle_drf_not_found(exc, request), status=status.HTTP_404_NOT_FOUND)
 
     if isinstance(exc, DjangoValidationError):
-        return GlobalExceptionHandler.handle_django_validation_error(exc, request), status.HTTP_400_BAD_REQUEST
+        return Response(GlobalExceptionHandler.handle_django_validation_error(exc, request), status=status.HTTP_400_BAD_REQUEST)
     
     if isinstance(exc, DjangoIntegrityError):
-        return GlobalExceptionHandler.handle_integrity_error(exc, request), status.HTTP_409_CONFLICT
+        return Response(GlobalExceptionHandler.handle_integrity_error(exc, request), status=status.HTTP_409_CONFLICT)
     
     # Handle unexpected exceptions
-    return GlobalExceptionHandler.handle_generic_exception(exc, request), status.HTTP_500_INTERNAL_SERVER_ERROR
+    return Response(GlobalExceptionHandler.handle_generic_exception(exc, request), status=status.HTTP_500_INTERNAL_SERVER_ERROR)

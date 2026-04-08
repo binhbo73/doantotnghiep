@@ -58,12 +58,12 @@ class PermissionRepository(BaseRepository):
     # ROLE QUERIES
     # ============================================================
     
-    def get_role_by_id(self, role_id: int) -> Optional[Role]:
+    def get_role_by_id(self, role_id) -> Optional[Role]:
         """
-        Get role by ID.
+        Get role by ID (role_id is now UUID).
         
         Example:
-            role = repo.get_role_by_id(1)  # Admin role
+            role = repo.get_role_by_id(RoleIds.ADMIN)
         """
         try:
             queryset = Role.objects.filter(is_deleted=False)
@@ -71,12 +71,12 @@ class PermissionRepository(BaseRepository):
         except Role.DoesNotExist:
             return None
     
-    def get_role_with_permissions(self, role_id: int) -> Optional[Role]:
+    def get_role_with_permissions(self, role_id) -> Optional[Role]:
         """
-        Get role with all permissions loaded.
+        Get role with all permissions loaded (role_id is now UUID).
         
         Example:
-            role = repo.get_role_with_permissions(1)
+            role = repo.get_role_with_permissions(RoleIds.ADMIN)
             # role.get_permissions() will be fast
         """
         try:
@@ -106,12 +106,12 @@ class PermissionRepository(BaseRepository):
     # ROLE-PERMISSION ASSIGNMENT QUERIES
     # ============================================================
     
-    def get_role_permissions(self, role_id: int) -> List[Permission]:
+    def get_role_permissions(self, role_id) -> List[Permission]:
         """
-        Get all permissions assigned to a role.
+        Get all permissions assigned to a role (role_id is now UUID).
         
         Example:
-            perms = repo.get_role_permissions(1)  # Get admin role permissions
+            perms = repo.get_role_permissions(RoleIds.ADMIN)
         """
         try:
             permissions = Permission.objects.filter(
@@ -124,13 +124,13 @@ class PermissionRepository(BaseRepository):
             logger.error(f"Error getting role permissions: {e}", exc_info=True)
             return []
     
-    def get_role_permission_codes(self, role_id: int) -> Set[str]:
+    def get_role_permission_codes(self, role_id) -> Set[str]:
         """
-        Get all permission codes for a role (optimized).
+        Get all permission codes for a role (role_id is now UUID, optimized).
         Returns set of codes for O(1) lookup.
         
         Example:
-            codes = repo.get_role_permission_codes(1)
+            codes = repo.get_role_permission_codes(RoleIds.ADMIN)
             # {'document_read', 'document_create', 'user_read', ...}
         """
         try:
@@ -283,13 +283,13 @@ class PermissionRepository(BaseRepository):
             logger.error(f"Error getting user roles: {e}", exc_info=True)
             return []
     
-    def get_user_role_ids(self, user_id) -> Set[int]:
+    def get_user_role_ids(self, user_id) -> Set:
         """
-        Get all role IDs for a user (optimized set return).
+        Get all role IDs for a user (role IDs are now UUIDs, optimized set return).
         
         Example:
             role_ids = repo.get_user_role_ids(123)
-            # {1, 2}  # Admin + Manager
+            # {UUID(...), UUID(...)}  # Admin + Manager UUIDs
         """
         try:
             role_ids = AccountRole.objects.filter(
@@ -301,12 +301,12 @@ class PermissionRepository(BaseRepository):
             logger.error(f"Error getting user role IDs: {e}", exc_info=True)
             return set()
     
-    def grant_role_to_user(self, user_id, role_id: int, granted_by_user_id=None) -> bool:
+    def grant_role_to_user(self, user_id, role_id, granted_by_user_id=None) -> bool:
         """
-        Assign a role to user.
+        Assign a role to user (role_id is now UUID).
         
         Example:
-            repo.grant_role_to_user(123, 1, granted_by=admin_user_id)  # Grant Admin to User 123
+            repo.grant_role_to_user(123, RoleIds.ADMIN, granted_by=admin_user_id)
         """
         try:
             granted_by = None
@@ -325,12 +325,12 @@ class PermissionRepository(BaseRepository):
             logger.error(f"Error granting role: {e}", exc_info=True)
             return False
     
-    def revoke_role_from_user(self, user_id, role_id: int) -> bool:
+    def revoke_role_from_user(self, user_id, role_id) -> bool:
         """
-        Remove a role from user (soft delete).
+        Remove a role from user (role_id is now UUID, soft delete).
         
         Example:
-            repo.revoke_role_from_user(123, 1)  # Remove Admin role from User 123
+            repo.revoke_role_from_user(123, RoleIds.ADMIN)
         """
         try:
             account_role = AccountRole.objects.get(
@@ -353,12 +353,12 @@ class PermissionRepository(BaseRepository):
     # PERMISSION ASSIGNMENT TO ROLE
     # ============================================================
     
-    def grant_permission_to_role(self, role_id: int, permission_code: str, granted_by_user_id=None) -> bool:
+    def grant_permission_to_role(self, role_id, permission_code: str, granted_by_user_id=None) -> bool:
         """
-        Assign a permission to a role.
+        Assign a permission to a role (role_id is now UUID).
         
         Example:
-            repo.grant_permission_to_role(1, 'document_read', granted_by=admin_user_id)
+            repo.grant_permission_to_role(RoleIds.ADMIN, 'document_read', granted_by=admin_user_id)
         """
         try:
             permission = Permission.objects.get(code=permission_code, is_deleted=False)
@@ -378,12 +378,12 @@ class PermissionRepository(BaseRepository):
             logger.error(f"Error granting permission: {e}", exc_info=True)
             return False
     
-    def revoke_permission_from_role(self, role_id: int, permission_code: str) -> bool:
+    def revoke_permission_from_role(self, role_id, permission_code: str) -> bool:
         """
-        Remove a permission from a role (soft delete).
+        Remove a permission from a role (role_id is now UUID, soft delete).
         
         Example:
-            repo.revoke_permission_from_role(1, 'document_write')
+            repo.revoke_permission_from_role(RoleIds.ADMIN, 'document_write')
         """
         try:
             permission = Permission.objects.get(code=permission_code, is_deleted=False)

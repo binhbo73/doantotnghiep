@@ -10,6 +10,7 @@ from core.exceptions import BusinessLogicError, ValidationError, InvalidCredenti
 from services.base_service import BaseService
 from repositories.user_repository import UserRepository
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import get_user_model
 
 logger = logging.getLogger(__name__)
 
@@ -24,16 +25,35 @@ class UserService(BaseService):
     def __init__(self):
         super().__init__()  # BaseService will initialize repository from repository_class
         self.Account = apps.get_model('users', 'Account')
+        self.UserProfile = apps.get_model('users', 'UserProfile')
 
     @transaction.atomic
     def register_account(self, account_data: Dict) -> Any:
         """Đăng ký tài khoản mới"""
         try:
-            # Hash mật khẩu tự động qua model (nếu dùng set_password)
+            # Extract department before creating account (department is not on Account anymore)
+            department = account_data.pop('department', None)
             password = account_data.pop('password')
+            
+            # Create account WITHOUT department (it's now on UserProfile)
             account = self.Account(**account_data)
             account.set_password(password)
             account.save()
+            
+            # Create UserProfile (1-1 relationship) with department
+            try:
+                profile_data = {
+                    'account': account,
+                    'full_name': account.get_full_name() or account.username,
+                }
+                if department:
+                    profile_data['department'] = department
+                
+                self.UserProfile.objects.create(**profile_data)
+                logger.info(f"UserProfile created for: {account.username}")
+            except Exception as e:
+                logger.error(f"Error creating UserProfile: {str(e)}")
+                raise BusinessLogicError(f"Không thể tạo Profile: {str(e)}")
             
             logger.info(f"User registered: {account.username}")
             return account
@@ -43,17 +63,23 @@ class UserService(BaseService):
 
     def change_password(self, user_id: int, old_password: str, new_password: str):
         """Đổi mật khẩu bảo mật (kiểm tra mật khẩu cũ)"""
-        user = self.get_by_id(user_id)
+        try:
+            user = self.get_by_id(user_id)
+        except Exception as e:
+            logger.error(f"Failed to fetch user {user_id}: {str(e)}")
+            raise ValidationError(f"Không thể lấy thông tin tài khoản: {str(e)}")
+        
         if not user.check_password(old_password):
             raise ValidationError("Mật khẩu hiện tại không chính xác.")
         
         user.set_password(new_password)
-        user.save()
+        user.save(update_fields=['password', 'updated_at'])
         logger.info(f"User {user_id} changed password successfully")
 
-    def update_profile(self, user_id: int, profile_data: Dict) -> Any:
-        """Cập nhật thông tin profile của user"""
-        return self.update(user_id, profile_data)
+    def update_account(self, user_id: int, account_data: Dict) -> Any:
+        """Cập nhật thông tin account của user"""
+        # ⚠️ Unpack dict to kwargs vì BaseService.update(pk, **data)
+        return self.update(user_id, **account_data)
 
     def deactivate_account(self, user_id: int):
         """Khóa tài khoản người dùng"""

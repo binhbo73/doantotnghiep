@@ -16,10 +16,11 @@ class UserRepository(BaseRepository):
     """
     Repository cho Account model.
     Optimize queries: select_related roles + permissions
+    Note: department is on UserProfile, not Account anymore
     """
     
     model_class = Account
-    default_select_related = ['department']  # FK
+    default_select_related = []  # No FKs on Account anymore (department moved to UserProfile)
     default_prefetch_related = ['account_roles__role']  # M2M
     
     # ============================================================
@@ -65,6 +66,15 @@ class UserRepository(BaseRepository):
             )
         except Account.DoesNotExist:
             return None
+        except Account.MultipleObjectsReturned:
+            # Data integrity issue: multiple accounts with same email/username
+            logger.error(f"CRITICAL: Multiple accounts found for {email_or_username}")
+            # Try to get by username first (more specific)
+            try:
+                return self.get_base_queryset().filter(username=email_or_username).first()
+            except Exception as e:
+                logger.error(f"Failed to recover from MultipleObjectsReturned: {e}")
+                return None
     
     def list_by_department(self, department_id) -> List[Account]:
         """
@@ -75,9 +85,9 @@ class UserRepository(BaseRepository):
         """
         return self.list(department_id=department_id)
     
-    def list_by_role(self, role_id: int) -> List[Account]:
+    def list_by_role(self, role_id) -> List[Account]:
         """
-        Get all users with specific role.
+        Get all users with specific role (role_id is now UUID).
         
         Example:
             admins = repo.list_by_role(RoleIds.ADMIN)
@@ -156,12 +166,12 @@ class UserRepository(BaseRepository):
     # BULK OPERATIONS
     # ============================================================
     
-    def deactivate_users(self, user_ids: List[int]) -> int:
+    def deactivate_users(self, user_ids: list) -> int:
         """
-        Deactivate (block) multiple users.
+        Deactivate (block) multiple users (user_ids are now UUIDs).
         
         Example:
-            count = repo.deactivate_users([1, 2, 3])
+            count = repo.deactivate_users([uuid1, uuid2, uuid3])
         """
         try:
             count = 0
@@ -177,12 +187,12 @@ class UserRepository(BaseRepository):
             logger.error(f"Error deactivating users: {e}", exc_info=True)
             return 0
     
-    def activate_users(self, user_ids: List[int]) -> int:
+    def activate_users(self, user_ids: list) -> int:
         """
-        Activate (unblock) multiple users.
+        Activate (unblock) multiple users (user_ids are now UUIDs).
         
         Example:
-            count = repo.activate_users([1, 2, 3])
+            count = repo.activate_users([uuid1, uuid2, uuid3])
         """
         try:
             count = 0

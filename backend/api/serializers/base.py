@@ -37,44 +37,11 @@ class StandardResponseSerializer(serializers.Serializer):
 class PaginatedResponseSerializer(serializers.Serializer):
     """
     Response cho paginated list (có pagination meta).
-    
-    Format:
-    {
-        "success": true,
-        "status_code": 200,
-        "message": "List records",
-        "data": {
-            "items": [...],
-            "pagination": {
-                "page": 1,
-                "page_size": 10,
-                "total_items": 100,
-                "total_pages": 10,
-                "has_next": true,
-                "has_previous": false
-            }
-        },
-        "timestamp": "2024-01-15T10:30:45Z",
-        "request_id": "abc-123-def-456"
-    }
     """
-    
-    class PaginationSerializer(serializers.Serializer):
-        page = serializers.IntegerField()
-        page_size = serializers.IntegerField()
-        total_items = serializers.IntegerField()
-        total_pages = serializers.IntegerField()
-        has_next = serializers.BooleanField()
-        has_previous = serializers.BooleanField()
-    
-    class DataSerializer(serializers.Serializer):
-        items = serializers.ListField()
-        pagination = PaginationSerializer()
-    
     success = serializers.BooleanField()
     status_code = serializers.IntegerField()
     message = serializers.CharField()
-    data = DataSerializer()
+    data = serializers.JSONField()  # Contains items + pagination
     timestamp = serializers.DateTimeField()
     request_id = serializers.CharField()
 
@@ -279,12 +246,31 @@ class LoginSerializer(serializers.Serializer):
     """Login request validation"""
     username = serializers.CharField(
         max_length=150,
-        help_text="Username or email"
+        required=False,
+        allow_blank=True,
+        help_text="Username"
+    )
+    email = serializers.EmailField(
+        required=False,
+        allow_blank=True,
+        help_text="Email address"
     )
     password = serializers.CharField(
         write_only=True,
         help_text="Account password"
     )
+    
+    def validate(self, data):
+        """Validate: either username or email must be provided"""
+        username = data.get('username', '').strip()
+        email = data.get('email', '').strip()
+        
+        if not username and not email:
+            raise serializers.ValidationError(
+                "Either 'username' or 'email' must be provided"
+            )
+        
+        return data
 
 
 class RefreshTokenSerializer(serializers.Serializer):

@@ -16,7 +16,7 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
@@ -28,12 +28,12 @@ def health_check(request):
 
 
 urlpatterns = [
-    # Health check
-    path("health/", health_check, name="health"),
+    # Health check - accept with or without trailing slash
+    re_path(r"^health/?$", health_check, name="health"),
     
     # Admin interface
     path("admin/", admin.site.urls),
     
-    # API endpoints (Rest Framework)
-    path("api/", include("api.urls")),
+    # API endpoints (Rest Framework) - v1
+    path("api/v1/", include("api.urls")),
 ]

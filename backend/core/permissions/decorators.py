@@ -83,12 +83,12 @@ def require_permission(permission_code: str):
     return decorator
 
 
-def require_role(role_id: int):
+def require_role(role_id):
     """
-    Decorator: Require specific role
+    Decorator: Require specific role (role_id is now UUID)
     
     Args:
-        role_id: Role ID (e.g., RoleIds.ADMIN)
+        role_id: Role ID UUID (e.g., RoleIds.ADMIN)
     
     Raises:
         PermissionDeniedError if user doesn't have role

@@ -35,13 +35,13 @@ SECRET_KEY = os.environ.get(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "True").lower() in ["true", "1", "yes"]
 
-# Parse ALLOWED_HOSTS from env
+# Parse ALLOWED_HOSTS from env - Use wildcard for development
 import json
-ALLOWED_HOSTS_STR = os.environ.get("ALLOWED_HOSTS", '["localhost", "127.0.0.1"]')
+ALLOWED_HOSTS_STR = os.environ.get("ALLOWED_HOSTS", '["*"]')
 try:
     ALLOWED_HOSTS = json.loads(ALLOWED_HOSTS_STR)
 except json.JSONDecodeError:
-    ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+    ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -163,6 +163,10 @@ EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", LLM_MODEL)
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Disable trailing slash redirect for REST API
+# REST APIs handle URLs explicitly, no need for Django's APPEND_SLASH redirect
+APPEND_SLASH = False
 
 # Sử dụng mô hình User riêng cho ứng dụng
 AUTH_USER_MODEL = 'users.Account'
@@ -462,3 +466,24 @@ FILE_UPLOAD_DIRECTORY_PERMISSIONS = 0o755
 # Temp upload path
 TEMP_UPLOAD_DIR = BASE_DIR / "uploads" / "temp"
 TEMP_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ============================================================
+# EMAIL CONFIGURATION
+# ============================================================
+# SMTP Server Configuration (Gmail)
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.environ.get("SMTP_PORT", "587"))
+EMAIL_USE_TLS = os.environ.get("SMTP_USE_TLS", "True").lower() in ["true", "1"]
+EMAIL_HOST_USER = os.environ.get("SMTP_USERNAME", "phuongbinh732004@gmail.com")
+EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "wtgr smng iswt twjm")
+DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER)
+
+
+# ============================================================
+# FRONTEND CONFIGURATION
+# ============================================================
+# Frontend URL for links in emails
+FRONTEND_URL = os.environ.get("APP_URL", "http://localhost:3000")
+

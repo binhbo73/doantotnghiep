@@ -24,19 +24,14 @@ class Account(AbstractUser):
     Features:
     - Soft delete (is_deleted flag)
     - Account status (active/blocked/inactive)
-    - Linked to Department
     - Linked to Roles (many-to-many via AccountRole)
+    
+    Note: Department info is in UserProfile (users table), not here.
+    This table is for authentication only.
     """
     
-    # Link to department
-    department = models.ForeignKey(
-        'Department',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='members',
-        help_text="Department this user belongs to"
-    )
+    # Primary key - UUID instead of default BigAutoField
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
     # Account status
     status = models.CharField(
@@ -66,7 +61,6 @@ class Account(AbstractUser):
             models.Index(fields=['email']),
             models.Index(fields=['username']),
             models.Index(fields=['status']),
-            models.Index(fields=['department']),
             models.Index(fields=['is_deleted']),
             models.Index(fields=['created_at']),
         ]
@@ -79,8 +73,8 @@ class Account(AbstractUser):
         """Get all roles của user"""
         return self.account_roles.filter(is_deleted=False).select_related('role')
     
-    def has_role(self, role_id: int) -> bool:
-        """Check nếu user có role nào đó"""
+    def has_role(self, role_id) -> bool:
+        """Check nếu user có role nào đó (role_id is now UUID)"""
         return self.account_roles.filter(role_id=role_id, is_deleted=False).exists()
     
     def get_permissions(self):
@@ -183,14 +177,12 @@ class Department(BaseModel):
 class Role(BaseModel):
     """
     Role definition (e.g., Admin, Manager, User).
-    Fixed IDs defined trong constants:
-        - ADMIN = 1
-        - MANAGER = 2
-        - USER = 3
+    Changed from IntegerField(1,2,3) to UUIDField for consistency.
     
-    KHÔNG được thay đổi ID sau khi deploy, vì backend code hardcodes ID này.
+    Migration: Old IDs (1=ADMIN, 2=MANAGER, 3=USER) are mapped to new UUIDs
+    via constants in core/constants.py
     """
-    id = models.IntegerField(primary_key=True, editable=False)
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(max_length=50, unique=True, help_text="Role code (e.g., 'admin')")
     name = models.CharField(max_length=100, help_text="Role name (e.g., 'Administrator')")
     description = models.TextField(max_length=500, blank=True, help_text="Role description")
@@ -229,6 +221,7 @@ class Permission(BaseModel):
         - document_delete
         - user_change_role
     """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     code = models.CharField(
         max_length=100,
         unique=True,
@@ -267,6 +260,7 @@ class RolePermission(BaseModel):
     Role-Permission mapping (many-to-many with extra fields).
     Tracks khi nào permission được gán/revoke vào role.
     """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     role = models.ForeignKey(
         Role,
         on_delete=models.CASCADE,
@@ -308,6 +302,7 @@ class AccountRole(BaseModel):
     Account-Role mapping (many-to-many).
     Tracks khi nào role được gán cho user.
     """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(
         Account,
         on_delete=models.CASCADE,
@@ -334,7 +329,13 @@ class AccountRole(BaseModel):
         db_table = "account_roles"
         verbose_name = "Account Role"
         verbose_name_plural = "Account Roles"
-        unique_together = ('account', 'role')  # Một user không thể có cùng role 2 lần
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'role'],
+                condition=models.Q(is_deleted=False),
+                name='unique_account_role_active'
+            )
+        ]
         indexes = [
             models.Index(fields=['account', 'role']),
             models.Index(fields=['is_deleted']),
@@ -410,3 +411,67 @@ class UserProfile(BaseModel):
 
     def __str__(self):
         return f"{self.full_name} ({self.account.username})"
+
+
+class PasswordResetToken(models.Model):
+    """
+    Password Reset Token - Lưu tokens cho phép reset password qua email.
+    
+    Sử dụng Django's make_password_reset_link hoặc UUID tokens.
+    Auto-deleted sau khi hết hạn (TTL) hoặc được sử dụng.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE,
+        related_name='password_reset_tokens',
+        help_text="Account which can reset password"
+    )
+    token = models.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True,
+        help_text="Reset token (generated randomly)"
+    )
+    
+    # Token expiration (24 hours)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(help_text="Token expiration time")
+    
+    # Track usage
+    is_used = models.BooleanField(default=False, help_text="Token has been used")
+    used_at = models.DateTimeField(null=True, blank=True, help_text="Khi token được sử dụng")
+    
+    # Admin action (optional)
+    is_admin_action = models.BooleanField(
+        default=False,
+        help_text="Token được tạo bởi Admin reset password"
+    )
+    generated_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='generated_reset_tokens',
+        help_text="Admin who generated this token (if admin action)"
+    )
+    
+    class Meta:
+        db_table = "password_reset_tokens"
+        verbose_name = "Password Reset Token"
+        verbose_name_plural = "Password Reset Tokens"
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['account_id']),
+            models.Index(fields=['expires_at']),
+            models.Index(fields=['is_used']),
+        ]
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Reset token for {self.account.username} (expires: {self.expires_at})"
+    
+    def is_valid(self) -> bool:
+        """Check if token is still valid (not expired and not used)"""
+        from django.utils import timezone
+        return not self.is_used and self.expires_at > timezone.now()

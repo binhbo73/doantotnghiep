@@ -352,8 +352,8 @@ class PermissionManager:
     # PUBLIC METHODS - Role/Permission Checks
     # ============================================================================
     
-    def check_user_has_role(self, user_id: int, role_id: int) -> bool:
-        """Check if user has specific role"""
+    def check_user_has_role(self, user_id, role_id) -> bool:
+        """Check if user has specific role (role_id is now UUID)"""
         try:
             return self.permission_repo.check_user_has_role(user_id, role_id)
         except Exception as e:
@@ -598,8 +598,8 @@ class PermissionManager:
             logger.error(f"Error getting user roles: {str(e)}")
             return set()
     
-    def _get_user_role_ids(self, user_id: int) -> List[int]:
-        """Get user role IDs as list"""
+    def _get_user_role_ids(self, user_id) -> list:
+        """Get user role IDs as list (role IDs are now UUIDs)"""
         return list(self._get_user_roles(user_id))
     
     def _scope_allows_action(self, scope: str, action: str) -> bool:
