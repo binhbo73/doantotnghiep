@@ -72,6 +72,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # Custom middleware
     "core.middleware.request_logging.RequestLoggingMiddleware",  # Request-ID, logging
+    "core.middleware.auth_validation.AuthValidationMiddleware",  # ✅ NEW: Validate user status (blocked/deleted)
     "core.middleware.audit_logging.AuditLoggingMiddleware",  # Audit trail
 ]
 

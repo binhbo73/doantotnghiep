@@ -45,6 +45,39 @@ class IsAuthenticatedUser(IsAuthenticated):
         return True
 
 
+class IsAdmin(BasePermission):
+    """Check if user has ADMIN role"""
+    message = "Admin access required"
+    
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        return request.user.has_role(RoleIds.ADMIN)
+
+
+class IsManager(BasePermission):
+    """Check if user has MANAGER role"""
+    message = "Manager access required"
+    
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        return request.user.has_role(RoleIds.MANAGER)
+
+
+class IsAdminOrManager(BasePermission):
+    """Check if user has ADMIN or MANAGER role"""
+    message = "Admin or Manager access required"
+    
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        return request.user.has_role(RoleIds.ADMIN) or request.user.has_role(RoleIds.MANAGER)
+
+
 class HasDocumentPermission(BasePermission):
     """
     Permission: Check if user can access document
@@ -387,6 +420,72 @@ class CanModifyUser(BasePermission):
             # User can modify themselves
             if obj.id == request.user.id:
                 return True
+            
+            logger.warning(
+                f"User {request.user.id} attempted to modify user {obj.id} without permission"
+            )
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking modify user permission: {str(e)}", exc_info=True)
+            return False
+
+
+# ============================================================
+# UTILITY FUNCTIONS - Avoid repeating permission checks in views
+# ============================================================
+
+def is_admin_or_manager(user) -> bool:
+    """
+    ✅ UTILITY: Check if user is admin or manager (centralized)
+    
+    This function eliminates repeated inline permission checks like:
+        is_admin = request.user.account_roles.filter(
+            role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
+            is_deleted=False
+        ).exists()
+    
+    Usage:
+        if not is_admin_or_manager(request.user):
+            return Response(..., status=403)
+    
+    Args:
+        user: User/Account instance
+    
+    Returns:
+        bool: True if admin or manager, False otherwise
+    """
+    if not user or not user.is_authenticated:
+        return False
+    
+    return user.account_roles.filter(
+        role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
+        is_deleted=False
+    ).exists()
+
+
+def is_admin(user) -> bool:
+    """
+    ✅ UTILITY: Check if user is admin (centralized)
+    
+    Usage:
+        if not is_admin(request.user):
+            return Response(..., status=403)
+    
+    Args:
+        user: User/Account instance
+    
+    Returns:
+        bool: True if admin, False otherwise
+    """
+    if not user or not user.is_authenticated:
+        return False
+    
+    return user.account_roles.filter(
+        role_id=RoleIds.ADMIN,
+        is_deleted=False
+    ).exists()
+
             
             # Manager can modify users in their department
             if perm_mgr.check_user_has_role(request.user.id, RoleIds.MANAGER):

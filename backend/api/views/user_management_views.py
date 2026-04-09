@@ -21,11 +21,12 @@ from django.db import transaction
 from django.utils import timezone
 from django.apps import apps
 from django.db.models import Q
+from django.core.exceptions import ValidationError
 from rest_framework import serializers
 
 from api.serializers.base import ResponseBuilder
 from api.serializers.user_serializers import (
-    UserListSerializer, UserDetailSerializer, UserStatusChangeSerializer,
+    UserListSerializer, UserDetailSerializer, UserProfileListSerializer, UserStatusChangeSerializer,
     RoleAssignmentSerializer, RoleRemovalSerializer, RoleUpdateSerializer, DepartmentChangeSerializer
 )
 from services.user_service import UserService
@@ -101,50 +102,34 @@ class UserListView(APIView):
     
     def get(self, request):
         try:
-            User = get_user_model()
-            
-            # Base queryset - exclude deleted users
-            queryset = User.objects.filter(is_deleted=False)
-            
-            # Search by text
+            # Extract query parameters
             search_query = request.query_params.get('search', '').strip()
-            if search_query:
-                queryset = queryset.filter(
-                    Q(username__icontains=search_query) |
-                    Q(email__icontains=search_query) |
-                    Q(first_name__icontains=search_query) |
-                    Q(last_name__icontains=search_query)
-                )
-                logger.info(f"User search: {search_query} - {queryset.count()} results")
-            
-            # Filter by status
             status_filter = request.query_params.get('status', '').strip()
-            if status_filter:
-                if status_filter not in ['active', 'blocked', 'inactive']:
-                    return Response(
-                        ResponseBuilder.error(
-                            message=f"Invalid status: {status_filter}. Must be active, blocked, or inactive"
-                        ),
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                queryset = queryset.filter(status=status_filter)
-            
-            # Filter by department (from UserProfile, not Account)
             dept_filter = request.query_params.get('department_id', '').strip()
-            if dept_filter:
-                queryset = queryset.filter(user_profile__department_id=dept_filter)
             
-            # Optimize queries
-            queryset = queryset.prefetch_related(
-                'account_roles__role',
-                'user_profile'
-            ).order_by('-date_joined')
+            # Validate status if provided
+            if status_filter and status_filter not in ['active', 'blocked', 'inactive']:
+                return Response(
+                    ResponseBuilder.error(
+                        message=f"Invalid status: {status_filter}. Must be active, blocked, or inactive"
+                    ),
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # ✅ FIXED: Use SERVICE instead of ORM direct query
+            # Service handles all business logic including filtering, searching, etc.
+            users_list = self.user_service.list_users(
+                search=search_query,
+                department_id=dept_filter,
+                status=status_filter
+            )
             
             # Pagination
             paginator = self.pagination_class()
-            paginated_queryset = paginator.paginate_queryset(queryset, request)
+            paginated_queryset = paginator.paginate_queryset(users_list, request)
             
-            serializer = UserListSerializer(paginated_queryset, many=True)
+            # ✅ FIXED: Use UserProfileListSerializer for UserProfile objects
+            serializer = UserProfileListSerializer(paginated_queryset, many=True)
             
             page_size = paginator.page_size
             total_count = paginator.page.paginator.count
@@ -170,59 +155,70 @@ class UserListView(APIView):
 
 class UserDetailView(APIView):
     """
-    GET /api/users/{id}/ - Get detailed information about an account
-    DELETE /api/users/{id}/ - Soft-delete an account
+    GET /api/accounts/{account_id}/ - Get detailed information about an account
+    DELETE /api/accounts/{account_id}/ - Soft-delete an account
     GET: Accessible by: admin OR the account owner
     DELETE: Accessible by: admin only
     """
     permission_classes = [IsAdminOrOwner]
+    user_service = UserService()
     
-    def get(self, request, user_id):
+    def get(self, request, account_id):
         try:
-            User = get_user_model()
-            
+            # ✅ FIXED: Use SERVICE instead of ORM direct
             try:
-                user = User.objects.select_related('user_profile').prefetch_related(
-                    'account_roles__role__role_permissions__permission'
-                ).get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
+                user = self.user_service.get_by_id(account_id)
+            except Exception as e:
                 return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
+                    ResponseBuilder.error(message=f"Account with ID {account_id} not found"),
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Permission check: admin or own profile
+            # Permission check: admin or own account
             is_admin = request.user.account_roles.filter(
                 role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
                 is_deleted=False
             ).exists()
             
-            is_own = request.user.id == user_id
+            is_own = request.user.id == account_id
             
             if not (is_admin or is_own):
                 return Response(
-                    ResponseBuilder.error(message="You don't have permission to view this user"),
+                    ResponseBuilder.error(message="You don't have permission to view this account"),
                     status=status.HTTP_403_FORBIDDEN
                 )
             
+            # ✅ FIXED: Add audit log for GET operation
+            try:
+                from apps.operations.models import AuditLog
+                action_desc = f"User {request.user.username} viewed account detail {user.username}"
+                AuditLog.log_action(
+                    account=request.user,
+                    action='VIEW_ACCOUNT_DETAIL',
+                    resource_id=str(account_id),
+                    query_text=action_desc,
+                    request=request
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log view_account_detail action: {str(e)}")
+            
             serializer = UserDetailSerializer(user)
             return Response(
-                ResponseBuilder.success(data=serializer.data, message="User detail retrieved"),
+                ResponseBuilder.success(data=serializer.data, message="Account detail retrieved"),
                 status=status.HTTP_200_OK
             )
         
         except Exception as e:
-            logger.error(f"Error getting user detail: {str(e)}", exc_info=True)
+            logger.error(f"Error getting account detail: {str(e)}", exc_info=True)
             return Response(
                 ResponseBuilder.error(message=f"Error: {str(e)}"),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @transaction.atomic
-    def delete(self, request, user_id):
+    def delete(self, request, account_id):
         """Delete (soft-delete) an account - requires admin permission"""
         # Check admin permission
-        permission_classes = [IsAdmin]
         is_admin = request.user.account_roles.filter(
             role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
             is_deleted=False
@@ -235,27 +231,24 @@ class UserDetailView(APIView):
             )
         
         try:
-            User = get_user_model()
-            
+            # ✅ FIXED: Use SERVICE instead of ORM direct
             try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
+                user = self.user_service.get_by_id(account_id)
+            except Exception as e:
                 return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
+                    ResponseBuilder.error(message=f"Account with ID {account_id} not found"),
                     status=status.HTTP_404_NOT_FOUND
                 )
             
             # Prevent self-deletion
-            if request.user.id == user_id:
+            if request.user.id == account_id:
                 return Response(
                     ResponseBuilder.error(message="Cannot delete your own account"),
                     status=status.HTTP_409_CONFLICT
                 )
             
-            # Soft delete
-            user.is_deleted = True
-            user.deleted_at = timezone.now()
-            user.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+            # ✅ FIXED: Use SERVICE for deactivate instead of direct save
+            self.user_service.deactivate_account(account_id)
             
             # Log deletion
             try:
@@ -287,28 +280,30 @@ class UserDetailView(APIView):
 
 class UserStatusChangeView(APIView):
     """
-    POST /api/users/{id}/change-status
-    Block/Unblock user account by changing status.
+    POST /api/accounts/{account_id}/change-status
+    Block/Unblock account by changing status.
     Only admin can do this.
     """
     permission_classes = [IsAdmin]
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.user_service = UserService()
+    
     @transaction.atomic
-    def post(self, request, user_id):
+    def post(self, request, account_id):
         try:
-            User = get_user_model()
-            
-            # Get user
+            # ✅ FIXED: Use SERVICE instead of ORM direct
             try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
+                user = self.user_service.get_by_id(account_id)
+            except Exception as e:
                 return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
+                    ResponseBuilder.error(message=f"Account with ID {account_id} not found"),
                     status=status.HTTP_404_NOT_FOUND
                 )
             
             # Prevent admin from blocking themselves
-            if request.user.id == user_id:
+            if request.user.id == account_id:
                 return Response(
                     ResponseBuilder.error(message="Cannot change your own account status"),
                     status=status.HTTP_409_CONFLICT
@@ -321,9 +316,8 @@ class UserStatusChangeView(APIView):
             new_status = serializer.validated_data['status']
             reason = serializer.validated_data.get('reason', '')
             
-            old_status = user.status
-            user.status = new_status
-            user.save(update_fields=['status', 'updated_at'])
+            # ✅ FIXED: Use SERVICE to change status instead of direct save
+            updated_user = self.user_service.change_account_status(account_id, new_status, reason)
             
             # Log status change
             try:
@@ -331,7 +325,7 @@ class UserStatusChangeView(APIView):
                 AuditLog.log_action(
                     account=request.user,
                     action='CHANGE_USER_STATUS',
-                    query_text=f"Status changed for user {user.username}: {old_status} → {new_status}. Reason: {reason}",
+                    query_text=f"Status changed for user {updated_user.username}: {user.status} → {new_status}. Reason: {reason}",
                     request=request
                 )
             except Exception as e:
@@ -339,11 +333,11 @@ class UserStatusChangeView(APIView):
             
             # If blocking user, invalidate tokens (in real app, would use blacklist)
             if new_status == 'blocked':
-                logger.warning(f"User {user.username} blocked. Invalidating tokens...")
+                logger.warning(f"User {updated_user.username} blocked. Invalidating tokens...")
                 # Note: Token invalidation would happen via blacklist app (not installed)
                 # For now, tokens will fail on validation when user is checked
             
-            serializer = UserDetailSerializer(user)
+            serializer = UserDetailSerializer(updated_user)
             return Response(
                 ResponseBuilder.success(
                     data=serializer.data,
@@ -371,93 +365,26 @@ class UserStatusChangeView(APIView):
         return request.META.get('REMOTE_ADDR')
 
 
-class UserDeleteView(APIView):
-    """
-    DELETE /api/users/{id}/
-    Soft-delete user account (set is_deleted=True).
-    Only admin can do this. Admin cannot delete own account.
-    """
-    permission_classes = [IsAdmin]
-    
-    @transaction.atomic
-    def delete(self, request, user_id):
-        try:
-            User = get_user_model()
-            
-            try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Prevent self-deletion
-            if request.user.id == user_id:
-                return Response(
-                    ResponseBuilder.error(message="Cannot delete your own account"),
-                    status=status.HTTP_409_CONFLICT
-                )
-            
-            # Soft delete
-            user.is_deleted = True
-            user.deleted_at = timezone.now()
-            user.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
-            
-            # Log deletion
-            try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
-                    action='DELETE_USER',
-                    query_text=f"User {user.username} deleted",
-                    request=request
-                )
-            except Exception as e:
-                logger.error(f"Failed to log deletion: {str(e)}")
-            
-            return Response(
-                ResponseBuilder.success(
-                    message=f"User '{user.username}' has been deleted",
-                    data={"user_id": user.id, "deleted_at": user.deleted_at}
-                ),
-                status=status.HTTP_200_OK
-            )
-        
-        except Exception as e:
-            logger.error(f"Error deleting user: {str(e)}", exc_info=True)
-            return Response(
-                ResponseBuilder.error(message=f"Error: {str(e)}"),
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    def _get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0]
-        return request.META.get('REMOTE_ADDR')
 
 
 class UserRolesView(APIView):
     """
-    GET /api/users/{id}/roles - List all roles assigned to an account
-    POST /api/users/{id}/roles - Assign a role to an account
+    GET /api/accounts/{account_id}/roles - List all roles assigned to an account
+    POST /api/accounts/{account_id}/roles - Assign a role to an account
     GET: Accessible by: admin OR the account owner
     POST: Accessible by: admin only
     """
     permission_classes = [IsAdminOrOwner]
     
-    def get(self, request, user_id):
+    def get(self, request, account_id):
         try:
-            User = get_user_model()
-            
+            # ✅ FIXED: Use SERVICE instead of direct ORM
+            self.user_service = UserService()
             try:
-                user = User.objects.prefetch_related(
-                    'account_roles__role__role_permissions__permission'
-                ).get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
+                user = self.user_service.get_by_id(account_id)
+            except Exception:
                 return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
+                    ResponseBuilder.error(message=f"Account with ID {account_id} not found"),
                     status=status.HTTP_404_NOT_FOUND
                 )
             
@@ -467,51 +394,54 @@ class UserRolesView(APIView):
                 is_deleted=False
             ).exists()
             
-            if not (is_admin or request.user.id == user_id):
+            if not (is_admin or request.user.id == account_id):
                 return Response(
                     ResponseBuilder.error(message="You don't have permission"),
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Get roles
-            roles_data = []
-            for ar in user.account_roles.filter(is_deleted=False).select_related('role'):
-                role = ar.role
-                permissions = list(
-                    role.role_permissions.filter(is_deleted=False)
-                    .values_list('permission__code', flat=True)
+            # ✅ FIXED: Get detailed roles via Service method (NOT direct ORM)
+            try:
+                roles_data = self.user_service.get_user_roles_detailed(account_id)
+            except ValidationError as e:
+                return Response(
+                    ResponseBuilder.error(message=str(e)),
+                    status=status.HTTP_400_BAD_REQUEST
                 )
-                roles_data.append({
-                    'id': str(role.id),
-                    'code': role.code,
-                    'name': role.name,
-                    'permissions': permissions,
-                    'assigned_at': ar.created_at
-                })
+            
+            # ✅ FIXED: Add audit log for GET operation
+            try:
+                from apps.operations.models import AuditLog
+                action_desc = f"User {request.user.username} viewed roles for account {account_id}"
+                AuditLog.log_action(
+                    account=request.user,
+                    action='VIEW_ACCOUNT_ROLES',
+                    resource_id=str(account_id),
+                    query_text=action_desc,
+                    request=request
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log view_account_roles action: {str(e)}")
             
             return Response(
                 ResponseBuilder.success(
                     data=roles_data,
-                    message=f"Retrieved {len(roles_data)} roles for user"
+                    message=f"Retrieved {len(roles_data)} roles for account"
                 ),
                 status=status.HTTP_200_OK
             )
         
         except Exception as e:
-            logger.error(f"Error getting user roles: {str(e)}", exc_info=True)
+            logger.error(f"Error getting account roles: {str(e)}", exc_info=True)
             return Response(
                 ResponseBuilder.error(message=f"Error: {str(e)}"),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @transaction.atomic
-    def post(self, request, user_id):
+    def post(self, request, account_id):
         """Assign a role to account (POST method on same endpoint)"""
         try:
-            User = get_user_model()
-            Role = apps.get_model('users', 'Role')
-            AccountRole = apps.get_model('users', 'AccountRole')
-            
             # Check admin permission
             is_admin = request.user.account_roles.filter(
                 role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
@@ -524,14 +454,6 @@ class UserRolesView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
             # Validate request
             serializer = RoleAssignmentSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -539,119 +461,20 @@ class UserRolesView(APIView):
             role_id = serializer.validated_data['role_id']
             notes = serializer.validated_data.get('notes', '')
             
-            try:
-                role = Role.objects.get(id=role_id, is_deleted=False)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Role with ID {role_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Check if role already assigned
-            if user.account_roles.filter(role_id=role_id, is_deleted=False).exists():
-                return Response(
-                    ResponseBuilder.error(message=f"User already has role '{role.code}'"),
-                    status=status.HTTP_409_CONFLICT
-                )
-            
-            # Assign role
-            ar = AccountRole.objects.create(
-                account=user,
-                role=role,
-                granted_by=request.user,
-                notes=notes
+            # Call Service (NOT ORM)
+            self.user_service = UserService()
+            ar = self.user_service.assign_role_to_user(
+                account_id=account_id,
+                role_id=role_id,
+                notes=notes,
+                granted_by=request.user
             )
             
-            # Log action
-            try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
-                    action='ASSIGN_ROLE',
-                    query_text=f"Role '{role.code}' assigned to user {user.username}. Notes: {notes}",
-                    request=request
-                )
-            except Exception as e:
-                logger.error(f"Failed to log role assignment: {str(e)}")
-            
-            return Response(
-                ResponseBuilder.created(
-                    data={
-                        'role_id': str(role.id),
-                        'role_code': role.code,
-                        'role_name': role.name,
-                        'assigned_at': ar.created_at
-                    },
-                    message=f"Role '{role.code}' assigned to user {user.username}"
-                ),
-                status=status.HTTP_201_CREATED
-            )
-        
-        except serializers.ValidationError as e:
-            return Response(
-                ResponseBuilder.error(message=f"Validation error: {str(e.detail)}"),
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Error assigning role: {str(e)}", exc_info=True)
-            return Response(
-                ResponseBuilder.error(message=f"Error: {str(e)}"),
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class UserRoleAssignView(APIView):
-    """
-    POST /api/users/{id}/roles
-    Assign a role to user (add to existing roles).
-    Only admin can do this.
-    """
-    permission_classes = [IsAdmin]
-    
-    @transaction.atomic
-    def post(self, request, user_id):
-        try:
-            User = get_user_model()
+            # Get role for response
             Role = apps.get_model('users', 'Role')
-            AccountRole = apps.get_model('users', 'AccountRole')
-            
-            try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Validate request
-            serializer = RoleAssignmentSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            
-            role_id = serializer.validated_data['role_id']
-            notes = serializer.validated_data.get('notes', '')
-            
-            try:
-                role = Role.objects.get(id=role_id, is_deleted=False)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Role with ID {role_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Check if role already assigned
-            if user.account_roles.filter(role_id=role_id, is_deleted=False).exists():
-                return Response(
-                    ResponseBuilder.error(message=f"User already has role '{role.code}'"),
-                    status=status.HTTP_409_CONFLICT
-                )
-            
-            # Assign role
-            ar = AccountRole.objects.create(
-                account=user,
-                role=role,
-                granted_by=request.user,
-                notes=notes
-            )
+            role = Role.objects.get(id=role_id, is_deleted=False)
+            User = get_user_model()
+            user = User.objects.get(id=account_id, is_deleted=False)
             
             # Log action
             try:
@@ -683,78 +506,41 @@ class UserRoleAssignView(APIView):
                 ResponseBuilder.error(message=f"Validation error: {str(e.detail)}"),
                 status=status.HTTP_400_BAD_REQUEST
             )
+        except ValidationError as e:
+            return Response(
+                ResponseBuilder.error(message=f"Validation: {str(e)}"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             logger.error(f"Error assigning role: {str(e)}", exc_info=True)
             return Response(
                 ResponseBuilder.error(message=f"Error: {str(e)}"),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-    def _get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0]
-        return request.META.get('REMOTE_ADDR')
+
+
 
 
 class UserRoleRemoveView(APIView):
     """
-    DELETE /api/users/{id}/roles/{role_id}
-    Remove a role from user.
+    DELETE /api/accounts/{account_id}/roles/{role_id}
+    Remove a role from account.
     Only admin can do this. Cannot remove last role.
     """
     permission_classes = [IsAdmin]
     
     @transaction.atomic
-    def delete(self, request, user_id, role_id):
+    def delete(self, request, account_id, role_id):
         try:
-            User = get_user_model()
+            # Call Service (NOT ORM)
+            self.user_service = UserService()
+            self.user_service.remove_role_from_user(account_id, role_id)
+            
+            # Get role for response
             Role = apps.get_model('users', 'Role')
-            AccountRole = apps.get_model('users', 'AccountRole')
-            
-            try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            try:
-                role = Role.objects.get(id=role_id, is_deleted=False)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Role with ID {role_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Find the account-role mapping
-            try:
-                ar = AccountRole.objects.get(
-                    account_id=user_id,
-                    role_id=role_id,
-                    is_deleted=False
-                )
-            except AccountRole.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(
-                        message=f"User does not have role '{role.code}'"
-                    ),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Check if this is the last role
-            role_count = user.account_roles.filter(is_deleted=False).count()
-            if role_count <= 1:
-                return Response(
-                    ResponseBuilder.error(message="Cannot remove user's only role"),
-                    status=status.HTTP_409_CONFLICT
-                )
-            
-            # Soft-delete the account-role mapping
-            ar.is_deleted = True
-            ar.deleted_at = timezone.now()
-            ar.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+            User = get_user_model()
+            role = Role.objects.get(id=role_id, is_deleted=False)
+            user = User.objects.get(id=account_id, is_deleted=False)
             
             # Log action
             try:
@@ -762,7 +548,7 @@ class UserRoleRemoveView(APIView):
                 AuditLog.log_action(
                     account=request.user,
                     action='REMOVE_ROLE',
-                    query_text=f"Role '{role.code}' removed from user {user.username}",
+                    query_text=f"Role '{role.code}' removed from account {user.username}",
                     request=request
                 )
             except Exception as e:
@@ -770,11 +556,16 @@ class UserRoleRemoveView(APIView):
             
             return Response(
                 ResponseBuilder.success(
-                    message=f"Role '{role.code}' removed from user {user.username}"
+                    message=f"Role '{role.code}' removed from account {user.username}"
                 ),
                 status=status.HTTP_200_OK
             )
         
+        except ValidationError as e:
+            return Response(
+                ResponseBuilder.error(message=f"Validation: {str(e)}"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             logger.error(f"Error removing role: {str(e)}", exc_info=True)
             return Response(
@@ -791,61 +582,36 @@ class UserRoleRemoveView(APIView):
 
 class UserRoleUpdateView(APIView):
     """
-    PATCH /api/accounts/{id}/roles/{role_id}
+    PATCH /api/accounts/{account_id}/roles/{role_id}
     Update role assignment info (notes, etc.) for a particular role.
     Only admin can do this.
+    PUT /api/accounts/{account_id}/roles/{role_id}
+    Replace a role for an account.
     """
     permission_classes = [IsAdmin]
     
     @transaction.atomic
-    def patch(self, request, user_id, role_id):
+    def patch(self, request, account_id, role_id):
         try:
-            User = get_user_model()
-            Role = apps.get_model('users', 'Role')
-            AccountRole = apps.get_model('users', 'AccountRole')
-            
-            try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Account with ID {user_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            try:
-                role = Role.objects.get(id=role_id, is_deleted=False)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Role with ID {role_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Find the account-role mapping
-            try:
-                ar = AccountRole.objects.get(
-                    account_id=user_id,
-                    role_id=role_id,
-                    is_deleted=False
-                )
-            except AccountRole.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(
-                        message=f"Account with ID {user_id} does not have role with ID {role_id}"
-                    ),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
             # Validate request
             serializer = RoleUpdateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
-            # Update notes if provided
             new_notes = serializer.validated_data.get('notes', '')
-            old_notes = ar.notes or ''
             
-            if new_notes != old_notes:
-                ar.notes = new_notes
-                ar.save(update_fields=['notes', 'updated_at'])
+            # Call Service (NOT ORM)
+            self.user_service = UserService()
+            ar = self.user_service.update_role_assignment(
+                account_id=account_id,
+                role_id=role_id,
+                notes=new_notes
+            )
+            
+            # Get role for response
+            Role = apps.get_model('users', 'Role')
+            User = get_user_model()
+            role = Role.objects.get(id=role_id, is_deleted=False)
+            user = User.objects.get(id=account_id, is_deleted=False)
             
             # Log action
             try:
@@ -853,7 +619,7 @@ class UserRoleUpdateView(APIView):
                 AuditLog.log_action(
                     account=request.user,
                     action='UPDATE_ROLE',
-                    query_text=f"Role '{role.code}' updated for user {user.username}. Old notes: {old_notes} → New notes: {new_notes}",
+                    query_text=f"Role '{role.code}' updated for account {user.username}. Notes: {new_notes}",
                     request=request
                 )
             except Exception as e:
@@ -868,7 +634,7 @@ class UserRoleUpdateView(APIView):
                         'notes': new_notes,
                         'updated_at': ar.updated_at
                     },
-                    message=f"Role '{role.code}' updated for user {user.username}"
+                    message=f"Role '{role.code}' updated for account {user.username}"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -876,6 +642,11 @@ class UserRoleUpdateView(APIView):
         except serializers.ValidationError as e:
             return Response(
                 ResponseBuilder.error(message=f"Validation error: {str(e.detail)}"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except ValidationError as e:
+            return Response(
+                ResponseBuilder.error(message=f"Validation: {str(e)}"),
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
@@ -886,7 +657,7 @@ class UserRoleUpdateView(APIView):
             )
     
     @transaction.atomic
-    def put(self, request, user_id, role_id):
+    def put(self, request, account_id, role_id):
         """Replace single active role - only 1 role active per account"""
         try:
             User = get_user_model()
@@ -894,10 +665,10 @@ class UserRoleUpdateView(APIView):
             AccountRole = apps.get_model('users', 'AccountRole')
             
             try:
-                user = User.objects.get(id=user_id, is_deleted=False)
+                user = User.objects.get(id=account_id, is_deleted=False)
             except User.DoesNotExist:
                 return Response(
-                    ResponseBuilder.error(message=f"Account with ID {user_id} not found"),
+                    ResponseBuilder.error(message=f"Account with ID {account_id} not found"),
                     status=status.HTTP_404_NOT_FOUND
                 )
             
@@ -913,14 +684,14 @@ class UserRoleUpdateView(APIView):
             # Check account has old role (must be active)
             try:
                 old_ar = AccountRole.objects.get(
-                    account_id=user_id,
+                    account_id=account_id,
                     role_id=role_id,
                     is_deleted=False
                 )
             except AccountRole.DoesNotExist:
                 return Response(
                     ResponseBuilder.error(
-                        message=f"Account with ID {user_id} does not have role '{old_role.code}' (only active roles can be replaced)"
+                        message=f"Account with ID {account_id} does not have role '{old_role.code}' (only active roles can be replaced)"
                     ),
                     status=status.HTTP_404_NOT_FOUND
                 )
@@ -953,58 +724,23 @@ class UserRoleUpdateView(APIView):
                     status=status.HTTP_409_CONFLICT
                 )
             
-            # Soft-delete OLD role (make it inactive)
-            old_ar.is_deleted = True
-            old_ar.deleted_at = timezone.now()
-            old_ar.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
-            
-            # Smart logic: Try to restore OLDEST deleted role OR create new
-            # 🔴 CRITICAL: Use .all_records() to bypass SoftDeleteManager auto-filtering!
-            # The manager automatically filters is_deleted=False, so we MUST use:
-            # - Model.objects.all_records() to get deleted records
-            # - NOT Model.objects (which filters is_deleted=False by default)
-            logger.info(f"[PUT] Looking for deleted role {new_role_id} for account {user_id}")
-            
-            deleted_new_ars = AccountRole.objects.all_records().filter(
-                account_id=user_id,
-                role_id=new_role_id,
-                is_deleted=True
-            ).order_by('id')
-            
-            logger.info(f"[PUT] Found {deleted_new_ars.count()} deleted records for role {new_role_id}")
-            
-            if deleted_new_ars.exists():
-                # RESTORE the oldest deleted role (reuse record, update flags)
-                deleted_new_ar = deleted_new_ars.first()
-                logger.info(f"[PUT] Restoring deleted record id={deleted_new_ar.id} of role {new_role_id}")
-                
-                deleted_new_ar.is_deleted = False
-                deleted_new_ar.deleted_at = None
-                deleted_new_ar.granted_by = request.user
-                if notes:
-                    deleted_new_ar.notes = notes
-                deleted_new_ar.save(update_fields=['is_deleted', 'deleted_at', 'granted_by', 'notes', 'updated_at'])
-                
-                # HARD DELETE other deleted records for this role (cleanup)
-                other_deleted = deleted_new_ars.exclude(id=deleted_new_ar.id)
-                other_count = other_deleted.delete()[0]
-                if other_count > 0:
-                    logger.info(f"[PUT] Cleaned up {other_count} duplicate deleted records for role {new_role_id}")
-                
-                new_ar = deleted_new_ar
-                action_type = 'RESTORE'
-                logger.info(f"[PUT] Action: RESTORE (id={deleted_new_ar.id})")
-            else:
-                # CREATE new role assignment (never existed before)
-                logger.info(f"[PUT] Creating NEW record for role {new_role_id}")
-                new_ar = AccountRole.objects.create(
-                    account=user,
-                    role=new_role,
-                    granted_by=request.user,
-                    notes=notes
+            # ✅ FIXED: Use Service instead of direct ORM + .all_records() anti-pattern
+            # Call Service to handle role replacement safely
+            self.user_service = UserService()
+            try:
+                new_ar = self.user_service.replace_user_role(
+                    account_id=account_id,
+                    old_role_id=role_id,
+                    new_role_id=new_role_id,
+                    notes=notes,
+                    granted_by=request.user
                 )
-                action_type = 'CREATE'
-                logger.info(f"[PUT] Action: CREATE (id={new_ar.id})")
+                action_type = 'REPLACED'
+            except Exception as e:
+                return Response(
+                    ResponseBuilder.error(message=str(e)),
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Log action
             try:
@@ -1012,7 +748,7 @@ class UserRoleUpdateView(APIView):
                 AuditLog.log_action(
                     account=request.user,
                     action='REPLACE_ROLE',
-                    query_text=f"Role replaced for account {user.username}: '{old_role.code}' → '{new_role.code}' ({action_type}). Notes: {notes}",
+                    query_text=f"Role replaced for account {user.username}: '{old_role.code}' → '{new_role.code}'. Notes: {notes}",
                     request=request
                 )
             except Exception as e:
@@ -1021,16 +757,15 @@ class UserRoleUpdateView(APIView):
             return Response(
                 ResponseBuilder.success(
                     data={
-                        'old_role_id': old_role.id,
+                        'old_role_id': str(old_role.id),
                         'old_role_code': old_role.code,
-                        'new_role_id': new_role.id,
+                        'new_role_id': str(new_role.id),
                         'new_role_code': new_role.code,
                         'new_role_name': new_role.name,
                         'notes': notes,
-                        'action': action_type,
-                        'replaced_at': new_ar.created_at if action_type == 'CREATE' else new_ar.updated_at
+                        'action': action_type
                     },
-                    message=f"Role replaced for account {user.username}: '{old_role.code}' → '{new_role.code}' ({action_type})"
+                    message=f"Role replaced for account {user.username}: '{old_role.code}' → '{new_role.code}'"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -1056,8 +791,8 @@ class UserRoleUpdateView(APIView):
 
 class UserDepartmentChangeView(APIView):
     """
-    PATCH /api/users/{id}/department
-    Transfer user to a different department.
+    PATCH /api/accounts/{account_id}/department
+    Transfer account to a different department.
     Only admin can do this.
     
     Note: Department info is on UserProfile, not Account.
@@ -1065,20 +800,8 @@ class UserDepartmentChangeView(APIView):
     permission_classes = [IsAdmin]
     
     @transaction.atomic
-    def patch(self, request, user_id):
+    def patch(self, request, account_id):
         try:
-            User = get_user_model()
-            Department = apps.get_model('users', 'Department')
-            UserProfile = apps.get_model('users', 'UserProfile')
-            
-            try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"User with ID {user_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
             # Validate request
             serializer = DepartmentChangeSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -1086,37 +809,28 @@ class UserDepartmentChangeView(APIView):
             new_dept_id = serializer.validated_data['department_id']
             reason = serializer.validated_data.get('reason', '')
             
-            try:
-                new_department = Department.objects.get(id=new_dept_id, is_deleted=False)
-            except Department.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Department with ID '{new_dept_id}' not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
+            # Call Service (NOT ORM)
+            self.user_service = UserService()
+            user_profile = self.user_service.change_user_department(
+                account_id=account_id,
+                department_id=new_dept_id
+            )
             
-            # Get or create UserProfile
-            try:
-                user_profile = user.user_profile
-            except UserProfile.DoesNotExist:
-                user_profile = UserProfile.objects.create(
-                    account=user,
-                    full_name=user.get_full_name() or user.username
-                )
-            
-            old_department = user_profile.department
-            old_dept_name = old_department.name if old_department else "None"
-            
-            # Update department on UserProfile, not Account
-            user_profile.department = new_department
-            user_profile.save(update_fields=['department', 'updated_at'])
+            # Get models for response
+            User = get_user_model()
+            user = User.objects.get(id=account_id, is_deleted=False)
             
             # Log action
             try:
                 from apps.operations.models import AuditLog
+                old_dept_name = user_profile.department.name if user_profile.department else "None"
+                Department = apps.get_model('users', 'Department')
+                new_dept = Department.objects.get(id=new_dept_id, is_deleted=False)
+                
                 AuditLog.log_action(
                     account=request.user,
-                    action='CHANGE_USER_DEPARTMENT',
-                    query_text=f"User {user.username} department changed: {old_dept_name} → {new_department.name}. Reason: {reason}",
+                    action='CHANGE_ACCOUNT_DEPARTMENT',
+                    query_text=f"Account {user.username} department changed to {new_dept.name}. Reason: {reason}",
                     request=request
                 )
             except Exception as e:
@@ -1126,7 +840,7 @@ class UserDepartmentChangeView(APIView):
             return Response(
                 ResponseBuilder.success(
                     data=serializer.data,
-                    message=f"User transferred to department '{new_department.name}'"
+                    message=f"User transferred to department '{user_profile.department.name}'"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -1134,6 +848,11 @@ class UserDepartmentChangeView(APIView):
         except serializers.ValidationError as e:
             return Response(
                 ResponseBuilder.error(message=f"Validation error: {str(e.detail)}"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except ValidationError as e:
+            return Response(
+                ResponseBuilder.error(message=f"Validation: {str(e)}"),
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
@@ -1163,22 +882,23 @@ class AdminCreateAccountView(APIView):
     def get(self, request):
         """GET: List all active accounts"""
         try:
-            User = get_user_model()
+            from services.user_service import UserService
             
-            # Get all active accounts
-            accounts = User.objects.filter(
-                is_deleted=False,
-                status=AccountStatus.ACTIVE
-            ).select_related().order_by('-created_at')
+            self.user_service = UserService()
             
-            # Pagination
+            # ✅ FIXED: Use SERVICE instead of direct ORM
+            accounts = self.user_service.list_users(status='active')
+            
+            # Convert model instances to dict for response
             paginator = UserPagination()
             page = paginator.paginate_queryset(accounts, request)
             if page is not None:
-                serializer = UserListSerializer(page, many=True)
+                # ✅ FIXED: Use UserProfileListSerializer for UserProfile objects (not UserListSerializer)
+                serializer = UserProfileListSerializer(page, many=True)
                 return paginator.get_paginated_response(serializer.data)
             
-            serializer = UserListSerializer(accounts, many=True)
+            # ✅ FIXED: Use UserProfileListSerializer for UserProfile objects
+            serializer = UserProfileListSerializer(accounts, many=True)
             return Response(
                 ResponseBuilder.success(
                     data=serializer.data,
@@ -1197,11 +917,14 @@ class AdminCreateAccountView(APIView):
     def post(self, request):
         """POST: Create new account + generate temp password + send email"""
         try:
-            User = get_user_model()
+            from services.user_service import UserService
+            from apps.users.models import Department
+            from core.constants import RoleIds
             
-            # Step 1: Extract & resolve department (optional, same logic as RegisterAccountView)
+            self.user_service = UserService()
+            
+            # Step 1: Extract & resolve department (optional)
             department_id = request.data.get('department_id')
-            Department = apps.get_model('users', 'Department')
             department = None
             
             # Strategy 1: Nếu có department_id → tìm department
@@ -1242,80 +965,31 @@ class AdminCreateAccountView(APIView):
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR
                     )
             
-            # Step 2: Validate account fields
+            # Step 2: Extract account fields
             username = request.data.get('username', '').strip()
             email = request.data.get('email', '').strip()
             first_name = request.data.get('first_name', '').strip()
             last_name = request.data.get('last_name', '').strip()
             
-            # Validation
-            errors = {}
-            
-            if not username:
-                errors['username'] = "Username is required"
-            elif len(username) < 3:
-                errors['username'] = "Username must be at least 3 characters"
-            elif User.objects.filter(username=username, is_deleted=False).exists():
-                errors['username'] = f"Username '{username}' already exists"
-            
-            if not email:
-                errors['email'] = "Email is required"
-            elif '@' not in email:
-                errors['email'] = "Invalid email format"
-            elif User.objects.filter(email=email, is_deleted=False).exists():
-                errors['email'] = f"Email '{email}' already registered"
-            
-            if errors:
-                return Response(
-                    ResponseBuilder.error(message="Validation failed", data=errors),
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
             # Generate temporary password
             temp_password = self._generate_temporary_password()
             
-            # Step 3: Create user
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                first_name=first_name,
-                last_name=last_name,
-                password=temp_password,
-                status=AccountStatus.ACTIVE
+            # Step 3: Call Service to create account
+            account_data = {
+                'username': username,
+                'email': email,
+                'first_name': first_name,
+                'last_name': last_name,
+                'password': temp_password
+            }
+            
+            user = self.user_service.register_account_admin(
+                account_data=account_data,
+                department=department,
+                role_id=RoleIds.USER
             )
             
-            # Step 4: Create UserProfile (1-1 relationship) with department - GIỐNG RegisterAccountView
-            try:
-                UserProfile = apps.get_model('users', 'UserProfile')
-                profile_data = {
-                    'account': user,
-                    'full_name': user.get_full_name() or user.username,
-                }
-                if department:
-                    profile_data['department'] = department
-                
-                user_profile = UserProfile.objects.create(**profile_data)
-                logger.info(f"UserProfile created for: {user.username} in department: {department.name}")
-            except Exception as e:
-                logger.error(f"Error creating UserProfile: {str(e)}")
-                # Không fail - user vẫn được tạo nhưng không có profile
-            
-            # Step 5: Assign default role (User role)
-            try:
-                Role = apps.get_model('users', 'Role')
-                AccountRole = apps.get_model('users', 'AccountRole')
-                
-                default_role = Role.objects.get(code='user', is_deleted=False)
-                AccountRole.objects.create(
-                    account=user,
-                    role=default_role,
-                    granted_by=request.user,
-                    notes="Created by admin"
-                )
-            except Exception as e:
-                logger.warning(f"Failed to assign default role: {str(e)}")
-            
-            # Step 6: Send email
+            # Step 4: Send email
             try:
                 from services.email_service import EmailService
                 email_sent = EmailService.send_account_creation_email(user, temp_password)
@@ -1324,7 +998,7 @@ class AdminCreateAccountView(APIView):
                 logger.error(f"Failed to send email: {str(e)}")
                 email_status = "error"
             
-            # Step 7: Log action
+            # Step 5: Log action
             try:
                 from apps.operations.models import AuditLog
                 AuditLog.log_action(
@@ -1355,6 +1029,11 @@ class AdminCreateAccountView(APIView):
                 status=status.HTTP_201_CREATED
             )
         
+        except ValidationError as e:
+            return Response(
+                ResponseBuilder.error(message=f"Validation: {str(e)}"),
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             logger.error(f"Error creating account: {str(e)}", exc_info=True)
             return Response(

@@ -269,6 +269,20 @@ class NotImplementedError(InternalServerError):
 
 
 # ============================================================
+# ACCOUNT/USER SPECIFIC ERRORS
+# ============================================================
+class AccountBlockedError(AuthenticationError):
+    """Account bị khóa"""
+    status_code = status.HTTP_403_FORBIDDEN
+    default_message = "This account has been blocked"
+
+
+class AccountInactiveError(AuthenticationError):
+    """Account không hoạt động"""
+    default_message = "This account is not active"
+
+
+# ============================================================
 # HTTP-like Error Responses (for consistent API format)
 # ============================================================
 class ErrorResponse:
@@ -293,3 +307,72 @@ class ErrorResponse:
             "data": self.detail,
             "request_id": self.request_id,
         }
+
+
+# ============================================================
+# EXPORT ALL EXCEPTIONS
+# ============================================================
+__all__ = [
+    # Base
+    'AppException',
+    'ErrorResponse',
+    
+    # Validation Errors
+    'ValidationError',
+    'InvalidInputError',
+    'InvalidFileFormatError',
+    'FileSizeExceededError',
+    'DuplicateError',
+    'ConflictError',
+    
+    # Authentication Errors
+    'AuthenticationError',
+    'InvalidCredentialsError',
+    'TokenExpiredError',
+    'InvalidTokenError',
+    'UserNotActiveError',
+    'UserBlockedError',
+    'AccountBlockedError',
+    'AccountInactiveError',
+    
+    # Permission Errors
+    'PermissionDeniedError',
+    'UnauthorizedError',
+    'InsufficientPermissionError',
+    'NotOwnerError',
+    'RoleRequiredError',
+    
+    # Not Found Errors
+    'NotFoundError',
+    'UserNotFoundError',
+    'DocumentNotFoundError',
+    'FolderNotFoundError',
+    'DepartmentNotFoundError',
+    'RoleNotFoundError',
+    'PermissionNotFoundError',
+    
+    # Business Logic Errors
+    'BusinessLogicError',
+    'InvalidOperationError',
+    'CannotDeleteError',
+    'CannotModifyError',
+    'DocumentProcessingError',
+    'EmbeddingGenerationError',
+    
+    # External Service Errors
+    'ExternalServiceError',
+    'LLMServiceError',
+    'VectorDatabaseError',
+    'PermissionServiceError',
+    'ServiceUnavailableError',
+    
+    # Database Errors
+    'DatabaseError',
+    'IntegrityError',
+    'QueryError',
+    
+    # Internal Server Errors
+    'InternalServerError',
+    'ConfigurationError',
+    'NotImplementedError',
+]

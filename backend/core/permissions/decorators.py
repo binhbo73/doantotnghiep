@@ -24,7 +24,7 @@ from django.apps import apps
 from rest_framework.response import Response
 from rest_framework import status as http_status
 from core.constants import PermissionCodes, RoleIds
-from core.exceptions import PermissionDeniedError, UnauthorizedError
+from core.exceptions import PermissionDeniedError, InsufficientPermissionError, InvalidCredentialsError
 from api.serializers.base import ResponseBuilder
 from .permission_manager import get_permission_manager
 

@@ -329,6 +329,10 @@ Nếu bạn không nhận ra yêu cầu này, vui lòng liên hệ quản trị 
 RAG System
                 """
             
+            # Log chi tiết trước khi gửi
+            logger.warning(f"📧 SENDING EMAIL: from={settings.DEFAULT_FROM_EMAIL}, to={user.email}, new_password_provided={bool(new_password)}")
+            logger.warning(f"📧 EMAIL CONFIG: HOST={settings.EMAIL_HOST}, PORT={settings.EMAIL_PORT}, USE_TLS={settings.EMAIL_USE_TLS}, USER={settings.EMAIL_HOST_USER}")
+            
             send_mail(
                 subject=subject,
                 message=message,
@@ -338,11 +342,14 @@ RAG System
                 fail_silently=False,
             )
             
-            logger.info(f"Admin password reset email sent to {user.email} (with new password: {bool(new_password)})")
+            logger.info(f"✅ Admin password reset email sent to {user.email} (with new password: {bool(new_password)})")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to send admin password reset email to {user.email}: {str(e)}")
+            logger.error(f"❌ Failed to send admin password reset email to {user.email}")
+            logger.error(f"   Error type: {type(e).__name__}")
+            logger.error(f"   Error message: {str(e)}")
+            logger.exception("Full traceback:")
             return False
     
     @staticmethod

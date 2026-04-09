@@ -281,25 +281,44 @@ class RefreshTokenSerializer(serializers.Serializer):
 
 
 class ChangePasswordSerializer(serializers.Serializer):
-    """Change password request validation"""
+    """
+    Change password request validation.
+    Validates old password, new password strength, and confirmation.
+    """
     old_password = serializers.CharField(
         write_only=True,
+        min_length=1,
         help_text="Current password"
     )
     new_password = serializers.CharField(
         write_only=True,
-        help_text="New password (min 8 chars)"
+        min_length=8,
+        help_text="New password (min 8 chars, 1 uppercase, 1 digit, 1 special char)"
     )
     confirm_password = serializers.CharField(
         write_only=True,
         help_text="Confirm new password"
     )
     
+    def validate_new_password(self, value):
+        """Validate new password strength"""
+        # Import here to avoid circular imports
+        from core.validators import validate_strong_password
+        return validate_strong_password(value)
+    
     def validate(self, data):
+        """Object-level validation"""
         if data['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError("Passwords do not match")
-        if len(data['new_password']) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters")
+            raise serializers.ValidationError({
+                'confirm_password': "Passwords do not match"
+            })
+        
+        # Check if old password same as new password
+        if data['old_password'] == data['new_password']:
+            raise serializers.ValidationError({
+                'new_password': "New password must be different from current password"
+            })
+        
         return data
 
 
