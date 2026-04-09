@@ -35,6 +35,7 @@ import json
 from django.utils.deprecation import MiddlewareMixin
 from django.apps import apps
 from django.http import HttpRequest
+from repositories.audit_log_repository import AuditLogRepository
 
 logger = logging.getLogger(__name__)
 
@@ -116,60 +117,49 @@ class AuditLoggingMiddleware(MiddlewareMixin):
     
     def _log_audit(self, request: HttpRequest, response):
         """
-        Internal method to log audit entry
+        Internal method to log audit entry via Repository
         """
         try:
-            AuditLog = apps.get_model('operations', 'AuditLog')
-        except LookupError:
-            logger.debug("AuditLog model not found, skipping audit logging")
-            return
-        
-        # Extract audit info from request
-        action = self._get_action_from_method_path(request.method, request.path)
-        resource_type, resource_id = self._extract_resource_from_path(request.path)
-        request_id = getattr(request, 'request_id', None)
-        
-        # Build query_text (description)
-        query_text = f"{request.method} {request.path}"
-        if action:
-            query_text = f"{action} {resource_type or 'Unknown'}"
-        
-        # Get IP address
-        ip_address = self._get_client_ip(request)
-        
-        # Get user agent
-        user_agent = request.META.get('HTTP_USER_AGENT', '')[:255]
-        
-        # Create AuditLog entry
-        try:
-            # Validate resource_id is UUID format (AuditLog.resource_id is UUIDField)
-            # If it's not, set to None to avoid validation errors
-            import re
-            import uuid
-            final_resource_id = None
-            if resource_id:
-                uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                if re.match(uuid_pattern, str(resource_id).lower()):
-                    final_resource_id = resource_id
-                # If not UUID format, just skip it (set to None)
+            # Extract audit info from request
+            action = self._get_action_from_method_path(request.method, request.path)
+            resource_type, resource_id = self._extract_resource_from_path(request.path)
+            request_id = getattr(request, 'request_id', None)
             
-            audit_log = AuditLog(
-                account=request.user,
+            # Build query_text (description)
+            query_text = f"{request.method} {request.path}"
+            if action:
+                query_text = f"{action} {resource_type or 'Unknown'}"
+            
+            # Get IP address
+            ip_address = self._get_client_ip(request)
+            
+            # Get user agent
+            user_agent = request.META.get('HTTP_USER_AGENT', '')[:255]
+            
+            # Get account object from request
+            account = request.user if request.user and request.user.is_authenticated else None
+            
+            # Use Repository to create AuditLog entry
+            audit_repo = AuditLogRepository()
+            audit_log = audit_repo.log_action(
+                account=account,
                 action=action or 'MUTATION',
-                resource_id=final_resource_id,  # Only UUIDs or None
+                resource_id=resource_id,
                 query_text=query_text,
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-            audit_log.save()
             
-            logger.debug(
-                f"AuditLog created: {action} {resource_type} {resource_id} "
-                f"by user {request.user.id}"
-            )
+            if audit_log:
+                logger.debug(
+                    f"AuditLog created: {action} {resource_type} {resource_id} "
+                    f"by user {request.user.id}"
+                )
+            else:
+                logger.warning(f"AuditLog creation failed for action {action}")
             
         except Exception as e:
-            logger.error(f"Error creating AuditLog: {str(e)}", exc_info=True)
+            logger.error(f"Error in audit logging: {str(e)}", exc_info=True)
     
     def _get_action_from_method_path(self, method: str, path: str) -> str:
         """

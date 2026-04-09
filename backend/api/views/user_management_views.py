@@ -319,21 +319,22 @@ class UserStatusChangeView(APIView):
             # ✅ FIXED: Use SERVICE to change status instead of direct save
             updated_user = self.user_service.change_account_status(account_id, new_status, reason)
             
-            # Log status change
+            # Log status change via Service (which uses AuditLogRepository)
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='CHANGE_USER_STATUS',
-                    query_text=f"Status changed for user {updated_user.username}: {user.status} → {new_status}. Reason: {reason}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(account_id),
+                    query_text=f"Status changed for account {account_id}: {user.status if 'user' in locals() else 'unknown'} → {new_status}. Reason: {reason}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log status change: {str(e)}")
             
             # If blocking user, invalidate tokens (in real app, would use blacklist)
             if new_status == 'blocked':
-                logger.warning(f"User {updated_user.username} blocked. Invalidating tokens...")
+                logger.warning(f"Account {account_id} blocked. Invalidating tokens...")
                 # Note: Token invalidation would happen via blacklist app (not installed)
                 # For now, tokens will fail on validation when user is checked
             
@@ -341,7 +342,7 @@ class UserStatusChangeView(APIView):
             return Response(
                 ResponseBuilder.success(
                     data=serializer.data,
-                    message=f"User status changed to '{new_status}'"
+                    message=f"Account status changed to '{new_status}'"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -471,19 +472,18 @@ class UserRolesView(APIView):
             )
             
             # Get role for response
-            Role = apps.get_model('users', 'Role')
-            role = Role.objects.get(id=role_id, is_deleted=False)
-            User = get_user_model()
-            user = User.objects.get(id=account_id, is_deleted=False)
+            # ✅ CORRECT: ar already has role via FK - no ORM needed!
+            role = ar.role
             
-            # Log action
+            # Log action via Service (which uses AuditLogRepository internally)
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='ASSIGN_ROLE',
-                    query_text=f"Role '{role.code}' assigned to user {user.username}. Notes: {notes}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(account_id),
+                    query_text=f"Role '{role.code}' assigned to account {account_id}. Notes: {notes}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log role assignment: {str(e)}")
@@ -496,7 +496,7 @@ class UserRolesView(APIView):
                         'role_name': role.name,
                         'assigned_at': ar.created_at
                     },
-                    message=f"Role '{role.code}' assigned to user {user.username}"
+                    message=f"Role '{role.code}' assigned to account"
                 ),
                 status=status.HTTP_201_CREATED
             )
@@ -536,27 +536,25 @@ class UserRoleRemoveView(APIView):
             self.user_service = UserService()
             self.user_service.remove_role_from_user(account_id, role_id)
             
-            # Get role for response
-            Role = apps.get_model('users', 'Role')
-            User = get_user_model()
-            role = Role.objects.get(id=role_id, is_deleted=False)
-            user = User.objects.get(id=account_id, is_deleted=False)
+            # ✅ CORRECT: No ORM calls needed for success response
+            # Just acknowledge the deletion
             
-            # Log action
+            # Log action via Service
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='REMOVE_ROLE',
-                    query_text=f"Role '{role.code}' removed from account {user.username}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(account_id),
+                    query_text=f"Role {role_id} removed from account {account_id}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log role removal: {str(e)}")
             
             return Response(
                 ResponseBuilder.success(
-                    message=f"Role '{role.code}' removed from account {user.username}"
+                    message=f"Role removed from account successfully"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -607,20 +605,18 @@ class UserRoleUpdateView(APIView):
                 notes=new_notes
             )
             
-            # Get role for response
-            Role = apps.get_model('users', 'Role')
-            User = get_user_model()
-            role = Role.objects.get(id=role_id, is_deleted=False)
-            user = User.objects.get(id=account_id, is_deleted=False)
+            # ✅ CORRECT: ar already has role via FK - no ORM needed!
+            role = ar.role
             
-            # Log action
+            # Log action via Service
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='UPDATE_ROLE',
-                    query_text=f"Role '{role.code}' updated for account {user.username}. Notes: {new_notes}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(account_id),
+                    query_text=f"Role {role_id} assignment updated for account {account_id}. Notes: {new_notes}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log role update: {str(e)}")
@@ -634,7 +630,7 @@ class UserRoleUpdateView(APIView):
                         'notes': new_notes,
                         'updated_at': ar.updated_at
                     },
-                    message=f"Role '{role.code}' updated for account {user.username}"
+                    message=f"Role assignment updated successfully"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -660,42 +656,6 @@ class UserRoleUpdateView(APIView):
     def put(self, request, account_id, role_id):
         """Replace single active role - only 1 role active per account"""
         try:
-            User = get_user_model()
-            Role = apps.get_model('users', 'Role')
-            AccountRole = apps.get_model('users', 'AccountRole')
-            
-            try:
-                user = User.objects.get(id=account_id, is_deleted=False)
-            except User.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Account with ID {account_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Get old role (from URL parameter)
-            try:
-                old_role = Role.objects.get(id=role_id, is_deleted=False)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Role with ID {role_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Check account has old role (must be active)
-            try:
-                old_ar = AccountRole.objects.get(
-                    account_id=account_id,
-                    role_id=role_id,
-                    is_deleted=False
-                )
-            except AccountRole.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(
-                        message=f"Account with ID {account_id} does not have role '{old_role.code}' (only active roles can be replaced)"
-                    ),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
             # Validate request
             if 'new_role_id' not in request.data:
                 return Response(
@@ -706,26 +666,14 @@ class UserRoleUpdateView(APIView):
             new_role_id = request.data.get('new_role_id')
             notes = request.data.get('notes', '')
             
-            # Get new role
-            try:
-                new_role = Role.objects.get(id=new_role_id, is_deleted=False)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message=f"Role with ID {new_role_id} not found"),
-                    status=status.HTTP_404_NOT_FOUND
-                )
-            
             # Check not same role
             if role_id == new_role_id:
                 return Response(
-                    ResponseBuilder.error(
-                        message=f"New role must be different from current role '{old_role.code}'"
-                    ),
+                    ResponseBuilder.error(message=f"New role must be different from current role"),
                     status=status.HTTP_409_CONFLICT
                 )
             
-            # ✅ FIXED: Use Service instead of direct ORM + .all_records() anti-pattern
-            # Call Service to handle role replacement safely
+            # ✅ CORRECT: Use Service for ALL role replacement logic (NOT ORM direct calls)
             self.user_service = UserService()
             try:
                 new_ar = self.user_service.replace_user_role(
@@ -735,21 +683,30 @@ class UserRoleUpdateView(APIView):
                     notes=notes,
                     granted_by=request.user
                 )
-                action_type = 'REPLACED'
+            except ValidationError as e:
+                return Response(
+                    ResponseBuilder.error(message=str(e)),
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             except Exception as e:
                 return Response(
                     ResponseBuilder.error(message=str(e)),
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Log action
+            # ✅ CORRECT: Get data from Service response (NOT ORM)
+            new_role = new_ar.role
+            account = new_ar.account
+            
+            # Log action via Service
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='REPLACE_ROLE',
-                    query_text=f"Role replaced for account {user.username}: '{old_role.code}' → '{new_role.code}'. Notes: {notes}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(account_id),
+                    query_text=f"Role replaced for account {account_id}: {role_id} → {new_role_id}. Notes: {notes}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log role replacement: {str(e)}")
@@ -757,15 +714,15 @@ class UserRoleUpdateView(APIView):
             return Response(
                 ResponseBuilder.success(
                     data={
-                        'old_role_id': str(old_role.id),
-                        'old_role_code': old_role.code,
                         'new_role_id': str(new_role.id),
                         'new_role_code': new_role.code,
                         'new_role_name': new_role.name,
+                        'account_id': str(account.id),
+                        'account_username': account.username,
                         'notes': notes,
-                        'action': action_type
+                        'action': 'REPLACE_ROLE'
                     },
-                    message=f"Role replaced for account {user.username}: '{old_role.code}' → '{new_role.code}'"
+                    message=f"Role replaced for account {account.username}"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -816,31 +773,34 @@ class UserDepartmentChangeView(APIView):
                 department_id=new_dept_id
             )
             
-            # Get models for response
-            User = get_user_model()
-            user = User.objects.get(id=account_id, is_deleted=False)
+            # ✅ CORRECT: No ORM calls needed for response
+            # user_profile already from Service and has department via FK
             
-            # Log action
+            # Log action via Service (which uses AuditLogRepository)
             try:
-                from apps.operations.models import AuditLog
                 old_dept_name = user_profile.department.name if user_profile.department else "None"
-                Department = apps.get_model('users', 'Department')
-                new_dept = Department.objects.get(id=new_dept_id, is_deleted=False)
                 
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='CHANGE_ACCOUNT_DEPARTMENT',
-                    query_text=f"Account {user.username} department changed to {new_dept.name}. Reason: {reason}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(account_id),
+                    query_text=f"Account {account_id} department changed to {new_dept_id}. Reason: {reason}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log department change: {str(e)}")
             
-            serializer = UserDetailSerializer(user)
+            # Response - don't need to fetch user again, use profile data
             return Response(
                 ResponseBuilder.success(
-                    data=serializer.data,
-                    message=f"User transferred to department '{user_profile.department.name}'"
+                    data={
+                        'account_id': str(account_id),
+                        'department_id': str(new_dept_id),
+                        'department_name': user_profile.department.name if user_profile.department else "None",
+                        'reason': reason
+                    },
+                    message=f"Account department changed successfully"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -917,53 +877,29 @@ class AdminCreateAccountView(APIView):
     def post(self, request):
         """POST: Create new account + generate temp password + send email"""
         try:
-            from services.user_service import UserService
-            from apps.users.models import Department
-            from core.constants import RoleIds
-            
             self.user_service = UserService()
             
             # Step 1: Extract & resolve department (optional)
+            # ✅ CORRECT: Use Service to resolve department (NOT ORM direct calls)
             department_id = request.data.get('department_id')
-            department = None
             
-            # Strategy 1: Nếu có department_id → tìm department
-            if department_id:
-                try:
-                    department = Department.objects.get(id=department_id, is_deleted=False)
-                except (Department.DoesNotExist, ValueError):
-                    return Response(
-                        ResponseBuilder.error(
-                            message=f"Department '{department_id}' không tồn tại"
-                        ),
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-            
-            # Strategy 2: Nếu không có department_id → tìm hoặc tạo default company department
-            if not department:
-                try:
-                    department = Department.objects.filter(
-                        parent_id__isnull=True,
-                        is_deleted=False
-                    ).first()
-                    
+            try:
+                if department_id:
+                    department = self.user_service.department_repository.get_by_id(department_id)
                     if not department:
-                        import uuid as uuid_module
-                        department = Department.objects.create(
-                            id=uuid_module.uuid4(),
-                            name="Company",
-                            parent=None,
-                            is_deleted=False
+                        return Response(
+                            ResponseBuilder.error(message=f"Department '{department_id}' not found"),
+                            status=status.HTTP_404_NOT_FOUND
                         )
-                        logger.info(f"Created default department: {department.id}")
-                    else:
-                        logger.info(f"Auto-assigned default department: {department.name}")
-                except Exception as e:
-                    logger.error(f"Error finding/creating default department: {str(e)}")
-                    return Response(
-                        ResponseBuilder.error(message="Không thể xác định department"),
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                    )
+                else:
+                    # Get or create default department via Service
+                    department = self.user_service.resolve_or_create_default_department()
+            except Exception as e:
+                logger.error(f"Error resolving department: {str(e)}")
+                return Response(
+                    ResponseBuilder.error(message="Error resolving department"),
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
             # Step 2: Extract account fields
             username = request.data.get('username', '').strip()
@@ -975,6 +911,7 @@ class AdminCreateAccountView(APIView):
             temp_password = self._generate_temporary_password()
             
             # Step 3: Call Service to create account
+            from core.constants import RoleIds
             account_data = {
                 'username': username,
                 'email': email,
@@ -998,14 +935,15 @@ class AdminCreateAccountView(APIView):
                 logger.error(f"Failed to send email: {str(e)}")
                 email_status = "error"
             
-            # Step 5: Log action
+            # Step 5: Log action via Service (which uses AuditLogRepository)
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
+                self.user_service.audit_log_action(
                     action='CREATE_ACCOUNT',
-                    query_text=f"Admin created account: {username} ({email}) in department {department.name}. Email status: {email_status}",
-                    request=request
+                    user_id=request.user.id,
+                    resource_id=str(user.id),
+                    query_text=f"Admin created account: {username} ({email}). Email status: {email_status}",
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
             except Exception as e:
                 logger.error(f"Failed to log account creation: {str(e)}")
@@ -1013,7 +951,7 @@ class AdminCreateAccountView(APIView):
             return Response(
                 ResponseBuilder.created(
                     data={
-                        'id': user.id,
+                        'id': str(user.id),
                         'username': user.username,
                         'email': user.email,
                         'first_name': user.first_name,
@@ -1024,7 +962,7 @@ class AdminCreateAccountView(APIView):
                         'created_at': user.created_at,
                         'email_sent': email_status == "sent"
                     },
-                    message=f"Account '{username}' created successfully in department '{department.name if department else 'None'}'. Email sent: {email_status == 'sent'}"
+                    message=f"Account '{username}' created successfully. Email: {email_status}"
                 ),
                 status=status.HTTP_201_CREATED
             )

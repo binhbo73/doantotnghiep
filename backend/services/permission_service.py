@@ -509,8 +509,6 @@ class PermissionService(BaseService):
             granted_by_user_id: Who made the change
         """
         try:
-            AuditLog = apps.get_model('operations', 'AuditLog')
-            
             query_text = f"{action}"
             if role_id:
                 query_text += f" role_id={role_id}"
@@ -519,12 +517,13 @@ class PermissionService(BaseService):
             if permission_code:
                 query_text += f" permission={permission_code}"
             
-            AuditLog.objects.create(
-                account_id=granted_by_user_id,
+            self.audit_log_action(
                 action=action,
+                user_id=granted_by_user_id,
+                resource_id=str(role_id) if role_id else None,
                 resource_type='Permission',
-                resource_id=role_id,
                 query_text=query_text,
+                details={'target_user_id': target_user_id, 'permission_code': permission_code}
             )
         except Exception as e:
             logger.warning(f"Could not log permission audit: {str(e)}")

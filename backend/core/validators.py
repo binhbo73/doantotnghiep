@@ -35,22 +35,14 @@ def validate_password_length(value, min_length=8):
 # EMAIL & USERNAME VALIDATORS
 # ============================================================
 
-def validate_username_unique(value):
-    """Kiểm tra username không trùng (case-insensitive)"""
-    from apps.users.models import Account
-    
-    if Account.objects.filter(username__iexact=value, is_deleted=False).exists():
-        raise serializers.ValidationError("Username này đã tồn tại. Vui lòng chọn username khác.")
-    return value
+# validate_username_unique removed - use Service layer for database checks
+# Serializer should only validate FORMAT, not EXISTENCE
+# Service layer will handle uniqueness validation via Repository
 
 
-def validate_email_unique(value):
-    """Kiểm tra email không trùng (case-insensitive)"""
-    from apps.users.models import Account
-    
-    if Account.objects.filter(email__iexact=value, is_deleted=False).exists():
-        raise serializers.ValidationError("Email này đã được đăng ký. Vui lòng sử dụng email khác.")
-    return value
+# validate_email_unique removed - use Service layer for database checks
+# Serializer should only validate FORMAT, not EXISTENCE
+# Service layer will handle uniqueness validation via Repository
 
 
 def validate_email_format(value):

@@ -6,8 +6,6 @@ from apps.users.models import Account, Role, Permission, Department, AccountRole
 from .base import SoftDeleteModelSerializer, TimestampedModelSerializer
 from core.validators import (
     validate_strong_password,
-    validate_username_unique,
-    validate_email_unique,
     validate_email_format,
 )
 
@@ -75,8 +73,8 @@ class AccountCreateSerializer(serializers.ModelSerializer):
         help_text="Min 8 chars, 1 uppercase, 1 digit, 1 special char"
     )
     password_confirm = serializers.CharField(write_only=True, help_text="Confirm password")
-    email = serializers.EmailField(validators=[validate_email_format, validate_email_unique])
-    username = serializers.CharField(validators=[validate_username_unique])
+    email = serializers.EmailField(validators=[validate_email_format])
+    username = serializers.CharField()
     
     class Meta:
         model = Account
@@ -164,8 +162,20 @@ class UserDetailSerializer(serializers.ModelSerializer):
         ]
     
     def get_permission_codes(self, obj):
-        """Get all permission codes user has via roles"""
-        return obj.get_permissions()
+        """
+        Get all permission codes user has via roles
+        
+        ✅ Uses PermissionRepository instead of Model method
+        """
+        try:
+            from repositories.permission_repository import PermissionRepository
+            perm_repo = PermissionRepository()
+            return list(perm_repo.get_user_permission_codes(obj.id))
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error getting permission codes for user {obj.id}: {str(e)}")
+            return []
 
 
 class UserProfileListSerializer(serializers.ModelSerializer):
@@ -266,11 +276,9 @@ class RoleAssignmentSerializer(serializers.Serializer):
     role_name = serializers.CharField(required=False, allow_blank=True, max_length=100)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
     
-    def validate_role_id(self, value):
-        """Validate role exists"""
-        if not Role.objects.filter(id=value, is_deleted=False).exists():
-            raise serializers.ValidationError(f"Role with ID {value} does not exist")
-        return value
+    # ✅ NOTE: Removed ORM validation from Serializer
+    # Database validation happens in Service layer, not Serializer
+    # Serializer only validates format/type, not database existence
 
 
 class RoleRemovalSerializer(serializers.Serializer):
@@ -284,11 +292,8 @@ class RoleUpdateSerializer(serializers.Serializer):
     role_id = serializers.UUIDField(required=True)
     notes = serializers.CharField(required=False, allow_blank=True, max_length=500)
     
-    def validate_role_id(self, value):
-        """Validate role exists"""
-        if not Role.objects.filter(id=value, is_deleted=False).exists():
-            raise serializers.ValidationError(f"Role with ID {value} does not exist")
-        return value
+    # ✅ NOTE: Removed ORM validation from Serializer
+    # Database validation happens in Service layer, not Serializer
 
 
 class DepartmentChangeSerializer(serializers.Serializer):
@@ -296,11 +301,8 @@ class DepartmentChangeSerializer(serializers.Serializer):
     department_id = serializers.CharField()
     reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
     
-    def validate_department_id(self, value):
-        """Validate department exists"""
-        if not Department.objects.filter(id=value, is_deleted=False).exists():
-            raise serializers.ValidationError(f"Department with ID '{value}' does not exist")
-        return value
+    # ✅ NOTE: Removed ORM validation from Serializer
+    # Database validation happens in Service layer, not Serializer
 
 
 # ============================================================
@@ -314,14 +316,9 @@ class ForgotPasswordSerializer(serializers.Serializer):
     """
     email = serializers.EmailField(required=True)
     
-    def validate_email(self, value):
-        """Validate email exists and account is active"""
-        if not Account.objects.filter(email=value, is_deleted=False).exists():
-            # Don't reveal if email exists or not for security reasons
-            raise serializers.ValidationError(
-                "Nếu email tồn tại, bạn sẽ nhận được email hướng dẫn reset password"
-            )
-        return value
+    # ✅ NOTE: Removed ORM validation from Serializer
+    # Database validation (check if email exists) happens in Service layer
+    # Serializer only validates format (is_valid_email), not database existence
 
 
 class ResetPasswordSerializer(serializers.Serializer):

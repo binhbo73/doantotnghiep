@@ -1,10 +1,10 @@
 """
-Password Reset Utilities - Generate tokens, send emails, and verify tokens.
+Password Reset Service - Business logic for password reset operations.
+
+Uses PasswordResetTokenRepository for all ORM operations.
+Service layer should NOT call ORM directly.
 """
-import secrets
 import logging
-from datetime import timedelta
-from django.utils import timezone
 from django.apps import apps
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,12 @@ class PasswordResetService:
     
     # Token length
     TOKEN_LENGTH = 32
+    
+    @staticmethod
+    def get_repository():
+        """Get PasswordResetTokenRepository instance (lazy import to avoid circular deps)"""
+        from repositories.password_reset_token_repository import PasswordResetTokenRepository
+        return PasswordResetTokenRepository()
     
     @staticmethod
     def generate_reset_token(account, is_admin_action=False, generated_by=None) -> str:
@@ -34,35 +40,18 @@ class PasswordResetService:
         
         Raises:
             Exception: If token creation fails
+        
+        ✅ Uses Repository - no ORM calls in Service layer
         """
         try:
-            PasswordResetToken = apps.get_model('users', 'PasswordResetToken')
-            
-            # Generate random token
-            token = secrets.token_urlsafe(PasswordResetService.TOKEN_LENGTH)
-            
-            # หา token ที่ไม่duplicate
-            while PasswordResetToken.objects.filter(token=token).exists():
-                token = secrets.token_urlsafe(PasswordResetService.TOKEN_LENGTH)
-            
-            # Calculate expiration
-            expires_at = timezone.now() + timedelta(hours=PasswordResetService.TOKEN_EXPIRY_HOURS)
-            
-            # Create token record
-            reset_token = PasswordResetToken.objects.create(
+            repo = PasswordResetService.get_repository()
+            return repo.generate_token(
                 account=account,
-                token=token,
-                expires_at=expires_at,
                 is_admin_action=is_admin_action,
-                generated_by=generated_by if is_admin_action else None
+                generated_by=generated_by,
+                token_length=PasswordResetService.TOKEN_LENGTH,
+                expiry_hours=PasswordResetService.TOKEN_EXPIRY_HOURS
             )
-            
-            logger.info(
-                f"Password reset token created for {account.email} "
-                f"(admin_action={is_admin_action})"
-            )
-            
-            return token
             
         except Exception as e:
             logger.error(f"Failed to generate password reset token: {str(e)}")
@@ -81,12 +70,15 @@ class PasswordResetService:
         
         Raises:
             PermissionError: Nếu token expired hoặc đã được sử dụng
+        
+        ✅ Uses Repository - no ORM calls in Service layer
         """
         try:
-            PasswordResetToken = apps.get_model('users', 'PasswordResetToken')
+            repo = PasswordResetService.get_repository()
+            reset_token_obj = repo.get_by_token(token)
             
-            # Find token
-            reset_token_obj = PasswordResetToken.objects.select_related('account').get(token=token)
+            if not reset_token_obj:
+                raise PermissionError("Token không hợp lệ")
             
             # Check if already used
             if reset_token_obj.is_used:
@@ -98,9 +90,8 @@ class PasswordResetService:
             
             return reset_token_obj.account
             
-        except PasswordResetToken.DoesNotExist:
-            logger.warning(f"Invalid password reset token attempted: {token[:10]}...")
-            raise PermissionError("Token không hợp lệ")
+        except PermissionError:
+            raise
         except Exception as e:
             logger.error(f"Failed to verify reset token: {str(e)}")
             raise
@@ -118,17 +109,12 @@ class PasswordResetService:
         
         Raises:
             Exception: If token not found
+        
+        ✅ Uses Repository - no ORM calls in Service layer
         """
         try:
-            PasswordResetToken = apps.get_model('users', 'PasswordResetToken')
-            
-            reset_token_obj = PasswordResetToken.objects.get(token=token)
-            reset_token_obj.is_used = True
-            reset_token_obj.used_at = timezone.now()
-            reset_token_obj.save(update_fields=['is_used', 'used_at'])
-            
-            logger.info(f"Password reset token marked as used for {reset_token_obj.account.email}")
-            return True
+            repo = PasswordResetService.get_repository()
+            return repo.mark_as_used(token)
             
         except Exception as e:
             logger.error(f"Failed to mark token as used: {str(e)}")
@@ -144,18 +130,12 @@ class PasswordResetService:
         
         Returns:
             int: Số tokens bị vô hiệu hóa
+        
+        ✅ Uses Repository - no ORM calls in Service layer
         """
         try:
-            PasswordResetToken = apps.get_model('users', 'PasswordResetToken')
-            
-            # Mark all active tokens as used
-            count = PasswordResetToken.objects.filter(
-                account=account,
-                is_used=False
-            ).update(is_used=True, used_at=timezone.now())
-            
-            logger.info(f"Invalidated {count} active reset tokens for {account.email}")
-            return count
+            repo = PasswordResetService.get_repository()
+            return repo.invalidate_account_tokens(account)
             
         except Exception as e:
             logger.error(f"Failed to invalidate tokens: {str(e)}")

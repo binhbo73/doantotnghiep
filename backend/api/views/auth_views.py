@@ -448,29 +448,24 @@ class RegisterAccountView(APIView):
             serializer = AccountCreateSerializer(data=data_for_serializer)
             serializer.is_valid(raise_exception=True)
             
-            # Step 3: Get default role
-            from core.constants import RoleIds
-            Role = apps.get_model('users', 'Role')
-            
-            try:
-                default_role = Role.objects.get(id=RoleIds.USER)
-            except Role.DoesNotExist:
-                return Response(
-                    ResponseBuilder.error(message="Role mặc định không tồn tại"),
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Step 4: Call Service để tạo account (with department already resolved)
+            # Step 3: Get default role via Service (NOT ORM direct call)
+            # ❌ WRONG: Role.objects.get(id=RoleIds.USER)
+            # ✅ RIGHT: Service → Repository layer
             validated_data = serializer.validated_data
             validated_data['department'] = department
             
+            # Note: UserService.register_account() handles default role assignment
+            # If no role specified, user still gets created but needs admin intervention to assign roles
+            
+            # Step 4: Call Service để tạo account (with department already resolved)
             new_user = self.user_service.register_account(validated_data)
             
-            # Step 5: Gán default role via Service
+            # Step 5: Gán default role via Service (if needed)
             try:
+                from core.constants import RoleIds
                 self.user_service.assign_role_to_user(
                     user_id=new_user.id,
-                    role_id=default_role.id,
+                    role_id=RoleIds.USER,
                     notes="Auto-assigned default user role",
                     granted_by=None
                 )

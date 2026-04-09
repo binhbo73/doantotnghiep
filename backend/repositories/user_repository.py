@@ -283,3 +283,285 @@ class UserRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error searching paginated users: {e}", exc_info=True)
             return [], None
+    
+    # ============================================================
+    # SAVE/PERSIST OPERATIONS
+    # ============================================================
+    
+    def save_account(self, account: Account, update_fields: List[str] = None) -> Account:
+        """
+        Save account to database.
+        
+        Args:
+            account: Account instance to save
+            update_fields: List of fields to update (optional, None = save all)
+        
+        Returns:
+            Saved Account instance
+        
+        Example:
+            account.status = 'blocked'
+            repo.save_account(account, update_fields=['status', 'updated_at'])
+        """
+        try:
+            if update_fields:
+                account.save(update_fields=update_fields)
+            else:
+                account.save()
+            logger.info(f"Account saved: {account.id}")
+            return account
+        except Exception as e:
+            logger.error(f"Error saving account {account.id}: {str(e)}")
+            raise
+    
+    def update_account(self, account_id, **update_data) -> Account:
+        """
+        Update account fields.
+        
+        Args:
+            account_id: Account UUID
+            **update_data: Fields to update
+        
+        Returns:
+            Updated Account instance
+        
+        Example:
+            repo.update_account(user_id, status='active', first_name='John')
+        """
+        try:
+            account = self.get_by_id(account_id)
+            for key, value in update_data.items():
+                if hasattr(account, key) and value is not None:
+                    setattr(account, key, value)
+            self.save_account(account, update_fields=list(update_data.keys()) + ['updated_at'])
+            logger.info(f"Account updated: {account_id}. Fields: {list(update_data.keys())}")
+            return account
+        except Exception as e:
+            logger.error(f"Error updating account {account_id}: {str(e)}")
+            raise
+    
+    # ============================================================
+    # USER PROFILE OPERATIONS
+    # ============================================================
+    
+    def create_user_profile(self, account, department=None, **profile_data) -> any:
+        """
+        Create UserProfile for account.
+        
+        Args:
+            account: Account instance
+            department: Department instance (optional)
+            **profile_data: Additional profile fields
+        
+        Returns:
+            Created UserProfile instance
+        
+        Example:
+            profile = repo.create_user_profile(account, department=dept, full_name="John Doe")
+        """
+        try:
+            from apps.users.models import UserProfile
+            
+            profile_data['account'] = account
+            if department:
+                profile_data['department'] = department
+            
+            profile = UserProfile.objects.create(**profile_data)
+            logger.info(f"UserProfile created for account: {account.id}")
+            return profile
+        except Exception as e:
+            logger.error(f"Error creating UserProfile: {str(e)}")
+            raise
+    
+    # ============================================================
+    # ACCOUNT ROLE OPERATIONS
+    # ============================================================
+    
+    def create_account_role(self, account_id, role_id, granted_by=None, notes: str = '') -> AccountRole:
+        """
+        Create AccountRole (assign role to user).
+        
+        Args:
+            account_id: Account UUID
+            role_id: Role UUID
+            granted_by: Admin user who granted the role (optional)
+            notes: Optional notes
+        
+        Returns:
+            Created AccountRole instance
+        
+        Example:
+            ar = repo.create_account_role(user_id, admin_role_id, granted_by=admin_user)
+        """
+        try:
+            ar = AccountRole.objects.create(
+                account_id=account_id,
+                role_id=role_id,
+                granted_by=granted_by,
+                notes=notes
+            )
+            logger.info(f"Role {role_id} assigned to account {account_id}")
+            return ar
+        except Exception as e:
+            logger.error(f"Error assigning role: {str(e)}")
+            raise
+    
+    def get_account_role(self, account_id, role_id) -> Optional[AccountRole]:
+        """
+        Get specific account role assignment.
+        
+        Args:
+            account_id: Account UUID
+            role_id: Role UUID
+        
+        Returns:
+            AccountRole instance or None
+        
+        Example:
+            ar = repo.get_account_role(user_id, admin_role_id)
+        """
+        try:
+            return AccountRole.objects.filter(
+                account_id=account_id,
+                role_id=role_id,
+                is_deleted=False
+            ).first()
+        except Exception as e:
+            logger.error(f"Error getting account role: {str(e)}")
+            return None
+    
+    def get_all_account_roles(self, account_id) -> List[AccountRole]:
+        """
+        Get all active role assignments for an account.
+        
+        Args:
+            account_id: Account UUID
+        
+        Returns:
+            List of AccountRole instances
+        
+        Example:
+            roles = repo.get_all_account_roles(user_id)
+        """
+        try:
+            return list(AccountRole.objects.filter(
+                account_id=account_id,
+                is_deleted=False
+            ).select_related('role'))
+        except Exception as e:
+            logger.error(f"Error getting account roles: {str(e)}")
+            return []
+    
+    def update_account_role(self, account_id, role_id, notes: str = '') -> AccountRole:
+        """
+        Update account role assignment (notes only).
+        
+        Args:
+            account_id: Account UUID
+            role_id: Role UUID
+            notes: Updated notes
+        
+        Returns:
+            Updated AccountRole instance
+        
+        Example:
+            ar = repo.update_account_role(user_id, role_id, notes="Updated note")
+        """
+        try:
+            ar = AccountRole.objects.get(
+                account_id=account_id,
+                role_id=role_id,
+                is_deleted=False
+            )
+            ar.notes = notes
+            ar.save(update_fields=['notes', 'updated_at'])
+            logger.info(f"Account role updated for account {account_id} role {role_id}")
+            return ar
+        except Exception as e:
+            logger.error(f"Error updating account role: {str(e)}")
+            raise
+    
+    def delete_account_role(self, account_id, role_id) -> bool:
+        """
+        Soft-delete account role assignment.
+        
+        Args:
+            account_id: Account UUID
+            role_id: Role UUID
+        
+        Returns:
+            True if deleted, False otherwise
+        
+        Example:
+            repo.delete_account_role(user_id, old_role_id)
+        """
+        try:
+            ar = AccountRole.objects.get(
+                account_id=account_id,
+                role_id=role_id,
+                is_deleted=False
+            )
+            ar.is_deleted = True
+            from django.utils import timezone
+            ar.deleted_at = timezone.now()
+            ar.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+            logger.info(f"Account role deleted for account {account_id} role {role_id}")
+            return True
+        except AccountRole.DoesNotExist:
+            logger.warning(f"Account role not found: account {account_id}, role {role_id}")
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting account role: {str(e)}")
+            raise
+    
+    # ============================================================
+    # VALIDATION OPERATIONS
+    # ============================================================
+    
+    def check_email_exists(self, email: str, exclude_id: Optional[str] = None) -> bool:
+        """
+        Check if email already exists.
+        
+        Args:
+            email: Email to check
+            exclude_id: Account ID to exclude (for updates)
+        
+        Returns:
+            True if exists, False otherwise
+        
+        Example:
+            if repo.check_email_exists("john@example.com"):
+                raise ValidationError("Email already exists")
+        """
+        try:
+            queryset = Account.objects.filter(email=email, is_deleted=False)
+            if exclude_id:
+                queryset = queryset.exclude(id=exclude_id)
+            return queryset.exists()
+        except Exception as e:
+            logger.error(f"Error checking email exists: {str(e)}")
+            return False
+    
+    def check_username_exists(self, username: str, exclude_id: Optional[str] = None) -> bool:
+        """
+        Check if username already exists.
+        
+        Args:
+            username: Username to check
+            exclude_id: Account ID to exclude (for updates)
+        
+        Returns:
+            True if exists, False otherwise
+        
+        Example:
+            if repo.check_username_exists("john_doe"):
+                raise ValidationError("Username already exists")
+        """
+        try:
+            queryset = Account.objects.filter(username=username, is_deleted=False)
+            if exclude_id:
+                queryset = queryset.exclude(id=exclude_id)
+            return queryset.exists()
+        except Exception as e:
+            logger.error(f"Error checking username exists: {str(e)}")
+            return False

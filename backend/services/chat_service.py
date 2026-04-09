@@ -2,11 +2,15 @@
 Chat Service - Bộ điều phối (Orchestrator) hệ thống RAG.
 Quy trình: 
 1. Nhận yêu cầu của User
-2. Lấy lịch sử chat
+2. Lấy lịch sử chat via MessageRepository
 3. Tìm kiếm kiến thức liên quan từ Vector DB (Qdrant)
 4. Xây dựng Prompt tổng hợp
 5. Gọi LLM (LlamaClient) 
-6. Lưu tin nhắn vào Database
+6. Lưu tin nhắn vào Database via MessageRepository
+
+Pattern:
+    ✅ CORRECT: Service → ConversationRepository/MessageRepository → ORM
+    ❌ NEVER: Service → Conversation.objects.*, Message.objects.* directly
 """
 import logging
 from typing import List, Dict, Any, Optional, Tuple
@@ -15,6 +19,8 @@ from django.utils import timezone
 from core.exceptions import BusinessLogicError, LLMServiceError
 from services.ai.llama_client import LlamaClient
 from services.ai.qdrant_client import QdrantClient
+from repositories.conversation_repository import ConversationRepository
+from repositories.message_repository import MessageRepository
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +28,9 @@ logger = logging.getLogger(__name__)
 class ChatService:
     """
     RAG Chat Orchestrator - Trái tim của hệ thống hỏi đáp tri thức
+    
+    ✅ CORRECT DATA FLOW:
+    View → ChatService → ConversationRepository/MessageRepository → ORM → Models
     """
     
     SYSTEM_PROMPT = """Bạn là trợ lý ảo AI thông minh, hỗ trợ người dùng dựa trên KIẾN THỨC NỘI BỘ được cung cấp.
@@ -33,13 +42,12 @@ class ChatService:
     """
 
     def __init__(self):
-        """Khởi tạo với các client AI"""
+        """Khởi tạo với các repository và client AI"""
         self.llama = LlamaClient()
         self.qdrant = QdrantClient()
-        # Models
-        self.Conversation = apps.get_model('operations', 'Conversation')
-        self.Message = apps.get_model('operations', 'Message')
-        self.Document = apps.get_model('documents', 'Document')
+        # ✅ CORRECT: Use repositories instead of ORM direct
+        self.conversation_repo = ConversationRepository()
+        self.message_repo = MessageRepository()
 
     def ask(
         self, 
@@ -59,23 +67,34 @@ class ChatService:
             
         Returns:
             (phiên_bản_text_trả_lời, đối_tượng_tin_nhắn_bot)
+        
+        ✅ CORRECT FLOW:
+        - Calls ConversationRepository (not ORM)
+        - Calls MessageRepository (not ORM)
+        - Never calls Conversation.objects.* or Message.objects.*
         """
         try:
-            # 1. Quản lý Conversation
+            # 1. Quản lý Conversation via Repository
             if conversation_id:
-                conversation = self.Conversation.objects.get(pk=conversation_id, account_id=user_id)
+                # ✅ CORRECT: Use repository
+                conversation = self.conversation_repo.get_conversation_by_id(
+                    conversation_id,
+                    account_id=user_id
+                )
+                if not conversation:
+                    raise ValidationError(f"Conversation {conversation_id} not found")
             else:
-                # Tạo cuộc hội thoại mới nếu chưa có
-                conversation = self.Conversation.objects.create(
+                # ✅ CORRECT: Use repository to create
+                conversation = self.conversation_repo.create_conversation(
                     account_id=user_id,
                     title=query[:50] + "..."
                 )
 
-            # 2. Lưu tin nhắn của Người dùng
-            user_message = self.Message.objects.create(
-                conversation=conversation,
+            # 2. Lưu tin nhắn của Người dùng via Repository
+            # ✅ CORRECT: Use repository
+            user_message = self.message_repo.create_user_message(
+                conversation_id=conversation.id,
                 account_id=user_id,
-                role='user',
                 content=query
             )
 
@@ -103,14 +122,16 @@ class ChatService:
             
             context_str = "\n".join(context_texts) if context_texts else "Không tìm thấy tài liệu liên quan."
 
-            # 4. Lấy lịch sử chat (3 tin nhắn gần nhất) để giữ ngữ cảnh
-            history = self.Message.objects.filter(
-                conversation=conversation
-            ).order_by('-created_at')[:4]
+            # 4. Lấy lịch sử chat via Repository (NOT ORM)
+            # ✅ CORRECT: Use repository to get history as dicts for LLM
+            messages_for_llm = self.message_repo.get_message_history(
+                conversation.id,
+                as_dicts=True
+            )
             
-            messages_for_llm = []
-            for msg in reversed(history):
-                messages_for_llm.append({"role": msg.role, "content": msg.content})
+            # Giới hạn 4 tin nhắn gần nhất để giữ ngữ cảnh
+            if len(messages_for_llm) > 4:
+                messages_for_llm = messages_for_llm[-4:]
 
             # 5. Xây dựng Final Prompt (Augmentation)
             full_prompt = f"Dựa trên các thông tin sau để trả lời người dùng:\n\nNỘI DUNG THAM KHẢO:\n{context_str}\n\nCÂU HỎI: {query}"
@@ -127,11 +148,10 @@ class ChatService:
                 system_prompt=self.SYSTEM_PROMPT
             )
 
-            # 7. Lưu câu trả lời của Bot và metadata nguồn dẫn
-            bot_message = self.Message.objects.create(
-                conversation=conversation,
-                account_id=None,  # Hệ thống
-                role='assistant',
+            # 7. Lưu câu trả lời của Bot via Repository
+            # ✅ CORRECT: Use repository to create
+            bot_message = self.message_repo.create_bot_message(
+                conversation_id=conversation.id,
                 content=bot_response_text,
                 metadata={
                     'sources': list(source_docs),
@@ -146,9 +166,15 @@ class ChatService:
             raise LLMServiceError(f"Hệ thống RAG gặp sự cố: {str(e)}")
 
     def get_conversation_history(self, conversation_id: int, user_id: int) -> List[Any]:
-        """Lấy toàn bộ lịch sử trò truyện"""
-        history = self.Message.objects.filter(
-            conversation_id=conversation_id,
-            conversation__account_id=user_id
-        ).order_by('created_at')
-        return list(history)
+        """
+        Lấy toàn bộ lịch sử trò truyện
+        
+        ✅ CORRECT: Uses MessageRepository (not ORM)
+        """
+        # Verify permission
+        conversation = self.conversation_repo.get_conversation_by_id(conversation_id, user_id)
+        if not conversation:
+            raise BusinessLogicError("Conversation not found or access denied")
+        
+        # ✅ CORRECT: Get messages via repository
+        return self.message_repo.get_conversation_messages(conversation_id)

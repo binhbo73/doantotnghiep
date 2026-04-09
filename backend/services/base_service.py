@@ -76,6 +76,11 @@ class BaseService:
         
         self.repository = self.repository_class()
         self.logger = logging.getLogger(f"services.{self.__class__.__name__}")
+        
+        # Initialize audit log repository for centralized audit logging
+        # ALL services use this for audit trail (not ORM direct calls)
+        from repositories.audit_log_repository import AuditLogRepository
+        self.audit_log_repository = AuditLogRepository()
     
     # ============================================================================
     # COMMON OPERATIONS - Delegated to Repository
@@ -460,6 +465,71 @@ class BaseService:
         if not condition:
             self.logger.warning(f"Business rule violated: {message}")
             raise BusinessLogicError(message)
+    
+    def audit_log_action(
+        self,
+        action: str,
+        user_id: int = None,
+        resource_id: str = None,
+        resource_type: str = None,
+        query_text: str = None,
+        ip_address: str = None,
+        user_agent: str = None,
+        details: dict = None
+    ) -> bool:
+        """
+        Log action to AuditLog model via Repository (NOT ORM direct call).
+        
+        Centralized audit logging for all services - avoids duplicating
+        AuditLog.objects.create() calls everywhere.
+        
+        ✅ CORRECT: Uses AuditLogRepository
+        ❌ NEVER: AuditLog.objects.create() direct ORM calls
+        
+        Args:
+            action: Action name (LOGIN, CREATE_USER, UPDATE_ACCOUNT, etc.)
+            user_id: User ID performing the action (optional)
+            resource_id: ID of resource affected (optional)
+            resource_type: Type of resource (User, Document, etc.) (optional)
+            query_text: Description of action (optional)
+            ip_address: Client IP (optional)
+            user_agent: Client user agent (optional)
+            details: Dict with additional details (optional)
+        
+        Returns:
+            True if logged successfully, False otherwise
+        
+        Example:
+            service.audit_log_action(
+                action='CREATE_USER',
+                user_id=request.user.id,
+                resource_id=str(new_user.id),
+                query_text=f"User {new_user.username} created",
+                ip_address=request.META.get('REMOTE_ADDR')
+            )
+        """
+        try:
+            # ✅ CORRECT: Use Repository for audit logging
+            # Delegate to AuditLogRepository (single source of truth for audit logs)
+            # Get account object if user_id provided
+            account = None
+            if user_id:
+                account = self.repository.get_by_id(user_id) if hasattr(self, 'repository') else None
+            
+            return self.audit_log_repository.log_action(
+                account=account,
+                action=action,
+                resource_id=str(resource_id) if resource_id else None,
+                resource_type=resource_type,
+                query_text=query_text,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details=details or {}
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to create audit log: {str(e)}", exc_info=True)
+            # Don't raise - logging should never fail the main operation
+            return False
     
     # ============================================================================
     # TEMPLATE METHODS - Override in subclasses

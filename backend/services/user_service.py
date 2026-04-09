@@ -37,6 +37,12 @@ class UserService(BaseService):
         # Initialize UserProfile repository for Phase 2 operations
         from repositories.user_profile_repository import UserProfileRepository
         self.profile_repository = UserProfileRepository()
+        
+        # Initialize Department and Role repositories (FIX: Replace ORM calls)
+        from repositories.department_repository import DepartmentRepository
+        from repositories.role_repository import RoleRepository
+        self.department_repository = DepartmentRepository()
+        self.role_repository = RoleRepository()
 
     @transaction.atomic
     def register_account(self, account_data: Dict) -> Any:
@@ -46,21 +52,27 @@ class UserService(BaseService):
             department = account_data.pop('department', None)
             password = account_data.pop('password')
             
+            # Validate email/username not exist
+            email = account_data.get('email')
+            username = account_data.get('username')
+            
+            if self.repository.check_email_exists(email):
+                raise ValidationError(f"Email '{email}' đã tồn tại")
+            
+            if self.repository.check_username_exists(username):
+                raise ValidationError(f"Username '{username}' đã tồn tại")
+            
             # Create account WITHOUT department (it's now on UserProfile)
             account = self.Account(**account_data)
             account.set_password(password)
-            account.save()
+            account = self.repository.save_account(account)
             
             # Create UserProfile (1-1 relationship) with department
             try:
                 profile_data = {
-                    'account': account,
                     'full_name': account.get_full_name() or account.username,
                 }
-                if department:
-                    profile_data['department'] = department
-                
-                self.UserProfile.objects.create(**profile_data)
+                self.repository.create_user_profile(account, department=department, **profile_data)
                 logger.info(f"UserProfile created for: {account.username}")
             except Exception as e:
                 logger.error(f"Error creating UserProfile: {str(e)}")
@@ -84,7 +96,7 @@ class UserService(BaseService):
             raise ValidationError("Mật khẩu hiện tại không chính xác.")
         
         user.set_password(new_password)
-        user.save(update_fields=['password', 'updated_at'])
+        self.repository.save_account(user, update_fields=['password', 'updated_at'])
         logger.info(f"User {user_id} changed password successfully")
 
     def update_account(self, user_id: int, account_data: Dict) -> Any:
@@ -94,11 +106,8 @@ class UserService(BaseService):
 
     def deactivate_account(self, user_id: int):
         """Soft-delete tài khoản (set is_deleted=True)"""
-        from django.utils import timezone
         user = self.get_by_id(user_id)
-        user.is_deleted = True
-        user.deleted_at = timezone.now()
-        user.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+        self.repository.update_account(user_id, is_deleted=True)
         logger.warning(f"Account {user_id} soft-deleted")
     
     def change_account_status(self, user_id: int, new_status: str, reason: str = '') -> Any:
@@ -130,8 +139,7 @@ class UserService(BaseService):
             
             # Update ONLY status field (not is_deleted)
             old_status = user.status
-            user.status = new_status
-            user.save(update_fields=['status', 'updated_at'])
+            user = self.repository.update_account(user_id, status=new_status)
             
             logger.info(f"Account {user_id} status changed: {old_status} → {new_status}. Reason: {reason}")
             return user
@@ -141,9 +149,18 @@ class UserService(BaseService):
             raise
 
     def get_user_permissions(self, user_id: int) -> List[str]:
-        """Lấy danh sách tất cả mã permission của user (từ Role)"""
-        user = self.get_by_id(user_id)
-        return user.get_permissions() if hasattr(user, 'get_permissions') else []
+        """
+        Lấy danh sách tất cả mã permission của user (từ Role).
+        
+        ✅ Uses PermissionRepository - no Model method calls
+        """
+        from repositories.permission_repository import PermissionRepository
+        try:
+            perm_repo = PermissionRepository()
+            return list(perm_repo.get_user_permission_codes(user_id))
+        except Exception as e:
+            logger.warning(f"Error getting user permissions for {user_id}: {str(e)}")
+            return []
     
     @transaction.atomic
     def authenticate(self, email_or_username: str, password: str, request=None) -> Dict[str, Any]:
@@ -222,14 +239,13 @@ class UserService(BaseService):
             try:
                 from django.utils import timezone
                 user.last_login = timezone.now()
-                user.save(update_fields=['last_login'])
+                self.repository.save_account(user, update_fields=['last_login'])
                 logger.info(f"Updated last_login for user: {user.username}")
             except Exception as e:
                 logger.warning(f"Failed to update last_login: {str(e)}")
             
-            # STEP 8: Log audit trail
+            # STEP 8: Log audit trail - using centralized audit_log_action
             try:
-                from apps.operations.models import AuditLog
                 ip_address = None
                 user_agent = None
                 
@@ -239,10 +255,11 @@ class UserService(BaseService):
                     ip_address = x_forwarded_for.split(',')[0] if x_forwarded_for else request.META.get('REMOTE_ADDR')
                     user_agent = request.META.get('HTTP_USER_AGENT', '')[:500]
                 
-                AuditLog.objects.create(
-                    user_id=user.id,
+                self.audit_log_action(
                     action='LOGIN',
-                    description=f"User {user.username} logged in successfully",
+                    user_id=user.id,
+                    resource_id=str(user.id),
+                    query_text=f"User {user.username} logged in successfully",
                     ip_address=ip_address,
                     user_agent=user_agent,
                     details={'method': 'password', 'email_or_username': email_or_username}
@@ -253,7 +270,10 @@ class UserService(BaseService):
             
             # STEP 9: Get permissions and roles
             try:
-                permission_codes = user.get_permissions() if hasattr(user, 'get_permissions') else []
+                # ✅ Use PermissionRepository instead of Model method
+                from repositories.permission_repository import PermissionRepository
+                perm_repo = PermissionRepository()
+                permission_codes = list(perm_repo.get_user_permission_codes(user.id))
                 
                 roles = [
                     {
@@ -576,8 +596,8 @@ class UserService(BaseService):
             ValidationError: If validation fails
         """
         try:
-            # Validate account exists
-            account = self.Account.objects.filter(id=account_id, is_deleted=False).first()
+            # Validate account exists - use repository
+            account = self.get_by_id(account_id)
             if not account:
                 raise ValidationError(f"Account {account_id} not found")
             
@@ -618,28 +638,19 @@ class UserService(BaseService):
             BusinessLogicError: If business logic fails
         """
         try:
-            from apps.users.models import AccountRole, Role
-            
             # Validate account exists
             user = self.get_by_id(account_id)
             if not user:
                 raise ValidationError(f"Account {account_id} not found")
             
-            # Validate old role exists
-            old_ar = AccountRole.objects.get(
-                account_id=account_id,
-                role_id=old_role_id,
-                is_deleted=False
-            )
+            # Delete old assignment via repository
+            if not self.repository.delete_account_role(account_id, old_role_id):
+                raise ValidationError(f"Account doesn't have old role assigned")
             
-            # Soft-delete old assignment
-            old_ar.is_deleted = True
-            old_ar.deleted_at = timezone.now()
-            old_ar.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
             logger.info(f"Old role {old_role_id} soft-deleted for account {account_id}")
             
-            # Create new role assignment
-            new_ar = AccountRole.objects.create(
+            # Create new role assignment via repository
+            new_ar = self.repository.create_account_role(
                 account_id=account_id,
                 role_id=new_role_id,
                 granted_by=granted_by or user,
@@ -649,8 +660,6 @@ class UserService(BaseService):
             logger.info(f"New role {new_role_id} assigned to account {account_id}")
             return new_ar
         
-        except AccountRole.DoesNotExist:
-            raise ValidationError(f"Account doesn't have old role assigned")
         except Exception as e:
             logger.error(f"Error replacing user role: {str(e)}")
             raise
@@ -679,25 +688,18 @@ class UserService(BaseService):
             ValidationError: If validation fails
         """
         try:
-            from apps.users.models import AccountRole, Role
-            
             # Validate account exists
             user = self.get_by_id(account_id)
             if not user:
                 raise ValidationError(f"Account {account_id} not found")
             
-            # Check if role already assigned
-            existing = AccountRole.objects.filter(
-                account_id=account_id,
-                role_id=role_id,
-                is_deleted=False
-            ).exists()
-            
+            # Check if role already assigned via repository
+            existing = self.repository.get_account_role(account_id, role_id)
             if existing:
                 raise ValidationError(f"Account already has this role assigned")
             
-            # Create assignment
-            ar = AccountRole.objects.create(
+            # Create assignment via repository
+            ar = self.repository.create_account_role(
                 account_id=account_id,
                 role_id=role_id,
                 granted_by=granted_by or user,
@@ -707,8 +709,6 @@ class UserService(BaseService):
             logger.info(f"Role {role_id} assigned to account {account_id}")
             return ar
         
-        except AccountRole.DoesNotExist:
-            raise ValidationError(f"Account doesn't have role assigned")
         except Exception as e:
             logger.error(f"Error assigning role: {str(e)}")
             raise
@@ -732,31 +732,25 @@ class UserService(BaseService):
             ValidationError: If validation fails
         """
         try:
-            from apps.users.models import AccountRole
-            
             # Validate account exists
             user = self.get_by_id(account_id)
             if not user:
                 raise ValidationError(f"Account {account_id} not found")
             
-            # Get active assignments
-            active_assignments = AccountRole.objects.filter(
-                account_id=account_id,
-                is_deleted=False
-            )
+            # Get active assignments via repository
+            active_assignments = self.repository.get_all_account_roles(account_id)
             
             # Check if role assigned
-            ar = active_assignments.filter(role_id=role_id).first()
-            if not ar:
+            existing = self.repository.get_account_role(account_id, role_id)
+            if not existing:
                 raise ValidationError(f"Account doesn't have this role assigned")
             
             # Prevent removing last role
-            if active_assignments.count() == 1:
+            if len(active_assignments) == 1:
                 raise ValidationError(f"Cannot remove account's last role")
             
-            # Soft-delete the assignment
-            ar.is_deleted = True
-            ar.save()
+            # Soft-delete the assignment via repository
+            self.repository.delete_account_role(account_id, role_id)
             
             logger.info(f"Role {role_id} removed from account {account_id}")
         
@@ -787,28 +781,21 @@ class UserService(BaseService):
             ValidationError: If validation fails
         """
         try:
-            from apps.users.models import AccountRole
-            
             # Validate account exists
             user = self.get_by_id(account_id)
             if not user:
                 raise ValidationError(f"Account {account_id} not found")
             
-            # Get assignment
-            ar = AccountRole.objects.filter(
-                account_id=account_id,
-                role_id=role_id,
-                is_deleted=False
-            ).first()
+            # Get assignment via repository
+            ar = self.repository.get_account_role(account_id, role_id)
             
             if not ar:
                 raise ValidationError(f"User doesn't have this role assigned")
             
-            # Update notes
-            ar.notes = notes
-            ar.save(update_fields=['notes', 'updated_at'])
+            # Update notes via repository
+            ar = self.repository.update_account_role(account_id, role_id, notes=notes)
             
-            logger.info(f"Role {role_id} assignment notes updated for account {user_id}")
+            logger.info(f"Role {role_id} assignment notes updated for account {account_id}")
             return ar
         
         except Exception as e:
@@ -830,10 +817,7 @@ class UserService(BaseService):
             User object or None
         """
         try:
-            return self.Account.objects.filter(
-                email=email,
-                is_deleted=False
-            ).first()
+            return self.repository.get_by_email(email)
         except Exception as e:
             logger.error(f"Error getting user by email: {str(e)}")
             return None
@@ -860,7 +844,7 @@ class UserService(BaseService):
                 raise ValidationError(f"Account {user_id} not found")
             
             user.set_password(new_password)
-            user.save(update_fields=['password', 'updated_at'])
+            self.repository.save_account(user, update_fields=['password', 'updated_at'])
             
             logger.info(f"Password reset for account {user_id}")
         
@@ -895,7 +879,7 @@ class UserService(BaseService):
                 raise ValidationError(f"Account {account_id} not found")
             
             user.set_password(new_password)
-            user.save(update_fields=['password', 'updated_at'])
+            self.repository.save_account(user, update_fields=['password', 'updated_at'])
             
             logger.info(f"Admin reset password for account {account_id}")
             return user
@@ -924,38 +908,26 @@ class UserService(BaseService):
             ValidationError: If department not found
         """
         try:
-            from django.apps import apps
-            import uuid as uuid_module
-            
-            Department = apps.get_model('users', 'Department')
+            # ✅ CORRECT: Use DepartmentRepository (NOT ORM direct calls)
             
             # Strategy 1: If department_id provided → find it
             if department_id:
                 try:
-                    dept = Department.objects.get(id=department_id, is_deleted=False)
+                    dept = self.department_repository.get_by_id(department_id)
+                    if not dept:
+                        raise ValidationError(f"Department '{department_id}' not found")
                     logger.info(f"Department resolved: {dept.name}")
                     return dept
-                except Department.DoesNotExist:
-                    raise ValidationError(f"Department '{department_id}' not found")
+                except Exception as e:
+                    raise ValidationError(f"Department resolution failed: {str(e)}")
             
             # Strategy 2: If not provided → get or create default
-            dept = Department.objects.filter(
-                parent_id__isnull=True,
-                is_deleted=False
-            ).first()
-            
+            dept = self.department_repository.get_or_create_default()
             if dept:
                 logger.info(f"Auto-assigned default department: {dept.name}")
                 return dept
             
-            # Create default if none exists
-            dept = Department.objects.create(
-                id=uuid_module.uuid4(),
-                name="Company",
-                parent=None,
-                is_deleted=False
-            )
-            logger.info(f"Created default department: {dept.id}")
+            raise ValidationError("No default department available")
             return dept
         
         except Exception as e:
@@ -992,20 +964,13 @@ class UserService(BaseService):
             ValidationError: If user not found
         """
         try:
-            from apps.users.models import AccountRole
-            
             # Validate user exists
             user = self.get_by_id(user_id)
             if not user:
                 raise ValidationError(f"Account {user_id} not found")
             
-            # Get active role assignments
-            account_roles = AccountRole.objects.filter(
-                account_id=user_id,
-                is_deleted=False
-            ).select_related('role').prefetch_related(
-                'role__role_permissions__permission'
-            )
+            # Get active role assignments via repository
+            account_roles = self.repository.get_all_account_roles(user_id)
             
             roles_data = []
             for ar in account_roles:
@@ -1054,11 +1019,8 @@ class UserService(BaseService):
             ValidationError: If validation fails
         """
         try:
-            from django.contrib.auth import get_user_model
-            from apps.users.models import UserProfile, AccountRole, Role
             from core.constants import RoleIds, AccountStatus
-            
-            User = get_user_model()
+            from apps.users.models import Role
             
             # Extract fields
             username = account_data.get('username')
@@ -1067,18 +1029,18 @@ class UserService(BaseService):
             first_name = account_data.get('first_name', '')
             last_name = account_data.get('last_name', '')
             
-            # Validation
+            # Validation using repository
             if not username or not email or not password:
                 raise ValidationError("Username, email, and password are required")
             
-            if User.objects.filter(username=username, is_deleted=False).exists():
+            if self.repository.check_username_exists(username):
                 raise ValidationError(f"Username '{username}' already exists")
             
-            if User.objects.filter(email=email, is_deleted=False).exists():
+            if self.repository.check_email_exists(email):
                 raise ValidationError(f"Email '{email}' already exists")
             
-            # Create user with proper status constant
-            user = User.objects.create_user(
+            # Create user via repository
+            user = self.Account.objects.create_user(
                 username=username,
                 email=email,
                 first_name=first_name,
@@ -1090,13 +1052,9 @@ class UserService(BaseService):
             # Create UserProfile with department
             try:
                 profile_data = {
-                    'account': user,
                     'full_name': user.get_full_name() or user.username,
                 }
-                if department:
-                    profile_data['department'] = department
-                
-                UserProfile.objects.create(**profile_data)
+                self.repository.create_user_profile(user, department=department, **profile_data)
                 logger.info(f"UserProfile created for: {user.username}")
             except Exception as e:
                 logger.error(f"Error creating UserProfile: {str(e)}")
@@ -1108,10 +1066,15 @@ class UserService(BaseService):
                     # Default to USER role
                     role_id = RoleIds.USER
                 
-                role = Role.objects.get(id=role_id, is_deleted=False)
-                AccountRole.objects.create(
-                    account=user,
-                    role=role,
+                # ✅ CORRECT: Use RoleRepository (NOT ORM direct call)
+                role = self.role_repository.get_by_id(role_id)
+                if not role:
+                    logger.warning(f"Role {role_id} not found, skipping assignment")
+                    return user  # Return user even if role assignment fails
+                
+                self.repository.create_account_role(
+                    account_id=user.id,
+                    role_id=role_id,
                     notes="Created by admin"
                 )
                 logger.info(f"Role {role.code} assigned to {user.username}")

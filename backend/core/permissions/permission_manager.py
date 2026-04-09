@@ -33,6 +33,7 @@ from core.exceptions import (
     DocumentNotFoundError,
     InsufficientPermissionError,
 )
+from repositories.permission_manager_repository import PermissionManagerRepository
 
 logger = logging.getLogger(__name__)
 
@@ -65,9 +66,10 @@ class PermissionManager:
     }
     
     def __init__(self):
-        """Initialize permission manager (lazy load models)"""
+        """Initialize permission manager (lazy load repositories)"""
         self._permission_repo = None
         self._user_repo = None
+        self._perm_mgr_repo = None
     
     @property
     def permission_repo(self):
@@ -85,6 +87,13 @@ class PermissionManager:
             self._user_repo = UserRepository()
         return self._user_repo
     
+    @property
+    def perm_mgr_repo(self):
+        """Lazy load PermissionManagerRepository"""
+        if self._perm_mgr_repo is None:
+            self._perm_mgr_repo = PermissionManagerRepository()
+        return self._perm_mgr_repo
+    
     # ============================================================================
     # PUBLIC METHODS - Document Access
     # ============================================================================
@@ -99,7 +108,7 @@ class PermissionManager:
         Check if user can perform action on document
         
         ALGORITHM:
-        1. Get document + user
+        1. Get document + user via Repository
         2. Check account-level permissions (RBAC)
         3. Check document-level permissions (DocumentPermission)
         4. Check folder inheritance (parent folder's permissions)
@@ -112,27 +121,16 @@ class PermissionManager:
         
         Returns:
             True if allowed, False otherwise
-        
-        Raises:
-            DocumentNotFoundError: If document not found
-            PermissionDeniedError: If denied (with detailed reason)
         """
         try:
-            Document = apps.get_model('documents', 'Document')
-            Account = apps.get_model('users', 'Account')
-            
-            # Get document
-            try:
-                document = Document.objects.select_related('uploader', 'department', 'folder').get(
-                    pk=document_id, is_deleted=False
-                )
-            except Document.DoesNotExist:
+            # Get document via Repository (ORM call centralized)
+            document = self.perm_mgr_repo.get_document_by_id(document_id)
+            if not document:
                 raise DocumentNotFoundError(f"Document {document_id} not found")
             
-            # Get user
-            try:
-                user = Account.objects.get(pk=user_id, is_deleted=False)
-            except Account.DoesNotExist:
+            # Get user via Repository (ORM call centralized)
+            user = self.perm_mgr_repo.get_account_by_id(user_id)
+            if not user:
                 logger.warning(f"User {user_id} not found for permission check on document {document_id}")
                 return False
             
@@ -182,11 +180,10 @@ class PermissionManager:
         Get all documents user can access
         
         ALGORITHM:
-        1. Get user's roles
-        2. Get documents user uploaded (implicit access)
-        3. Get documents in accessible folders
-        4. Get documents with explicit DocumentPermission for user
-        5. Union all + distinct
+        1. Get documents user uploaded (implicit access)
+        2. Get documents with explicit DocumentPermission via Repository
+        3. Get documents in accessible folders via Repository
+        4. Union all + distinct
         
         For LARGE datasets, consider pagination + caching
         
@@ -195,49 +192,16 @@ class PermissionManager:
         """
         try:
             Document = apps.get_model('documents', 'Document')
-            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
-            FolderPermission = apps.get_model('documents', 'FolderPermission')
-            Folder = apps.get_model('documents', 'Folder')
-            AccountRole = apps.get_model('users', 'AccountRole')
             
             # Query 1: Documents user uploaded
-            uploaded_query = Document.objects.filter(
-                uploader_id=user_id, is_deleted=False
-            )
+            uploaded_query = self.perm_mgr_repo.get_documents_by_uploader(user_id)
             
             # Query 2: Documents with explicit permission
-            explicit_perms = Document.objects.filter(
-                is_deleted=False,
-                documentpermission__account_id=user_id,
-                documentpermission__access_scope__in=[
-                    AccessScope.READ, AccessScope.WRITE, AccessScope.ADMIN
-                ]
-            ).distinct()
+            explicit_perms = self.perm_mgr_repo.get_documents_with_explicit_permission(user_id)
             
             # Query 3: Documents via folder permission
-            user_role_ids = list(
-                AccountRole.objects.filter(
-                    account_id=user_id, is_deleted=False
-                ).values_list('role_id', flat=True)
-            )
-            
-            if user_role_ids:
-                # Folders where user's role has permission
-                accessible_folder_ids = list(
-                    FolderPermission.objects.filter(
-                        role_id__in=user_role_ids,
-                        is_deleted=False,
-                        access_scope__in=[AccessScope.READ, AccessScope.WRITE, AccessScope.ADMIN]
-                    ).values_list('folder_id', flat=True).distinct()
-                )
-                
-                # Documents in accessible folders
-                folder_docs = Document.objects.filter(
-                    folder_id__in=accessible_folder_ids,
-                    is_deleted=False
-                ) if accessible_folder_ids else Document.objects.none()
-            else:
-                folder_docs = Document.objects.none()
+            accessible_folder_ids = self.perm_mgr_repo.get_accessible_folder_ids(user_id)
+            folder_docs = self.perm_mgr_repo.get_documents_by_folder_ids(accessible_folder_ids)
             
             # Union all + remove duplicates
             result = (uploaded_query | explicit_perms | folder_docs).distinct()
@@ -247,6 +211,7 @@ class PermissionManager:
             
         except Exception as e:
             logger.error(f"Error getting accessible documents: {str(e)}", exc_info=True)
+            Document = apps.get_model('documents', 'Document')
             return Document.objects.none()
     
     # ============================================================================
@@ -313,39 +278,16 @@ class PermissionManager:
         """
         Get all folders user can access
         
+        Uses PermissionManagerRepository for all ORM operations
+        
         Returns:
             QuerySet of accessible folders
         """
         try:
-            Folder = apps.get_model('documents', 'Folder')
-            FolderPermission = apps.get_model('documents', 'FolderPermission')
-            AccountRole = apps.get_model('users', 'AccountRole')
-            
-            # User's role IDs
-            user_role_ids = list(
-                AccountRole.objects.filter(
-                    account_id=user_id, is_deleted=False
-                ).values_list('role_id', flat=True)
-            )
-            
-            if not user_role_ids:
-                return Folder.objects.none()
-            
-            # Accessible folders via role permissions
-            accessible_folder_ids = list(
-                FolderPermission.objects.filter(
-                    role_id__in=user_role_ids,
-                    is_deleted=False,
-                    access_scope__in=[AccessScope.READ, AccessScope.WRITE, AccessScope.ADMIN]
-                ).values_list('folder_id', flat=True).distinct()
-            )
-            
-            return Folder.objects.filter(
-                id__in=accessible_folder_ids, is_deleted=False
-            ).distinct()
-            
+            return self.perm_mgr_repo.get_accessible_folders(user_id)
         except Exception as e:
             logger.error(f"Error getting accessible folders: {str(e)}", exc_info=True)
+            Folder = apps.get_model('documents', 'Folder')
             return Folder.objects.none()
     
     # ============================================================================
@@ -397,50 +339,30 @@ class PermissionManager:
         """
         CORE ALGORITHM: Check document access via permission hierarchy
         
-        Hierarchy:
+        Hier archy:
         1. Explicit DENY (deny access takes precedence)
         2. Explicit ALLOW on document (DocumentPermission)
         3. Role-based on document
-        4. Inherit from folder
+        4. Inherit from folder  
         5. Default = DENY
         
-        Args:
-            user: Account instance
-            document: Document instance
-            action: 'read', 'write', 'delete', 'share'
-        
-        Returns:
-            bool: True if allowed
+        All ORM operations delegated to PermissionManagerRepository
         """
         try:
-            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
-            
             # Get required permission code for action
             required_permission_code = self.ACTION_PERMISSION_MAP.get(action)
             if not required_permission_code:
                 logger.warning(f"Unknown action: {action}")
                 return False
             
-            # LEVEL 1: Check explicit DENY on document
-            deny_perm = DocumentPermission.objects.filter(
-                document=document,
-                account=user,
-                access_scope=AccessScope.DENY,
-                is_deleted=False
-            ).first()
-            
+            # LEVEL 1: Check explicit DENY on document via Repository
+            deny_perm = self.perm_mgr_repo.get_document_deny_permission(document.id, user.id)
             if deny_perm:
                 logger.info(f"User {user.id} has DENY permission on document {document.id}")
                 return False
             
-            # LEVEL 2: Check explicit ALLOW on document (user-level)
-            allow_perm = DocumentPermission.objects.filter(
-                document=document,
-                account=user,
-                access_scope__in=[AccessScope.READ, AccessScope.WRITE, AccessScope.ADMIN],
-                is_deleted=False
-            ).first()
-            
+            # LEVEL 2: Check explicit ALLOW on document via Repository
+            allow_perm = self.perm_mgr_repo.get_document_allow_permission(document.id, user.id)
             if allow_perm:
                 # Check if permission level allows action
                 if self._scope_allows_action(allow_perm.access_scope, action):
@@ -448,7 +370,7 @@ class PermissionManager:
                     return True
             
             # LEVEL 3: Check role-based RBAC
-            user_roles = self._get_user_roles(user.id)
+            user_roles = self.perm_mgr_repo.get_user_role_ids(user.id)
             if user_roles:
                 # Check if user's role has required permission
                 if self.permission_repo.check_user_has_permission(user.id, required_permission_code):
@@ -487,6 +409,8 @@ class PermissionManager:
         2. Parent folder permission (inherited)
         3. Default = DENY (AccessScope.NONE)
         
+        All ORM operations delegated to Repository
+        
         Args:
             user: Account instance
             folder: Folder instance
@@ -495,11 +419,7 @@ class PermissionManager:
             AccessScope: READ, WRITE, ADMIN, DENY, or NONE (default)
         """
         try:
-            FolderPermission = apps.get_model('documents', 'FolderPermission')
-            
-            user_role_ids = list(
-                self._get_user_role_ids(user.id)
-            )
+            user_role_ids = self.perm_mgr_repo.get_user_role_ids(user.id)
             
             if not user_role_ids:
                 logger.debug(f"User {user.id} has no roles")
@@ -513,19 +433,17 @@ class PermissionManager:
             while current_folder and iterations < max_iterations:
                 iterations += 1
                 
-                # Check for explicit permission on this folder
-                perm = FolderPermission.objects.filter(
-                    folder=current_folder,
-                    role_id__in=user_role_ids,
-                    is_deleted=False
-                ).order_by('-access_scope').first()  # Higher scope takes precedence
+                # Check for explicit permission on this folder via Repository
+                perm = self.perm_mgr_repo.get_folder_permission_for_role(
+                    current_folder.id, user_role_ids
+                )
                 
                 if perm:
                     logger.debug(f"Folder {current_folder.id} has permission scope {perm.access_scope}")
                     return perm.access_scope
                 
                 # Move to parent folder
-                current_folder = current_folder.parent
+                current_folder = current_folder.parent if hasattr(current_folder, 'parent') else None
             
             # No permission found in hierarchy
             logger.debug(f"User {user.id} has no permission in folder hierarchy at {folder.id}")
