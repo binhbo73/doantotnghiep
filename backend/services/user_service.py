@@ -230,10 +230,45 @@ class UserService(BaseService):
                 logger.warning(f"Failed login attempt for user: {user.id}")
                 raise InvalidCredentialsError("Email/username hoặc mật khẩu không chính xác")
             
-            # STEP 6: Generate JWT tokens
+            # ✅ STEP 6: Generate JWT tokens with cached roles & permissions
             refresh = RefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
+            
+            # Get roles and permissions BEFORE generating tokens
+            roles_data = []
+            permission_codes = []
+            try:
+                # Get roles
+                roles_data = [
+                    {
+                        "id": str(ar.role.id),
+                        "code": ar.role.code,
+                        "name": ar.role.name
+                    }
+                    for ar in user.account_roles.filter(is_deleted=False).select_related('role')
+                ]
+                
+                # Get permissions
+                from repositories.permission_repository import PermissionRepository
+                perm_repo = PermissionRepository()
+                permission_codes = list(perm_repo.get_user_permission_codes(user.id))
+                
+                logger.info(f"Prepared roles ({len(roles_data)}) and permissions ({len(permission_codes)}) for JWT token")
+            except Exception as e:
+                logger.warning(f"Failed to prepare roles/permissions for JWT: {str(e)}")
+            
+            # ✅ Add roles and permissions to JWT token claims (cached)
+            refresh['roles'] = roles_data
+            refresh['permissions'] = permission_codes
+            
+            # Also add to access token for immediate use
+            access_token_obj = refresh.access_token
+            access_token_obj['roles'] = roles_data
+            access_token_obj['permissions'] = permission_codes
+            
+            access_token = str(access_token_obj)
             refresh_token = str(refresh)
+            
+            logger.info(f"JWT tokens generated with cached roles and permissions for user {user.id}")
             
             # STEP 7: Update last_login timestamp
             try:
@@ -268,27 +303,9 @@ class UserService(BaseService):
             except Exception as e:
                 logger.warning(f"Failed to create audit log for login: {str(e)}")
             
-            # STEP 9: Get permissions and roles
-            try:
-                # ✅ Use PermissionRepository instead of Model method
-                from repositories.permission_repository import PermissionRepository
-                perm_repo = PermissionRepository()
-                permission_codes = list(perm_repo.get_user_permission_codes(user.id))
-                
-                roles = [
-                    {
-                        "id": str(ar.role.id),
-                        "code": ar.role.code,
-                        "name": ar.role.name
-                    }
-                    for ar in user.account_roles.filter(is_deleted=False).select_related('role')
-                ]
-                
-                logger.info(f"Fetched permissions ({len(permission_codes)}) and roles ({len(roles)}) for user {user.id}")
-            except Exception as e:
-                logger.warning(f"Failed to fetch permissions/roles: {str(e)}")
-                permission_codes = []
-                roles = []
+            # ✅ STEP 9: Roles and permissions already cached in JWT token
+            # No need to fetch again - they're in roles_data and permission_codes from STEP 6
+            logger.info(f"Roles and permissions already included in JWT tokens")
             
             # Get department from UserProfile
             department_id = None
@@ -299,19 +316,19 @@ class UserService(BaseService):
             except Exception as e:
                 logger.warning(f"Failed to fetch user profile: {str(e)}")
             
-            # STEP 10: Return comprehensive result
+            # ✅ STEP 10: Return comprehensive result (roles & permissions cached in JWT)
             from api.serializers.user_serializers import AccountSerializer
             
             result = {
                 'user': AccountSerializer(user).data,
                 'access_token': access_token,
                 'refresh_token': refresh_token,
-                'permissions': permission_codes,
-                'roles': roles,
+                'permissions': permission_codes,  # ✅ From cached JWT
+                'roles': roles_data,  # ✅ From cached JWT
                 'department_id': department_id,
             }
             
-            logger.info(f"User {user.id} authenticated successfully")
+            logger.info(f"✅ User {user.id} authenticated successfully with cached roles/permissions in JWT")
             return result
         
         except (InvalidCredentialsError, ValidationError, AccountBlockedError, AccountInactiveError):

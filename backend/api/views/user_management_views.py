@@ -52,29 +52,56 @@ class UserPagination(PageNumberPagination):
 # ============================================================
 
 class IsAdmin(permissions.BasePermission):
-    """Check if user has admin role"""
+    """✅ Check if user has admin role - Uses cached roles from JWT token"""
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        # Check if user has ADMIN (id=1) or MANAGER (id=2) role
-        return request.user.account_roles.filter(
-            role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-            is_deleted=False
-        ).exists()
+        
+        # ✅ IMPROVED: First try to use roles cached in JWT token (no DB query!)
+        if hasattr(request, 'auth') and request.auth:
+            roles = request.auth.get('roles', []) if request.auth else None
+            if roles:
+                # Roles from JWT: [{'id': '...', 'name': '...', 'code': '...'}]
+                role_names = [r.get('name') for r in roles] if isinstance(roles, list) else []
+                has_role = any(name in ['ADMIN', 'MANAGER'] for name in role_names)
+                
+                if has_role:
+                    return True
+        
+        # Fallback: Query DB if not in JWT token (shouldn't happen normally)
+        try:
+            return request.user.account_roles.filter(
+                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
+                is_deleted=False
+            ).exists()
+        except Exception:
+            return False
 
 
 class IsAdminOrOwner(permissions.BasePermission):
-    """Check if user is admin OR viewing own profile"""
+    """✅ Check if user is admin OR viewing own profile - Uses cached JWT roles"""
     def has_permission(self, request, view):
         return request.user and request.user.is_authenticated
     
     def has_object_permission(self, request, view, obj):
-        # Admin can access any user
-        if request.user.account_roles.filter(
-            role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-            is_deleted=False
-        ).exists():
-            return True
+        # ✅ IMPROVED: Use cached roles from JWT first
+        if hasattr(request, 'auth') and request.auth:
+            roles = request.auth.get('roles', []) if request.auth else None
+            if roles:
+                role_names = [r.get('name') for r in roles] if isinstance(roles, list) else []
+                is_admin = any(name in ['ADMIN', 'MANAGER'] for name in role_names)
+                if is_admin:
+                    return True
+        
+        # Fallback: Check DB if not in JWT
+        try:
+            if request.user.account_roles.filter(
+                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
+                is_deleted=False
+            ).exists():
+                return True
+        except Exception:
+            pass
         
         # Owner can access own profile
         return obj.id == request.user.id
