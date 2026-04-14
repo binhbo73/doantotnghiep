@@ -28,6 +28,12 @@ from api.views.user_management_views import (
     UserDepartmentChangeView,
     AdminCreateAccountView
 )
+from api.views.iam_views import (
+    PermissionListView,
+    RoleManagementView,
+    RolePermissionsView,
+    CheckUserPermissionView
+)
 
 # UUID regex pattern for URL routing
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -104,4 +110,24 @@ urlpatterns = [
     
     # Change account department
     re_path(rf"^accounts/(?P<account_id>{UUID_PATTERN})/department/?$", UserDepartmentChangeView.as_view(), name="account_change_department"),
+    
+    # ============================================================
+    # IAM ENDPOINTS (Phase 3 - Role & Permission Management)
+    # ============================================================
+    # GET /api/v1/iam/permissions - List all permission codes (paginated)
+    # PUT /api/v1/iam/permissions/{permission_id} - Update permission
+    # DELETE /api/v1/iam/permissions/{permission_id} - Delete permission (soft delete)
+    re_path(r"^iam/permissions/?$", PermissionListView.as_view(), name="iam_permissions"),
+    re_path(rf"^iam/permissions/(?P<permission_id>{UUID_PATTERN})/?$", PermissionListView.as_view(), name="iam_permission_detail"),
+    
+    # API-06/07/08/09: GET|POST|PUT|DELETE /api/v1/iam/roles - Role management
+    re_path(r"^iam/roles/?$", RoleManagementView.as_view(), name="iam_roles"),
+    re_path(rf"^iam/roles/(?P<role_id>{UUID_PATTERN})/?$", RoleManagementView.as_view(), name="iam_role_detail"),
+    
+    # API-10/11/12: GET|POST|DELETE /api/v1/iam/roles/{role_id}/permissions
+    re_path(rf"^iam/roles/(?P<role_id>{UUID_PATTERN})/permissions/?$", RolePermissionsView.as_view(), name="iam_role_permissions"),
+    re_path(rf"^iam/roles/(?P<role_id>{UUID_PATTERN})/permissions/(?P<permission_id>{UUID_PATTERN})/?$", RolePermissionsView.as_view(), name="iam_role_permission_detail"),
+    
+    # POST /api/v1/iam/users/{user_id}/check-permission - Check user permission
+    re_path(rf"^iam/users/(?P<user_id>{UUID_PATTERN})/check-permission/?$", CheckUserPermissionView.as_view(), name="iam_check_user_permission"),
 ]

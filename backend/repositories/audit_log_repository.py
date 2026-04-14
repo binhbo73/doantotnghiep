@@ -87,17 +87,14 @@ class AuditLogRepository(BaseRepository):
             - Handles None values gracefully
         """
         try:
-            # Prepare data - all fields optional
+            # Prepare data - all fields optional (only include fields that AuditLog model supports)
             log_data = {
                 'account': account,
                 'action': action or 'UNKNOWN',
                 'resource_id': resource_id,
-                'resource_type': resource_type,
                 'query_text': query_text,
                 'ip_address': ip_address,
                 'user_agent': user_agent,
-                'details': details or {},
-                'status': status,
             }
             
             # Remove None values for cleaner audit logs

@@ -486,21 +486,6 @@ def is_admin(user) -> bool:
         is_deleted=False
     ).exists()
 
-            
-            # Manager can modify users in their department
-            if perm_mgr.check_user_has_role(request.user.id, RoleIds.MANAGER):
-                if obj.department_id == request.user.department_id:
-                    return True
-            
-            logger.warning(
-                f"User {request.user.id} attempted to modify user {obj.id} without permission"
-            )
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error checking user modification permission: {str(e)}", exc_info=True)
-            return False
-
 
 # ============================================================================
 # CONVENIENCE EXPORTS
