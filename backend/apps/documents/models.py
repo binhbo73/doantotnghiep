@@ -35,6 +35,13 @@ class Folder(BaseModel):
     )
     description = models.TextField(max_length=1000, null=True, blank=True, help_text="Folder description")
     metadata = models.JSONField(default=dict, blank=True, help_text="Additional metadata")
+    created_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_folders',
+        help_text="User who created this folder"
+    )
 
     class Meta:
         db_table = "folders"
@@ -43,6 +50,7 @@ class Folder(BaseModel):
         indexes = [
             models.Index(fields=['parent_id']),
             models.Index(fields=['department_id']),
+            models.Index(fields=['created_by_id']),
             models.Index(fields=['name']),
             models.Index(fields=['is_deleted']),
         ]

@@ -169,9 +169,9 @@ class Department(BaseModel):
                     dept_ids.append(sub.id)
                     get_sub_depts(sub)
             get_sub_depts(self)
-            return Account.objects.filter(department_id__in=dept_ids, is_deleted=False)
+            return Account.objects.filter(user_profile__department_id__in=dept_ids, is_deleted=False)
         else:
-            return Account.objects.filter(department=self, is_deleted=False)
+            return Account.objects.filter(user_profile__department_id=self.id, is_deleted=False)
 
 
 class Role(BaseModel):

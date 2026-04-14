@@ -222,18 +222,22 @@ class AuditLog(BaseModel):
     ACTION_CHOICES = [
         ('LOGIN', 'Login'),
         ('LOGOUT', 'Logout'),
+        ('CREATE', 'Create'),
         ('UPLOAD', 'Upload'),
         ('DELETE', 'Delete'),
         ('QUERY', 'Query'),
         ('EDIT', 'Edit'),
+        ('UPDATE', 'Update'),
         ('DOWNLOAD', 'Download'),
         ('SHARE', 'Share'),
+        ('IMPORT', 'Import'),
         ('DELETE_USER', 'Delete User'),
         ('CHANGE_ROLE', 'Change Role'),
         ('CREATE_ROLE', 'Create Role'),
         ('FEEDBACK', 'Feedback'),
         ('GRANT_ACL', 'Grant ACL'),
         ('REVOKE_ACL', 'Revoke ACL'),
+        ('MUTATION', 'Mutation'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

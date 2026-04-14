@@ -34,6 +34,17 @@ from api.views.iam_views import (
     RolePermissionsView,
     CheckUserPermissionView
 )
+from api.views.department_views import (
+    DepartmentListTreeView,
+    DepartmentDetailView
+)
+from api.views.folder_views import (
+    FolderListCreateView,
+    FolderDetailView,
+    FolderMoveView,
+    FolderPermissionsView,
+    FolderPermissionDetailView
+)
 
 # UUID regex pattern for URL routing
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -130,4 +141,39 @@ urlpatterns = [
     
     # POST /api/v1/iam/users/{user_id}/check-permission - Check user permission
     re_path(rf"^iam/users/(?P<user_id>{UUID_PATTERN})/check-permission/?$", CheckUserPermissionView.as_view(), name="iam_check_user_permission"),
+    
+    # ============================================================
+    # DEPARTMENT ENDPOINTS (Phase 2 - Organization Structure)
+    # ============================================================
+    # GET /api/v1/departments - Get all departments in tree structure
+    # POST /api/v1/departments - Create new department
+    re_path(r"^departments/?$", DepartmentListTreeView.as_view(), name="department_list_create"),
+    
+    # PUT /api/v1/departments/{dept_id} - Update department
+    # DELETE /api/v1/departments/{dept_id} - Soft delete department
+    re_path(rf"^departments/(?P<dept_id>{UUID_PATTERN})/?$", DepartmentDetailView.as_view(), name="department_detail"),
+    
+    # ============================================================
+    # FOLDER MANAGEMENT ENDPOINTS (Phase 4A - Document Organization)
+    # Folder hierarchical structure with ACL-based access control
+    # ============================================================
+    # GET /api/v1/folders - Get all folders in tree structure
+    # POST /api/v1/folders - Create new folder
+    re_path(r"^folders/?$", FolderListCreateView.as_view(), name="folder_list_create"),
+    
+    # GET /api/v1/folders/{folder_id} - Get folder details
+    # PUT /api/v1/folders/{folder_id} - Update folder
+    # DELETE /api/v1/folders/{folder_id} - Soft delete folder (recursive)
+    re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/?$", FolderDetailView.as_view(), name="folder_detail"),
+    
+    # PATCH /api/v1/folders/{folder_id}/move - Move folder to new parent
+    re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/move/?$", FolderMoveView.as_view(), name="folder_move"),
+    
+    # Folder permissions endpoints
+    re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/permissions/?$", 
+            FolderPermissionsView.as_view(), name="folder_permissions_list"),
+    
+    # DELETE /api/v1/folders/{folder_id}/permissions/{subject_type}/{subject_id}/{permission} - Revoke permission
+    re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/permissions/(?P<subject_type>account|role)/(?P<subject_id>[^/]+)/(?P<permission>read|write|delete)/?$", 
+            FolderPermissionDetailView.as_view(), name="folder_permission_detail"),
 ]

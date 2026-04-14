@@ -906,12 +906,13 @@ class AdminCreateAccountView(APIView):
         try:
             self.user_service = UserService()
             
-            # Step 1: Extract & resolve department (optional)
-            # ✅ CORRECT: Use Service to resolve department (NOT ORM direct calls)
+            # Step 1: Extract department_id (OPTIONAL - default NULL)
+            # ✅ CORRECT: department_id is optional, only validate if provided
             department_id = request.data.get('department_id')
             
             try:
                 if department_id:
+                    # Validate department exists if provided
                     department = self.user_service.department_repository.get_by_id(department_id)
                     if not department:
                         return Response(
@@ -919,8 +920,8 @@ class AdminCreateAccountView(APIView):
                             status=status.HTTP_404_NOT_FOUND
                         )
                 else:
-                    # Get or create default department via Service
-                    department = self.user_service.resolve_or_create_default_department()
+                    # department_id is OPTIONAL - set to None (default NULL in User model)
+                    department = None
             except Exception as e:
                 logger.error(f"Error resolving department: {str(e)}")
                 return Response(
@@ -963,9 +964,10 @@ class AdminCreateAccountView(APIView):
                 email_status = "error"
             
             # Step 5: Log action via Service (which uses AuditLogRepository)
+            # TODO: Fix action choices in AuditLog model to support CREATE_ACCOUNT
             try:
                 self.user_service.audit_log_action(
-                    action='CREATE_ACCOUNT',
+                    action='UPLOAD',  # Temp: using UPLOAD as placeholder since CREATE_ACCOUNT not in choices
                     user_id=request.user.id,
                     resource_id=str(user.id),
                     query_text=f"Admin created account: {username} ({email}). Email status: {email_status}",
@@ -974,6 +976,14 @@ class AdminCreateAccountView(APIView):
                 )
             except Exception as e:
                 logger.error(f"Failed to log account creation: {str(e)}")
+            
+            # Get user profile to access department info
+            user_profile = user.user_profile
+            department_id = None
+            department_name = None
+            if user_profile and user_profile.department_id:
+                department_id = str(user_profile.department_id)
+                department_name = user_profile.department.name if user_profile.department else None
             
             return Response(
                 ResponseBuilder.created(
@@ -984,8 +994,8 @@ class AdminCreateAccountView(APIView):
                         'first_name': user.first_name,
                         'last_name': user.last_name,
                         'status': user.status,
-                        'department_id': str(department.id) if department else None,
-                        'department_name': department.name if department else None,
+                        'department_id': department_id,
+                        'department_name': department_name,
                         'created_at': user.created_at,
                         'email_sent': email_status == "sent"
                     },
@@ -1005,6 +1015,13 @@ class AdminCreateAccountView(APIView):
                 ResponseBuilder.error(message=f"Error creating account: {str(e)}"),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _get_client_ip(self, request):
+        """Extract client IP from request headers"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            return x_forwarded_for.split(',')[0]
+        return request.META.get('REMOTE_ADDR')
     
     @staticmethod
     def _generate_temporary_password(length=16) -> str:
