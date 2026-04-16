@@ -31,6 +31,7 @@ from core.exceptions import (
     NotFoundError,
     FileSizeExceededError,
     DocumentProcessingError,
+    PermissionDeniedError,
 )
 from repositories.document_repository import DocumentRepository
 from repositories.permission_repository import PermissionRepository
@@ -138,34 +139,62 @@ class DocumentService(BaseService):
                     f"File size {file_size_mb:.1f}MB exceeds limit {self.MAX_FILE_SIZE_MB}MB"
                 )
             
-            # Validate file type
-            if file.content_type not in self.ALLOWED_FILE_TYPES:
+            # Validate file type - with fallback to extension-based detection
+            file_type = file.content_type or ''
+            
+            # If content_type is empty, try to guess from extension
+            if not file_type:
+                import mimetypes
+                guessed_type, _ = mimetypes.guess_type(file.name)
+                file_type = guessed_type or 'application/octet-stream'
+            
+            if file_type not in self.ALLOWED_FILE_TYPES:
                 raise ValidationError(
-                    f"File type '{file.content_type}' not supported. "
+                    f"File type '{file_type}' not supported. "
                     f"Allowed: {', '.join(self.ALLOWED_FILE_TYPES)}"
                 )
             
             # Set defaults
             if department_id is None:
-                department_id = user.department_id
+                # Get department from UserProfile if not provided
+                try:
+                    from apps.users.models import UserProfile
+                    user_profile = UserProfile.objects.get(account_id=user_id)
+                    department_id = user_profile.department_id
+                except (UserProfile.DoesNotExist, Exception):
+                    department_id = None
             
-            # Create document
+            # Prepare file hash and storage path BEFORE creating document
+            import hashlib
+            import os
+            file_content = file.read()
+            file_hash = hashlib.md5(file_content).hexdigest()
+            file.seek(0)  # Reset for later use
+            file_ext = os.path.splitext(file.name)[1]
+            hashed_name = f"{file_hash}{file_ext}"
+            storage_path = f"uploads/{user_id}/{hashed_name}"
+            
+            # Create document with all required fields
             with transaction.atomic():
                 document = self.document_repo.create(
                     original_name=file.name,
-                    file_type=file.content_type,
+                    filename=hashed_name,
+                    storage_path=storage_path,
+                    file_type=file_type,
                     file_size=file.size,
                     uploader_id=user_id,
                     department_id=department_id,
                     folder_id=folder_id,
-                    status=DocumentStatus.DRAFT,
-                    processing_status='pending',
-                    description=description or '',
+                    status='pending',
+                    access_scope='personal',
                 )
                 
-                # Store file (FileField handles storage)
-                document.file = file
-                document.save()
+                # Store actual file to disk
+                storage_dir = f"uploads/{user_id}"
+                if not os.path.exists(storage_dir):
+                    os.makedirs(storage_dir, exist_ok=True)
+                with open(os.path.join(storage_dir, hashed_name), 'wb') as f:
+                    f.write(file_content)
                 
                 # Add tags if provided
                 if tags:
@@ -293,51 +322,74 @@ class DocumentService(BaseService):
         user_id: int,
         folder_id: int = None,
         status: str = None,
+        search: str = None,
+        sort_by: str = '-created_at',
         page: int = 1,
         page_size: int = 10,
-    ) -> Tuple[List['Document'], Any]:
+    ) -> dict:
         """
         List documents accessible to user with optional filters
         
         Args:
-            user_id: User
+            user_id: User ID
             folder_id: Filter by folder (optional)
             status: Filter by status (optional)
+            search: Search in original_name and description (optional)
+            sort_by: Sort field (default: -created_at)
             page: Page number
             page_size: Items per page
         
         Returns:
-            (documents_list, page_object)
+            Dictionary with documents, pagination info
         """
         try:
-            filters = {}
-            if folder_id:
-                filters['folder_id'] = folder_id
-            if status:
-                filters['status'] = status
+            from django.db.models import Q
             
             # Get accessible documents
             accessible = self.document_repo.get_accessible_documents(user_id)
             
             # Apply filters
-            for field, value in filters.items():
-                accessible = accessible.filter(**{field: value})
+            if folder_id:
+                accessible = accessible.filter(folder_id=folder_id)
+            if status:
+                accessible = accessible.filter(status=status)
+            
+            # Apply search
+            if search:
+                accessible = accessible.filter(
+                    Q(original_name__icontains=search) | 
+                    Q(description__icontains=search)
+                )
+            
+            # Apply ordering
+            accessible = accessible.order_by(sort_by)
+            
+            # Get total count
+            total = accessible.count()
             
             # Paginate
-            documents, page_obj = self.document_repo.paginate(
-                page=page,
-                page_size=page_size,
-                filters={},  # Already filtered above
-                ordering='-created_at'
-            )
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            documents = accessible[start_idx:end_idx]
+            
+            # Calculate pagination info
+            total_pages = (total + page_size - 1) // page_size
             
             self.log_action(
                 'LIST_DOCUMENTS',
-                details=f"Filters: {filters}",
+                details=f"Total: {total}, Page: {page}, Search: {search}",
                 user_id=user_id
             )
             
-            return List(accessible[:page_size]), page_obj  # Simplified
+            return {
+                'documents': list(documents),
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total': total,
+                    'total_pages': total_pages
+                }
+            }
             
         except Exception as e:
             self.log_error('list_accessible_documents', e, user_id=user_id)
@@ -413,7 +465,7 @@ class DocumentService(BaseService):
             )
             
             self._log_document_audit(
-                action='PROCESSING_COMPLETED',
+                action='MUTATION',
                 document_id=document_id
             )
             
@@ -453,7 +505,7 @@ class DocumentService(BaseService):
             )
             
             self._log_document_audit(
-                action='PROCESSING_FAILED',
+                action='MUTATION',
                 document_id=document_id
             )
             
@@ -568,7 +620,7 @@ class DocumentService(BaseService):
                 
                 # Log to AuditLog via centralized method
                 self.audit_log_action(
-                    action='DELETE_DOCUMENT',
+                    action='DELETE',
                     user_id=user_id,
                     resource_id=str(document_id),
                     resource_type='Document',
@@ -628,3 +680,463 @@ class DocumentService(BaseService):
             )
         except Exception as e:
             logger.warning(f"Could not log audit: {str(e)}")
+    
+    # ============================================================================
+    # MISSING METHODS REQUIRED BY VIEWS (Phase 4B - Added for Compatibility)
+    # ============================================================================
+    
+    def get_document_detail(
+        self,
+        doc_id: str,
+        user_id: int,
+        permission_required: str = 'read'
+    ) -> 'Document':
+        """
+        Get document detail with permission check.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User requesting
+            permission_required: Required permission ('read', 'write', 'delete')
+        
+        Returns:
+            Document instance
+        
+        Raises:
+            NotFoundError: If document not found
+            PermissionDeniedError: If user lacks permission
+        """
+        from django.apps import apps
+        Document = apps.get_model('documents', 'Document')
+        
+        try:
+            document = self.document_repo.get_by_id(doc_id)
+            if not document:
+                raise NotFoundError(f"Document {doc_id} not found")
+            
+            # Check permission
+            if permission_required == 'read':
+                if not self.document_repo.check_user_can_read(doc_id, user_id):
+                    raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            elif permission_required == 'write':
+                if not self.document_repo.check_user_can_write(doc_id, user_id):
+                    raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            elif permission_required == 'delete':
+                if not self.document_repo.check_user_can_delete(doc_id, user_id):
+                    raise PermissionDeniedError(f"No delete permission on document {doc_id}")
+            
+            return document
+        
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error getting document detail: {e}", exc_info=True)
+            raise NotFoundError(f"Failed to retrieve document {doc_id}")
+    
+    def update_document(
+        self,
+        doc_id: str,
+        user_id: int,
+        original_name: str = None,
+        description: str = None,
+        access_scope: str = None,
+        tags: List[str] = None,
+        **kwargs
+    ) -> 'Document':
+        """
+        Update document metadata.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User requesting
+            original_name: New document name
+            description: New description
+            access_scope: New access scope
+            tags: New tags list
+        
+        Returns:
+            Updated Document
+        
+        Raises:
+            NotFoundError: If not found
+            PermissionDeniedError: If user lacks write permission
+        """
+        try:
+            # Check write permission
+            if not self.document_repo.check_user_can_write(doc_id, user_id):
+                raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            
+            # Update fields
+            update_data = {}
+            if original_name is not None:
+                update_data['original_name'] = original_name
+            if description is not None:
+                update_data['description'] = description
+            if access_scope is not None:
+                update_data['access_scope'] = access_scope
+            
+            document = self.document_repo.update(doc_id, **update_data)
+            
+            # Update tags if provided
+            if tags:
+                self._add_tags_to_document(doc_id, tags)
+            
+            self._log_document_audit(
+                action='UPDATE',
+                document_id=doc_id,
+                user_id=user_id
+            )
+            
+            return document
+        
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error updating document: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to update document {doc_id}")
+    
+    def get_document_download(
+        self,
+        doc_id: str,
+        user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get document file for download.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User requesting
+        
+        Returns:
+            Dict with 'content', 'filename', 'mime_type'
+        
+        Raises:
+            NotFoundError: If not found
+            PermissionDeniedError: If user lacks read permission
+        """
+        try:
+            # Check read permission
+            if not self.document_repo.check_user_can_read(doc_id, user_id):
+                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            
+            document = self.document_repo.get_by_id(doc_id)
+            if not document or not document.storage_path:
+                raise NotFoundError(f"Document file {doc_id} not found")
+            
+            # Read file content from storage_path
+            import os
+            if os.path.exists(document.storage_path):
+                with open(document.storage_path, 'rb') as f:
+                    file_content = f.read()
+            else:
+                raise NotFoundError(f"Document file not found at {document.storage_path}")
+            
+            return {
+                'content': file_content,
+                'filename': document.original_name,
+                'mime_type': document.file_type or 'application/octet-stream',
+            }
+        
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error downloading document: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to download document {doc_id}")
+    
+    def get_document_permissions(
+        self,
+        doc_id: str,
+        user_id: int
+    ) -> List['DocumentPermission']:
+        """
+        Get all permissions on document.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User requesting (must be admin or owner)
+        
+        Returns:
+            List of DocumentPermission objects
+        
+        Raises:
+            NotFoundError: If not found
+            PermissionDeniedError: If user not authorized
+        """
+        from django.apps import apps
+        
+        try:
+            # Check write permission (only owner/admin can view ACL)
+            if not self.document_repo.check_user_can_write(doc_id, user_id):
+                raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            
+            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+            permissions = DocumentPermission.objects.filter(
+                document_id=doc_id,
+                is_deleted=False
+            )
+            
+            return list(permissions)
+        
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error getting permissions: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get permissions for document {doc_id}")
+    
+    def grant_document_permission(
+        self,
+        doc_id: str,
+        user_id: int,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        precedence: str = 'inherit'
+    ) -> 'DocumentPermission':
+        """
+        Grant or update document permission.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User granting (must have write permission)
+            subject_type: 'account' or 'role'
+            subject_id: Account UUID/ID or Role UUID
+            permission: 'read', 'write', or 'delete'
+            precedence: 'inherit', 'override', or 'deny'
+        
+        Returns:
+            DocumentPermission object
+        
+        Raises:
+            PermissionDeniedError: If user lacks write permission
+        """
+        from django.apps import apps
+        
+        try:
+            # Check write permission
+            if not self.document_repo.check_user_can_write(doc_id, user_id):
+                raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            
+            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+            
+            # Try to find existing permission (including soft-deleted ones)
+            try:
+                perm_obj = DocumentPermission.objects.all_records().get(
+                    document_id=doc_id,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                )
+                # If it was soft-deleted, restore it
+                if perm_obj.is_deleted:
+                    perm_obj.restore()
+                # Update the permission and precedence
+                perm_obj.permission = permission
+                perm_obj.permission_precedence = precedence
+                perm_obj.is_active = True
+                perm_obj.save()
+                created = False
+            except DocumentPermission.DoesNotExist:
+                # Create new permission
+                perm_obj = DocumentPermission.objects.create(
+                    document_id=doc_id,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    permission_precedence=precedence,
+                    is_active=True,
+                )
+                created = True
+            
+            self._log_document_audit(
+                action='GRANT_ACL',
+                document_id=doc_id,
+                user_id=user_id
+            )
+            
+            return perm_obj
+        
+        except Exception as e:
+            if isinstance(e, PermissionDeniedError):
+                raise
+            logger.error(f"Error granting permission: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to grant permission on {doc_id}")
+    
+    def revoke_document_permission(
+        self,
+        doc_id: str,
+        user_id: int,
+        subject_type: str,
+        subject_id: str,
+        permission: str
+    ) -> None:
+        """
+        Revoke document permission.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User revoking (must have write permission)
+            subject_type: 'account' or 'role'
+            subject_id: Account UUID/ID or Role UUID
+            permission: 'read', 'write', or 'delete'
+        
+        Raises:
+            PermissionDeniedError: If user lacks write permission
+            NotFoundError: If permission not found
+        """
+        from django.apps import apps
+        from django.utils import timezone
+        
+        try:
+            # Check write permission
+            if not self.document_repo.check_user_can_write(doc_id, user_id):
+                raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            
+            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+            
+            # Find permission using active() manager (soft delete aware)
+            try:
+                permission_obj = DocumentPermission.objects.get(
+                    document_id=doc_id,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    is_deleted=False,  # Only find active permissions
+                )
+            except DocumentPermission.DoesNotExist:
+                raise NotFoundError(f"Permission not found")
+            
+            # Soft delete using the model's delete() method
+            # This sets is_deleted=True and deleted_at=now()
+            permission_obj.delete()
+            
+            self._log_document_audit(
+                action='REVOKE_ACL',
+                document_id=doc_id,
+                user_id=user_id
+            )
+        
+        except Exception as e:
+            if isinstance(e, (PermissionDeniedError, NotFoundError)):
+                raise
+            logger.error(f"Error revoking permission: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to revoke permission on {doc_id}")
+    
+    def get_document_processing_status(
+        self,
+        doc_id: str,
+        user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get document and chunks processing status.
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User requesting (must have read permission)
+        
+        Returns:
+            Dict with status information
+        
+        Raises:
+            NotFoundError: If not found
+            PermissionDeniedError: If user lacks read permission
+        """
+        from django.apps import apps
+        
+        try:
+            # Check read permission
+            if not self.document_repo.check_user_can_read(doc_id, user_id):
+                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            
+            document = self.document_repo.get_by_id(doc_id)
+            if not document:
+                raise NotFoundError(f"Document {doc_id} not found")
+            
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            
+            # Get chunk statistics
+            # DocumentChunk doesn't have 'status' field, so count total chunks only
+            chunks = DocumentChunk.objects.filter(
+                document_id=doc_id,
+                is_deleted=False
+            )
+            total_chunks = chunks.count()
+            # Chunks with embeddings are considered "completed"
+            chunks_with_embeddings = chunks.filter(embeddings__isnull=False).distinct().count()
+            
+            return {
+                'document_id': str(document.id),
+                'document_status': document.status,
+                'document_error': getattr(document, 'error_message', None),
+                'chunk_processing_status': {
+                    'total_chunks': total_chunks,
+                    'processed_chunks': chunks_with_embeddings,
+                    'pending_chunks': max(0, total_chunks - chunks_with_embeddings),
+                },
+                'processing_completed_at': str(getattr(document, 'processing_completed_at', '')) or None,
+            }
+        
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error getting processing status: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get status for document {doc_id}")
+    
+    def reprocess_document(
+        self,
+        doc_id: str,
+        user_id: int,
+        chunking_strategy: str = None,
+        embedding_model: str = None
+    ) -> 'Document':
+        """
+        Reprocess document (submit new INDEX_DOCUMENT AsyncTask).
+        
+        Args:
+            doc_id: Document UUID
+            user_id: User requesting (must have write permission)
+            chunking_strategy: New chunking strategy (optional)
+            embedding_model: New embedding model (optional)
+        
+        Returns:
+            Document object
+        
+        Raises:
+            NotFoundError: If not found
+            PermissionDeniedError: If user lacks write permission
+        """
+        from django.apps import apps
+        
+        try:
+            # Check write permission
+            if not self.document_repo.check_user_can_write(doc_id, user_id):
+                raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            
+            document = self.document_repo.get_by_id(doc_id)
+            if not document:
+                raise NotFoundError(f"Document {doc_id} not found")
+            
+            # Update document status
+            with transaction.atomic():
+                if chunking_strategy:
+                    document.chunking_strategy = chunking_strategy
+                if embedding_model:
+                    document.embedding_model = embedding_model
+                
+                # Set status to processing
+                document.status = 'processing'
+                document.save()
+                
+                # Note: AsyncTask queueing would go here when task queue is implemented
+            
+            self._log_document_audit(
+                action='MUTATION',
+                document_id=doc_id,
+                user_id=user_id
+            )
+            
+            return document
+        
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error reprocessing document: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to reprocess document {doc_id}")

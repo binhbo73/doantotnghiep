@@ -33,20 +33,18 @@ class FolderSerializer(SoftDeleteModelSerializer):
 class DocumentSerializer(SoftDeleteModelSerializer):
     """Serializer for Document model"""
     uploader_name = serializers.CharField(source='uploader.username', read_only=True)
-    folder_name = serializers.CharField(source='folder.name', read_only=True)
+    folder_name = serializers.CharField(source='folder.name', read_only=True, allow_null=True)
     tags_list = TagSerializer(source='tags', many=True, read_only=True)
     
     class Meta:
         model = Document
         fields = [
-            'id', 'original_name', 'file', 'file_type', 'file_size', 
+            'id', 'original_name', 'file_type', 'file_size', 
             'uploader', 'uploader_name', 'department', 'folder', 'folder_name',
-            'status', 'processing_status', 'chunks_count', 'embeddings_count', 
-            'description', 'tags_list', 'created_at', 'updated_at', 'is_deleted'
+            'status', 'access_scope', 'tags_list', 'created_at', 'updated_at', 'is_deleted'
         ]
         read_only_fields = [
-            'id', 'file_type', 'file_size', 'status', 'processing_status', 
-            'chunks_count', 'embeddings_count', 'created_at', 'updated_at'
+            'id', 'file_type', 'file_size', 'status', 'created_at', 'updated_at'
         ]
 
 
@@ -68,7 +66,17 @@ class DocumentCreateSerializer(serializers.ModelSerializer):
         required=False, 
         write_only=True
     )
+    access_scope = serializers.ChoiceField(
+        choices=['personal', 'department', 'company'],
+        required=False,
+        default='company'
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=2000
+    )
     
     class Meta:
         model = Document
-        fields = ['original_name', 'file', 'folder', 'department', 'description', 'tags']
+        fields = ['original_name', 'folder', 'department', 'access_scope', 'description', 'tags']

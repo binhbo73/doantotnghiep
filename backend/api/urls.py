@@ -45,6 +45,18 @@ from api.views.folder_views import (
     FolderPermissionsView,
     FolderPermissionDetailView
 )
+from api.views.document_views import (
+    DocumentListView,
+    DocumentUploadView,
+    DocumentDetailView,
+    DocumentUpdateView,
+    DocumentDeleteView,
+    DocumentDownloadView,
+    DocumentPermissionsView,
+    DocumentPermissionDetailView,
+    DocumentStatusView,
+    DocumentReprocessView,
+)
 
 # UUID regex pattern for URL routing
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -176,4 +188,36 @@ urlpatterns = [
     # DELETE /api/v1/folders/{folder_id}/permissions/{subject_type}/{subject_id}/{permission} - Revoke permission
     re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/permissions/(?P<subject_type>account|role)/(?P<subject_id>[^/]+)/(?P<permission>read|write|delete)/?$", 
             FolderPermissionDetailView.as_view(), name="folder_permission_detail"),
+    
+    # ============================================================
+    # DOCUMENT MANAGEMENT ENDPOINTS (Phase 4B - RAG Document Upload & Management)
+    # Document hierarchical structure with chunking, embedding, and ACL-based access
+    # ============================================================
+    # 1. GET /api/v1/documents - List documents (paginated, filtered)
+    # 2. POST /api/v1/documents/upload - Upload file + AsyncTask submission
+    re_path(r"^documents/?$", DocumentListView.as_view(), name="document_list"),
+    re_path(r"^documents/upload/?$", DocumentUploadView.as_view(), name="document_upload"),
+    
+    # 3. GET /api/v1/documents/{doc_id} - Get document detail
+    # 4. PUT /api/v1/documents/{doc_id} - Update document metadata
+    # 5. DELETE /api/v1/documents/{doc_id} - Soft delete + Qdrant sync
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/?$", DocumentDetailView.as_view(), name="document_detail_view"),
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/update/?$", DocumentUpdateView.as_view(), name="document_update"),
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/delete/?$", DocumentDeleteView.as_view(), name="document_delete"),
+    
+    # 6. GET /api/v1/documents/{doc_id}/download - Download original file
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/download/?$", DocumentDownloadView.as_view(), name="document_download"),
+    
+    # 7. GET|POST /api/v1/documents/{doc_id}/permissions - List/Grant document ACL
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/permissions/?$", DocumentPermissionsView.as_view(), name="document_permissions"),
+    
+    # 8. DELETE /api/v1/documents/{doc_id}/permissions/{subject_type}/{subject_id}/{permission} - Revoke ACL
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/permissions/(?P<subject_type>account|role)/(?P<subject_id>[^/]+)/(?P<permission>read|write|delete)/?$", 
+            DocumentPermissionDetailView.as_view(), name="document_permission_detail"),
+    
+    # 9. GET /api/v1/documents/{doc_id}/status - Check processing status
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/status/?$", DocumentStatusView.as_view(), name="document_status"),
+    
+    # 10. POST /api/v1/documents/{doc_id}/reprocess - Re-index document
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/reprocess/?$", DocumentReprocessView.as_view(), name="document_reprocess"),
 ]

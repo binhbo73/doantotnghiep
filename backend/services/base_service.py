@@ -509,12 +509,10 @@ class BaseService:
             )
         """
         try:
-            # ✅ CORRECT: Use Repository for audit logging
-            # Delegate to AuditLogRepository (single source of truth for audit logs)
-            # Get account object if user_id provided
+            # ✅ CORRECT: Use AuditLogRepository without looking up account
+            # account field can be NULL in AuditLog
+            # Don't use self.repository.get_by_id() - it might be wrong repository type (DocumentRepository, etc)
             account = None
-            if user_id:
-                account = self.repository.get_by_id(user_id) if hasattr(self, 'repository') else None
             
             return self.audit_log_repository.log_action(
                 account=account,

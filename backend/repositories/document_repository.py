@@ -315,3 +315,45 @@ class DocumentRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error getting statistics: {e}", exc_info=True)
             return {}
+    
+    # ============================================================================
+    # ACCESSIBLE DOCUMENTS (Phase 4B)
+    # ============================================================================
+    
+    def get_accessible_documents(self, user_id: int):
+        """
+        Get QuerySet of documents accessible to user (based on access_scope).
+        
+        Access Rules:
+        - 'personal': Only owner
+        - 'department': Owner's department members
+        - 'company': All users
+        
+        Returns:
+            QuerySet of accessible documents
+        
+        Example:
+            docs = repo.get_accessible_documents(user_id)
+        """
+        try:
+            from apps.users.models import UserProfile
+            from django.db.models import Q
+            
+            # Get user's department from UserProfile
+            user_department_id = None
+            try:
+                user_profile = UserProfile.objects.get(account_id=user_id)
+                user_department_id = user_profile.department_id
+            except UserProfile.DoesNotExist:
+                pass
+            
+            queryset = self.get_base_queryset().filter(
+                Q(access_scope='company') |  # Everyone
+                Q(access_scope='department', department_id=user_department_id) |  # Department
+                Q(access_scope='personal', uploader_id=user_id)  # Personal
+            )
+            
+            return queryset
+        except Exception as e:
+            logger.error(f"Error getting accessible documents: {e}", exc_info=True)
+            return self.get_base_queryset().none()

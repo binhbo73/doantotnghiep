@@ -38,8 +38,8 @@ class AuditService:
         self.repo = AuditLogRepository()
     
     def log(self, action: str, account, resource_id: str = None, 
-            resource_type: str = None, metadata: dict = None,
-            ip_address: str = None):
+            resource_type: str = None, query_text: str = None,
+            metadata: dict = None, ip_address: str = None, user_agent: str = None):
         """
         Log an audit action to database.
         
@@ -55,17 +55,16 @@ class AuditService:
             AuditLog instance or None if error
         """
         try:
-            from apps.users.models import AuditLog
+            from apps.operations.models import AuditLog
             
-            # Create audit log entry
+            # Create audit log entry (only pass valid fields accepted by AuditLog model)
             audit_log = AuditLog.objects.create(
                 action=action,
                 account=account,
                 resource_id=resource_id,
-                resource_type=resource_type,
-                metadata=metadata or {},
+                query_text=query_text,
                 ip_address=ip_address,
-                timestamp=timezone.now()
+                user_agent=user_agent
             )
             
             logger.info(
