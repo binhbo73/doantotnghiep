@@ -26,7 +26,7 @@ export function Sidebar({
 
     return (
         <aside
-            className="flex flex-col h-screen transition-all duration-300"
+            className="flex flex-col h-screen transition-all duration-300 relative z-50"
             style={{
                 width: isCollapsed ? '80px' : '240px',
                 backgroundColor: '#ffffff',
@@ -161,49 +161,9 @@ export function Sidebar({
                 className="px-3 py-4 border-t space-y-2"
                 style={{ borderColor: '#dce2f3' }}
             >
-                {/* Upgrade Button */}
-                <button
-                    onClick={onUpgrade}
-                    className={`w-full flex items-center gap-2 px-3 py-3 rounded-lg font-medium transition-all text-white ${isCollapsed ? 'justify-center' : 'justify-start'}`}
-                    style={{
-                        backgroundColor: '#b75b00',
-                    }}
-                    title="Upgrade Workspace"
-                >
-                    <span className="flex-shrink-0">⭐</span>
-                    <span
-                        className="transition-all whitespace-nowrap overflow-hidden"
-                        style={{
-                            opacity: isCollapsed ? 0 : 1,
-                            maxWidth: isCollapsed ? '0px' : '100%',
-                            width: isCollapsed ? '0px' : 'auto',
-                        }}
-                    >
-                        Nâng cấp
-                    </span>
-                </button>
 
-                {/* Help Center */}
-                <button
-                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all ${isCollapsed ? 'justify-center' : 'justify-start'}`}
-                    style={{
-                        backgroundColor: '#f0f3ff',
-                        color: '#0058be',
-                    }}
-                    title="Help Center"
-                >
-                    <span className="flex-shrink-0">❓</span>
-                    <span
-                        className="transition-all whitespace-nowrap overflow-hidden"
-                        style={{
-                            opacity: isCollapsed ? 0 : 1,
-                            maxWidth: isCollapsed ? '0px' : '100%',
-                            width: isCollapsed ? '0px' : 'auto',
-                        }}
-                    >
-                        Trợ giúp
-                    </span>
-                </button>
+
+
 
                 {/* Logout */}
                 <button

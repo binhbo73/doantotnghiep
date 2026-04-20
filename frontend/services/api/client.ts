@@ -26,13 +26,15 @@ interface RequestConfig {
 
 class ApiClient {
     private baseUrl: string
+    private tokenRefreshInProgress = false
+    private tokenRefreshPromise: Promise<string | null> | null = null
 
     constructor(baseUrl: string) {
         this.baseUrl = baseUrl
     }
 
     /**
-     * Main request method
+     * Main request method with 401 auto-refresh support
      */
     async request<T>(
         method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD',
@@ -65,7 +67,7 @@ class ApiClient {
         }
 
         // Execute with retry logic - pass data to recreate request
-        const response = await this.fetchWithRetry(
+        let response = await this.fetchWithRetry(
             url,
             method,
             headers,
@@ -73,6 +75,44 @@ class ApiClient {
             options,
             requestId
         )
+
+        // Handle 401 - try to refresh token and retry once
+        // Skip auto-refresh if we're already at the refresh endpoint (avoid infinite loop)
+        if (response.status === 401 && endpoint !== '/auth/refresh') {
+            logger.info('Token expired (401), attempting to refresh...', { requestId, endpoint })
+
+            try {
+                // Wait for token refresh (handles concurrent requests)
+                const newToken = await this.refreshTokenWithLock()
+
+                if (newToken) {
+                    logger.info('Token refreshed successfully, retrying request', { requestId })
+
+                    // Update Authorization header with new token
+                    headers['Authorization'] = `Bearer ${newToken}`
+
+                    // Retry the request with new token
+                    response = await this.fetchWithRetry(
+                        url,
+                        method,
+                        headers,
+                        body,
+                        options,
+                        requestId
+                    )
+
+                    logger.debug('Request retry after token refresh completed', { requestId, status: response.status })
+                } else {
+                    logger.warn('Token refresh returned null, continuing with 401 response', { requestId })
+                }
+            } catch (refreshError) {
+                logger.error('Token refresh failed', {
+                    requestId,
+                    error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+                })
+                // Continue with the original 401 response
+            }
+        }
 
         // Parse response
         const responseData = await responseMiddleware(response)
@@ -83,6 +123,46 @@ class ApiClient {
         }
 
         return responseData as T
+    }
+
+    /**
+     * Refresh token with lock to prevent concurrent refresh attempts
+     */
+    private async refreshTokenWithLock(): Promise<string | null> {
+        // If refresh is already in progress, wait for it
+        if (this.tokenRefreshInProgress) {
+            return this.tokenRefreshPromise || null
+        }
+
+        // Mark refresh as in progress
+        this.tokenRefreshInProgress = true
+
+        try {
+            this.tokenRefreshPromise = this.performTokenRefresh()
+            const token = await this.tokenRefreshPromise
+            return token
+        } finally {
+            this.tokenRefreshInProgress = false
+            this.tokenRefreshPromise = null
+        }
+    }
+
+    /**
+     * Perform the actual token refresh
+     */
+    private async performTokenRefresh(): Promise<string | null> {
+        try {
+            // Dynamically import to avoid circular dependencies
+            const { refreshToken } = await import('@/services/auth')
+            const newToken = await refreshToken()
+            logger.debug('Token refresh successful in API client')
+            return newToken
+        } catch (error) {
+            logger.error('Failed to refresh token in API client', {
+                error: error instanceof Error ? error.message : String(error),
+            })
+            return null
+        }
     }
 
     /**

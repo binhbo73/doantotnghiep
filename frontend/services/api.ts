@@ -98,8 +98,27 @@ async function handleResponse<T>(response: Response): Promise<T> {
     const isJson = contentType?.includes('application/json')
 
     let data: unknown
-    if (isJson) {
-        data = await response.json()
+
+    // Handle 204 No Content or empty responses
+    if (response.status === 204 || response.status === 200) {
+        const text = await response.text()
+        if (!text) {
+            data = null
+        } else if (isJson) {
+            try {
+                data = JSON.parse(text)
+            } catch (e) {
+                data = text
+            }
+        } else {
+            data = text
+        }
+    } else if (isJson) {
+        try {
+            data = await response.json()
+        } catch (e) {
+            data = await response.text()
+        }
     } else {
         data = await response.text()
     }

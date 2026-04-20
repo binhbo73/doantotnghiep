@@ -3,6 +3,7 @@
 import React from 'react'
 import { Sidebar } from './Sidebar'
 import { useLogout } from '@/hooks/useLogout'
+import { useTokenRefresh } from '@/hooks/useTokenRefresh'
 
 interface DashboardLayoutProps {
     children: React.ReactNode
@@ -14,6 +15,9 @@ export function DashboardLayout({
     onLogout,
 }: DashboardLayoutProps) {
     const { logout } = useLogout()
+
+    // Activate proactive token refresh
+    useTokenRefresh()
 
     const handleLogout = () => {
         logout()

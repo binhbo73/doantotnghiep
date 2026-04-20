@@ -385,3 +385,54 @@ export type PaginatedResponseEnvelope<T> = {
     has_next: boolean
     has_previous: boolean
 }
+
+// ============================================
+// IAM - ROLE & PERMISSION SCHEMAS
+// ============================================
+
+export const IamPermissionSchema = z.object({
+    id: UUIDSchema,
+    code: z.string(),
+    resource: z.string(),
+    action: z.string(),
+    description: z.string().nullable(),
+    created_at: DateTimeSchema,
+})
+export type IamPermission = z.infer<typeof IamPermissionSchema>
+
+export const IamRoleSchema = z.object({
+    id: UUIDSchema,
+    code: z.string(),
+    name: z.string(),
+    description: z.string().nullable(),
+    created_at: DateTimeSchema,
+    updated_at: DateTimeSchema,
+    permission_count: z.number().int(),
+})
+export type IamRole = z.infer<typeof IamRoleSchema>
+
+export const IamRoleDetailSchema = IamRoleSchema.extend({
+    permissions: z.array(IamPermissionSchema).default([]),
+})
+export type IamRoleDetail = z.infer<typeof IamRoleDetailSchema>
+
+// Paginated API Response structures
+export const PaginationInfoSchema = z.object({
+    page: z.number().int(),
+    page_size: z.number().int(),
+    total_items: z.number().int(),
+    total_pages: z.number().int(),
+    has_next: z.boolean(),
+    has_prev: z.boolean(),
+})
+export type PaginationInfo = z.infer<typeof PaginationInfoSchema>
+
+export type ApiResponseWithPagination<T> = {
+    success: boolean
+    status_code: number
+    message: string
+    data: T[]
+    pagination: PaginationInfo
+    timestamp: string
+    request_id: string
+}

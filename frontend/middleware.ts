@@ -43,6 +43,7 @@ export function middleware(request: NextRequest) {
 export const config = {
     // Apply middleware to all routes except static files and API
     matcher: [
-        '/((?!api|_next/static|_next/image|favicon.ico).*)',
+        '/((?!api|_next/static|_next/image|favicon.ico|public).*)',
     ],
 }
+

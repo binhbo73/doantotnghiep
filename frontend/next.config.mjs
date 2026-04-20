@@ -6,6 +6,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Configure proxy for Next.js 16
+  skipProxyUrlNormalize: true,
 }
 
 export default nextConfig
