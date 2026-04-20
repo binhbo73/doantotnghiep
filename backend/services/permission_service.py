@@ -538,8 +538,98 @@ class PermissionService(BaseService):
             raise
     
     # ============================================================================
-    # PERMISSION CRUD (Get, Update, Delete)
+    # PERMISSION CRUD (Create, Get, Update, Delete)
     # ============================================================================
+    
+    def create_permission(
+        self,
+        data: Dict[str, Any],
+        requested_by_user_id: int = None
+    ) -> Dict[str, Any]:
+        """
+        Create a new permission
+        
+        Business Rules:
+        - Permission code must be unique
+        - Code pattern: {resource}_{action}
+        - All required fields must be provided
+        - All changes logged to AuditLog
+        
+        Args:
+            data: Permission data {code, name, description, resource, action}
+            requested_by_user_id: Who is creating (for audit)
+        
+        Returns:
+            Created permission dict
+        
+        Raises:
+            ValidationError: If required fields missing or code duplicated
+            BusinessLogicError: If creation fails
+        
+        Example:
+            result = service.create_permission(
+                data={
+                    'code': 'document_approve',
+                    'name': 'Approve Document',
+                    'description': 'Can approve documents',
+                    'resource': 'document',
+                    'action': 'approve'
+                },
+                requested_by_user_id=admin_id
+            )
+        """
+        try:
+            # Validate required fields
+            required_fields = ['code', 'name', 'resource', 'action']
+            for field in required_fields:
+                value = data.get(field)
+                self.validate_business_rule(
+                    value and len(str(value).strip()) > 0,
+                    f"Field '{field}' is required and cannot be empty"
+                )
+            
+            # Validate code is unique
+            code = data['code'].strip()
+            existing_perm = self.permission_repo.get_by_code(code)
+            self.validate_business_rule(
+                not existing_perm,
+                f"Permission code '{code}' already exists"
+            )
+            
+            # Create in transaction
+            with transaction.atomic():
+                created_perm = self.permission_repo.create_permission(
+                    code=code,
+                    name=data['name'].strip(),
+                    description=data.get('description', '').strip() or '',
+                    resource=data['resource'].strip(),
+                    action=data['action'].strip()
+                )
+                
+                if not created_perm:
+                    raise BusinessLogicError("Failed to create permission")
+                
+                # Log action
+                self.log_action(
+                    'CREATE',
+                    resource_id=str(created_perm.id),
+                    details=f"Created permission: {code}",
+                    user_id=requested_by_user_id
+                )
+                
+                # Audit
+                self._log_permission_audit(
+                    action='CREATE',
+                    permission_code=code,
+                    granted_by_user_id=requested_by_user_id
+                )
+            
+            # Return created permission
+            return self.get_permission(str(created_perm.id))
+        
+        except Exception as e:
+            self.log_error('create_permission', e, requested_by_user_id=requested_by_user_id)
+            raise
     
     def get_permission(self, permission_id: str) -> Dict[str, Any]:
         """

@@ -108,7 +108,7 @@ class GlobalExceptionHandler:
     @staticmethod
     def handle_drf_throttled(exc, request):
         """Handle DRF Throttled (rate limit)"""
-        retry_after = exc.wait() if hasattr(exc, 'wait') else 60
+        retry_after = exc.wait if hasattr(exc, 'wait') else 60
         return ResponseBuilder.error(
             message=f"Rate limit exceeded. Retry after {int(retry_after)} seconds",
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

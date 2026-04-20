@@ -189,6 +189,9 @@ class PermissionCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Action cannot be empty.")
         
         return value
+
+
+class RolePermissionSerializer(serializers.ModelSerializer):
     """Serialize RolePermission (M2M relation)"""
     permission = PermissionSerializer(read_only=True)
     

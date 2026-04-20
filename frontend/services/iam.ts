@@ -58,7 +58,7 @@ export async function fetchRoleDetail(roleId: string) {
     const response = await api.get<IamRole>(
         `/iam/roles/${roleId}`
     )
-    return response.data
+    return response
 }
 
 export async function createRole(data: {
@@ -71,7 +71,7 @@ export async function createRole(data: {
         '/iam/roles',
         data
     )
-    return response.data
+    return response
 }
 
 export async function updateRole(
@@ -86,7 +86,7 @@ export async function updateRole(
         `/iam/roles/${roleId}`,
         data
     )
-    return response.data
+    return response
 }
 
 export async function deleteRole(roleId: string) {
@@ -101,7 +101,7 @@ export async function assignPermissionsToRole(
         `/iam/roles/${roleId}/permissions`,
         { permission_ids: permissionIds }
     )
-    return response.data
+    return response
 }
 
 export async function removePermissionsFromRole(
@@ -157,7 +157,7 @@ export async function fetchPermissionDetail(permissionId: string) {
     const response = await api.get<IamPermission>(
         `/iam/permissions/${permissionId}`
     )
-    return response.data
+    return response
 }
 
 export async function createPermission(data: {
@@ -170,7 +170,7 @@ export async function createPermission(data: {
         '/iam/permissions',
         data
     )
-    return response.data
+    return response
 }
 
 export async function updatePermission(
@@ -183,7 +183,7 @@ export async function updatePermission(
         `/iam/permissions/${permissionId}`,
         data
     )
-    return response.data
+    return response
 }
 
 export async function deletePermission(permissionId: string) {

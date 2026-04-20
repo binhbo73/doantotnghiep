@@ -66,6 +66,50 @@ class PermissionRepository(BaseRepository):
         """
         return self.list(resource=resource, action=action)
     
+    def create_permission(self, code: str, name: str, resource: str, action: str, description: str = '') -> Optional[Permission]:
+        """
+        Create new permission.
+        
+        Args:
+            code: Permission code (unique, e.g., 'document_read')
+            name: Permission name
+            resource: Resource name (e.g., 'document')
+            action: Action name (e.g., 'read')
+            description: Optional description
+        
+        Returns:
+            Created Permission object or None if creation failed
+        
+        Raises:
+            DatabaseError: If creation fails
+        
+        Example:
+            perm = repo.create_permission(
+                code='document_approve',
+                name='Approve Document',
+                resource='document',
+                action='approve',
+                description='Can approve documents'
+            )
+        
+        Note:
+            - Code must be unique (will raise IntegrityError if duplicate)
+            - Timestamps are auto-set
+        """
+        try:
+            permission = self.create(
+                code=code,
+                name=name,
+                resource=resource,
+                action=action,
+                description=description
+            )
+            logger.info(f"Created permission: {code}")
+            return permission
+        except Exception as e:
+            logger.error(f"Error creating permission '{code}': {e}", exc_info=True)
+            raise
+    
     def update_permission(self, permission_id, **update_data) -> Optional[Permission]:
         """
         Update permission fields (code, name, description, etc).

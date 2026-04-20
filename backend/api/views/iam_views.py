@@ -42,10 +42,11 @@ logger = logging.getLogger(__name__)
 
 class PermissionListView(APIView):
     """
-    API: GET|PUT|DELETE /api/v1/iam/permissions
+    API: GET|POST|PUT|DELETE /api/v1/iam/permissions
     
     Endpoints:
     - GET /api/v1/iam/permissions - List all permissions (paginated)
+    - POST /api/v1/iam/permissions - Create new permission
     - PUT /api/v1/iam/permissions/{permission_id} - Update permission
     - DELETE /api/v1/iam/permissions/{permission_id} - Delete permission (soft delete)
     """
@@ -92,6 +93,68 @@ class PermissionListView(APIView):
             logger.error(f"Error getting permissions: {e}", exc_info=True)
             return Response(
                 ResponseBuilder.error("Failed to retrieve permissions", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request, permission_id=None):
+        """
+        POST /api/v1/iam/permissions - Create new permission
+        
+        Request body:
+            {
+                "code": "document_approve",
+                "name": "Approve Document",
+                "description": "Can approve documents",
+                "resource": "document",
+                "action": "approve"
+            }
+        
+        Returns:
+            {
+                "success": true,
+                "status_code": 201,
+                "message": "Permission created successfully",
+                "data": {
+                    "id": "...",
+                    "code": "document_approve",
+                    "name": "Approve Document",
+                    "description": "Can approve documents",
+                    "resource": "document",
+                    "action": "approve",
+                    "created_at": "...",
+                    "updated_at": "..."
+                }
+            }
+        """
+        try:
+            # Validate input data
+            serializer = PermissionCreateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(
+                    ResponseBuilder.error("Validation failed", status_code=400, data=serializer.errors),
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Call service to create
+            permission_service = PermissionService()
+            result = permission_service.create_permission(
+                data=serializer.validated_data,
+                requested_by_user_id=request.user.id if hasattr(request, 'user') else None
+            )
+            
+            return Response(
+                ResponseBuilder.created(data=result, resource_type="Permission"),
+                status=status.HTTP_201_CREATED
+            )
+        
+        except ValidationError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except BusinessLogicError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Error creating permission: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to create permission", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
