@@ -26,6 +26,7 @@ from api.serializers.base import ResponseBuilder
 from api.serializers.user_profile_serializers import (
     UserProfileReadSerializer,
     UserProfileWriteSerializer,
+    EnhancedUserProfileReadSerializer,
 )
 from services.user_service import UserService
 from core.constants import RoleIds
@@ -117,8 +118,9 @@ class UserProfileAdminListView(APIView):
             paginator = self.pagination_class()
             paginated_users = paginator.paginate_queryset(users_list, request)
             
-            # SERIALIZER LAYER: Transform data
-            serializer = UserProfileReadSerializer(paginated_users, many=True)
+            # ✅ SERIALIZER LAYER: Use EnhancedUserProfileReadSerializer for detailed user info
+            # This returns profile + account data (roles, permissions, status) for each user
+            serializer = EnhancedUserProfileReadSerializer(paginated_users, many=True)
             
             # Audit log
             try:
@@ -195,7 +197,7 @@ class UserProfileAdminDetailView(APIView):
         self.user_service = UserService()
     
     def get(self, request, user_id):
-        """Get single user profile details"""
+        """Get single user profile details with account info (roles, permissions, status)"""
         try:
             # SERVICE LAYER: Fetch specific user profile
             profile = self.user_service.get_user_profile(user_id)
@@ -206,8 +208,9 @@ class UserProfileAdminDetailView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # SERIALIZER LAYER: Transform data
-            serializer = UserProfileReadSerializer(profile)
+            # ✅ SERIALIZER LAYER: Use EnhancedUserProfileReadSerializer to include account data
+            # This returns BOTH profile info + account info (roles, permissions, status)
+            serializer = EnhancedUserProfileReadSerializer(profile)
             
             # Audit log
             try:

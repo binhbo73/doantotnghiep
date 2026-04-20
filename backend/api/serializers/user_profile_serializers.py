@@ -6,6 +6,7 @@ Used in:
 - GET /api/v1/users/me (UserProfileReadSerializer)
 - PATCH /api/users/me (UserProfileWriteSerializer)
 - POST /api/v1/users/me/avatar (UserProfileAvatarSerializer)
+- GET /api/v1/users/{id} (EnhancedUserProfileReadSerializer) - ✅ NEW: Includes account data
 """
 
 from rest_framework import serializers
@@ -56,6 +57,158 @@ class UserProfileReadSerializer(serializers.ModelSerializer):
     def get_department_name(self, obj):
         """Get department name if exists"""
         return obj.department.name if obj.department else None
+
+
+class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
+    """
+    ✅ ENHANCED: Returns BOTH UserProfile + Account information
+    
+    Used for: GET /api/v1/users/{id}
+    
+    Combines:
+    - User Profile: id, full_name, avatar_url, address, birthday, department_name
+    - Account: id, username, email, first_name, last_name, status, is_active
+    - Roles & Permissions: roles[], permission_codes[]
+    - Timestamps: created_at, updated_at, date_joined, last_login
+    
+    ✅ Single API call replaces 2 old calls!
+    """
+    account_id = serializers.SerializerMethodField()
+    username = serializers.SerializerMethodField()
+    email = serializers.SerializerMethodField()
+    first_name = serializers.SerializerMethodField()
+    last_name = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    is_active = serializers.SerializerMethodField()
+    roles = serializers.SerializerMethodField()
+    permission_codes = serializers.SerializerMethodField()
+    date_joined = serializers.SerializerMethodField()
+    last_login = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UserProfile
+        fields = [
+            # User Profile Fields
+            'id', 'account_id', 'username', 'email', 'first_name', 'last_name',
+            'full_name', 'avatar_url', 'address', 'birthday', 'department_name',
+            'metadata',
+            # Account Fields (Status & Activity)
+            'status', 'is_active',
+            # Roles & Permissions
+            'roles', 'permission_codes',
+            # Timestamps
+            'created_at', 'updated_at', 'date_joined', 'last_login'
+        ]
+        read_only_fields = fields  # All fields are read-only
+    
+    # ============================================================
+    # PROFILE FIELDS
+    # ============================================================
+    
+    def get_account_id(self, obj):
+        """Get account ID"""
+        return str(obj.account.id) if obj.account else None
+    
+    def get_username(self, obj):
+        """Get username from Account"""
+        return obj.account.username if obj.account else None
+    
+    def get_email(self, obj):
+        """Get email from Account"""
+        return obj.account.email if obj.account else None
+    
+    def get_first_name(self, obj):
+        """Get first name from Account"""
+        return obj.account.first_name if obj.account else None
+    
+    def get_last_name(self, obj):
+        """Get last name from Account"""
+        return obj.account.last_name if obj.account else None
+    
+    def get_department_name(self, obj):
+        """Get department name if exists"""
+        return obj.department.name if obj.department else None
+    
+    # ============================================================
+    # ACCOUNT FIELDS (Status & Activity)
+    # ============================================================
+    
+    def get_status(self, obj):
+        """Get account status (active, blocked, inactive)"""
+        return obj.account.status if obj.account else None
+    
+    def get_is_active(self, obj):
+        """Get account is_active flag"""
+        return obj.account.is_active if obj.account else False
+    
+    def get_date_joined(self, obj):
+        """Get account creation date"""
+        return obj.account.date_joined if obj.account else None
+    
+    def get_last_login(self, obj):
+        """Get last login timestamp"""
+        return obj.account.last_login if obj.account else None
+    
+    # ============================================================
+    # ROLES & PERMISSIONS
+    # ============================================================
+    
+    def get_roles(self, obj):
+        """
+        ✅ Get full role objects with permissions
+        
+        Returns array of roles with structure:
+        {
+            "id": "uuid",
+            "code": "admin",
+            "name": "Administrator",
+            "permissions": ["permission_code1", "permission_code2", ...]
+        }
+        """
+        if not obj.account:
+            return []
+        
+        try:
+            roles = obj.account.account_roles.filter(is_deleted=False).select_related('role')
+            return [
+                {
+                    'id': str(r.role.id),
+                    'code': r.role.code,
+                    'name': r.role.name,
+                    'permissions': list(
+                        r.role.role_permissions.filter(is_deleted=False)
+                        .values_list('permission__code', flat=True)
+                    )
+                }
+                for r in roles
+            ]
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error getting roles for user {obj.id}: {str(e)}")
+            return []
+    
+    def get_permission_codes(self, obj):
+        """
+        ✅ Get all permission codes user has via roles
+        
+        Returns flat list of permission codes: ["document_read", "document_create", ...]
+        
+        Uses PermissionRepository for efficiency
+        """
+        if not obj.account:
+            return []
+        
+        try:
+            from repositories.permission_repository import PermissionRepository
+            perm_repo = PermissionRepository()
+            return list(perm_repo.get_user_permission_codes(obj.account.id))
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Error getting permission codes for user {obj.id}: {str(e)}")
+            return []
 
 
 class UserProfileWriteSerializer(serializers.ModelSerializer):
