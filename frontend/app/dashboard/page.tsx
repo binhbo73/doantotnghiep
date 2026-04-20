@@ -8,15 +8,25 @@ import {
     QuickActionButtons,
     RecentActivityCard,
 } from '@/components/features/dashboard'
+import AddEmployeeDialog from '@/components/features/dashboard/AddEmployeeDialog'
+import { ToastContainer } from '@/components/common/Toast'
+import { createEmployee } from '@/services/employee'
 import { useUsers } from '@/hooks/useUsers'
 import { useDocuments } from '@/hooks/useDocuments'
 import { useDepartments } from '@/hooks/useDashboardMetrics'
+import { useToast } from '@/hooks/useToast'
 
 export default function DashboardPage() {
     const [selectedPeriod, setSelectedPeriod] = useState('7days')
+    const [isAddEmployeeDialogOpen, setIsAddEmployeeDialogOpen] = useState(false)
+    const [dialogMessage, setDialogMessage] = useState<{ type: 'success' | 'error' | null; text: string }>({
+        type: null,
+        text: '',
+    })
+    const { toasts, removeToast, showSuccess, showError } = useToast()
 
     // Custom hooks - Frontend standard flow
-    const { count: userCount, loading: usersLoading, error: usersError } = useUsers()
+    const { count: userCount, loading: usersLoading, error: usersError, refetch: refetchUsers } = useUsers()
     const { count: documentCount, loading: docsLoading, error: docsError } = useDocuments()
     const { count: departmentCount, loading: deptsLoading, error: deptsError } = useDepartments()
 
@@ -61,7 +71,7 @@ export default function DashboardPage() {
             id: 'add-user',
             label: 'Thêm nhân sự',
             icon: '👤',
-            onClick: () => console.log('Add user'),
+            onClick: () => setIsAddEmployeeDialogOpen(true),
         },
         {
             id: 'upload-doc',
@@ -122,6 +132,40 @@ export default function DashboardPage() {
         console.log('View all activities')
     }
 
+    const handleAddEmployee = async (formData: any) => {
+        try {
+            setDialogMessage({ type: null, text: '' })
+
+            // Call API to create employee
+            const result = await createEmployee({
+                username: formData.username,
+                email: formData.email,
+                first_name: formData.firstName,
+                last_name: formData.lastName,
+                department_id: formData.department,
+                role_id: formData.role,
+            })
+
+            console.log('✅ Employee created:', result)
+
+            // Show success toast notification (top-right corner)
+            showSuccess(`Tạo tài khoản thành công cho ${result.first_name} ${result.last_name}`)
+
+            // Refetch user count
+            await refetchUsers()
+
+            // Close dialog after 1.5 seconds
+            setTimeout(() => {
+                setIsAddEmployeeDialogOpen(false)
+                setDialogMessage({ type: null, text: '' })
+            }, 1500)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Có lỗi xảy ra'
+            console.error('❌ Error creating employee:', err)
+            showError(message)
+        }
+    }
+
     return (
         <main
             className="min-h-full"
@@ -129,6 +173,16 @@ export default function DashboardPage() {
                 backgroundColor: '#f9f9ff',
             }}
         >
+            {/* Toast Notifications - Top Right */}
+            <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+            {/* Add Employee Dialog */}
+            <AddEmployeeDialog
+                isOpen={isAddEmployeeDialogOpen}
+                onClose={() => setIsAddEmployeeDialogOpen(false)}
+                onSubmit={handleAddEmployee}
+            />
+
             {/* Dashboard Header - Compact */}
             <div className="px-4 py-3">
                 <DashboardHeader
@@ -176,7 +230,7 @@ export default function DashboardPage() {
                 {/* Activity Summary Section */}
                 <section className="mb-4">
                     <ActivitySummary
-                        title="Biểu đồ Hoạt động Trị Thức"
+                        title="Biểu đồ Hoạt động Tri Thức"
                         subtitle="Lưu ý truy cập & đồng góp kiến thức thực tế các giai đoạn"
                         badges={[
                             {
@@ -217,7 +271,7 @@ export default function DashboardPage() {
                             className="text-sm font-bold mb-3"
                             style={{ color: '#151c27' }}
                         >
-                            ⚡ LỐI TẠT QUẢN TRỊ
+                            ⚡ LỐI TẮT QUẢN TRỊ
                         </h2>
                         <QuickActionButtons actions={quickActions} />
                     </div>
