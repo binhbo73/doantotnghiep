@@ -20,7 +20,7 @@ export function ApiExampleComponent() {
                 // Test 2: Check auth
                 if (authService.isAuthenticated()) {
                     console.log('✅ User is authenticated')
-                    const token = authService.getToken()
+                    const token = authService.getAuthToken()
                     console.log('Token:', token?.substring(0, 20) + '...')
                 } else {
                     console.log('ℹ️  User is not authenticated')
@@ -68,7 +68,7 @@ export function ApiExampleComponent() {
                 </button>
             </div>
 
-            {data && (
+            {data ? (
                 <pre
                     style={{
                         backgroundColor: '#f5f5f5',
@@ -78,9 +78,9 @@ export function ApiExampleComponent() {
                         maxHeight: '300px',
                     }}
                 >
-                    {JSON.stringify(data, null, 2)}
+                    {typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
                 </pre>
-            )}
+            ) : null}
 
             <div style={{ marginTop: '2rem', fontSize: '0.9rem', color: '#666' }}>
                 <h3>Setup Checklist:</h3>

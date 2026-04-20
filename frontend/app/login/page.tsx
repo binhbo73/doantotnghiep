@@ -3,10 +3,13 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { BrandingSection, LoginCard } from '@/components/auth';
+import { login } from '@/services/auth';
+import { logger } from '@/services/logger';
+import type { LoginRequest } from '@/types/api';
 
 const BRANDING_DATA = {
     title: 'Trí Thức Doanh nghiệp',
-    subtitle: 'Enterprise Knowledge Operating System',
+    subtitle: 'Hệ điều hành tri thức doanh nghiệp',
     heading: 'Kiến tạo không gian trị tuệ số của bạn.',
     description:
         'Hệ điều hành trí thức giúp doanh nghiệp quản trị, kết nối và khai phóng tiềm năng từ một nguồn dữ liệu liên kết.',
@@ -32,24 +35,40 @@ export default function LoginPage() {
         setIsLoading(true);
 
         try {
-            const response = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email, password }),
-            });
+            // Prepare credentials
+            const credentials: LoginRequest = {
+                email: email.trim(),
+                password,
+            };
 
-            if (!response.ok) {
-                const data = await response.json();
-                setError(data.message || 'Đăng nhập thất bại');
+            // Validate input
+            if (!credentials.email || !credentials.password) {
+                setError('Vui lòng nhập email và mật khẩu');
+                setIsLoading(false);
                 return;
             }
 
+            // Call auth service
+            logger.info('Submitting login form', { email: credentials.email });
+            const loginData = await login(credentials);
+
+            // Success - user data is stored by auth service
+            logger.info('Login successful', { userId: loginData.user.id });
+
+            // Redirect to dashboard
             router.push('/dashboard');
         } catch (err) {
-            setError('Đã xảy ra lỗi. Vui lòng thử lại.');
-            console.error(err);
+            // Handle different error types
+            let errorMessage = 'Đã xảy ra lỗi. Vui lòng thử lại.';
+
+            if (err instanceof Error) {
+                errorMessage = err.message;
+                logger.error('Login error', { error: err.message });
+            } else {
+                logger.error('Login error', { error: String(err) });
+            }
+
+            setError(errorMessage);
         } finally {
             setIsLoading(false);
         }
@@ -61,7 +80,7 @@ export default function LoginPage() {
             <BrandingSection {...BRANDING_DATA} />
 
             {/* Right side - Login Form */}
-  <div className="w-full lg:w-1/2 flex items-center justify-center px-6 py-12 lg:py-0">
+            <div className="w-full lg:w-1/2 flex items-center justify-center px-6 py-12 lg:py-0">
                 <LoginCard
                     email={email}
                     password={password}

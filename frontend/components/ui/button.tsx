@@ -61,7 +61,7 @@ export const Button = ({
     const baseClasses = cn(
         // Base: Font & transition
         'font-inter font-semibold transition-all duration-200',
-        'cursor-pointer rounded-xl',
+        'inline-flex items-center justify-center cursor-pointer rounded-xl',
         'focus-visible:outline-none focus-visible:shadow-[0_0_0_4px_rgba(125,140,124,0.18)]',
         'disabled:opacity-50 disabled:cursor-not-allowed',
 

@@ -34,28 +34,9 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                 </div>
             )}
 
-            {/* Social Login Buttons */}
-            <div className="space-y-3">
-                <button
-                    type="button"
-                    className="w-full border border-gray-300 rounded-lg py-3 px-4 flex items-center justify-center gap-2 hover:bg-gray-50 transition text-gray-700 font-medium text-sm"
-                >
-                    <span>🔵</span> Google
-                </button>
-                <button
-                    type="button"
-                    className="w-full border border-gray-300 rounded-lg py-3 px-4 flex items-center justify-center gap-2 hover:bg-gray-50 transition text-gray-700 font-medium text-sm"
-                >
-                    <span>⊞</span> Microsoft
-                </button>
-            </div>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-gray-300"></div>
-                <span className="text-xs text-gray-500 font-medium">HOẶC SỬ DỤNG EMAIL</span>
-                <div className="flex-1 h-px bg-gray-300"></div>
-            </div>
+
+
 
             {/* Email Field */}
             <div className="space-y-2">
@@ -66,7 +47,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">✉️</span>
                     <Input
                         type="email"
-                        placeholder="name@company.com"
+                        placeholder="email@company.com"
                         value={email}
                         onChange={(e) => onEmailChange(e.target.value)}
                         required
@@ -123,7 +104,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
             <Button
                 type="submit"
                 disabled={isLoading}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-lg transition text-base"
+                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold h-12 rounded-full transition text-base flex items-center justify-center gap-2"
             >
                 {isLoading ? 'Đang đăng nhập...' : 'Đăng nhập hệ thống →'}
             </Button>

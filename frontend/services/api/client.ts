@@ -42,18 +42,37 @@ class ApiClient {
     ): Promise<T> {
         const url = `${this.baseUrl}${endpoint}`
 
-        // Create initial request
+        // Create initial request to apply middleware
         let request = new Request(url, {
             method,
             headers: {},
         })
 
-        // Apply request middleware
+        // Apply request middleware to get headers and body
         const enrichedRequest = await requestMiddleware(request, data)
         const requestId = enrichedRequest.__metadata?.requestId
 
-        // Execute with retry logic
-        const response = await this.fetchWithRetry(enrichedRequest, options, requestId)
+        // Extract metadata and prepare for retry
+        const headers = Object.fromEntries(enrichedRequest.headers.entries())
+        let body: BodyInit | undefined
+
+        // Get body only once (avoid consuming stream twice)
+        if (enrichedRequest.method !== 'GET' && enrichedRequest.method !== 'HEAD') {
+            const bodyText = await enrichedRequest.text()
+            if (bodyText) {
+                body = bodyText
+            }
+        }
+
+        // Execute with retry logic - pass data to recreate request
+        const response = await this.fetchWithRetry(
+            url,
+            method,
+            headers,
+            body,
+            options,
+            requestId
+        )
 
         // Parse response
         const responseData = await responseMiddleware(response)
@@ -68,9 +87,13 @@ class ApiClient {
 
     /**
      * Fetch with retry logic and timeout
+     * Creates a fresh Request for each attempt (no body reuse issues)
      */
     private async fetchWithRetry(
-        request: Request,
+        url: string,
+        method: string,
+        headers: Record<string, string>,
+        body: BodyInit | undefined,
         options?: RequestOptions,
         requestId?: string,
         attempt = 1
@@ -82,14 +105,19 @@ class ApiClient {
         const timeoutId = setTimeout(() => controller.abort(), timeout)
 
         try {
-            logger.debug(`[${attempt}/${retries}] Fetching ${request.method} ${request.url}`, {
+            logger.debug(`[${attempt}/${retries}] Fetching ${method} ${url}`, {
                 requestId,
             })
 
-            const response = await fetch(request, {
-                ...options,
+            // Create fresh Request for this attempt (fix: no body reuse)
+            const freshRequest = new Request(url, {
+                method,
+                headers,
+                body,
                 signal: controller.signal,
             })
+
+            const response = await fetch(freshRequest)
 
             clearTimeout(timeoutId)
             return response
@@ -115,7 +143,15 @@ class ApiClient {
                 logger.debug(`Retrying in ${delay}ms...`, { requestId })
 
                 await new Promise((resolve) => setTimeout(resolve, delay))
-                return this.fetchWithRetry(request, options, requestId, attempt + 1)
+                return this.fetchWithRetry(
+                    url,
+                    method,
+                    headers,
+                    body,
+                    options,
+                    requestId,
+                    attempt + 1
+                )
             }
 
             // No more retries
@@ -170,35 +206,55 @@ class ApiClient {
 
     /**
      * File upload with FormData
+     * Note: No retry for uploads due to FormData body consumption
      */
     async upload<T>(
         endpoint: string,
         formData: FormData,
         options?: RequestOptions
     ): Promise<T> {
-        // Create request with FormData (no Content-Type header - browser will set it)
         const url = `${this.baseUrl}${endpoint}`
-        let request = new Request(url, {
-            method: 'POST',
-            body: formData,
-        })
+        const timeout = options?.timeout ?? 120000
 
-        // Apply request middleware (will skip Content-Type for FormData)
-        const enrichedRequest = await requestMiddleware(request, formData)
-        const requestId = enrichedRequest.__metadata?.requestId
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-        // Execute with retry
-        const response = await this.fetchWithRetry(enrichedRequest, options, requestId)
+        try {
+            // Create request with FormData
+            const request = new Request(url, {
+                method: 'POST',
+                body: formData,
+                signal: controller.signal,
+            })
 
-        // Parse response
-        const responseData = await responseMiddleware(response)
+            // Apply request middleware (will skip Content-Type for FormData)
+            const enrichedRequest = await requestMiddleware(request, formData)
+            const requestId = enrichedRequest.__metadata?.requestId
 
-        // Handle errors
-        if (!response.ok) {
-            await errorMiddleware(response, responseData, requestId)
+            logger.debug(`Uploading to ${endpoint}`, { requestId })
+
+            const response = await fetch(enrichedRequest)
+
+            clearTimeout(timeoutId)
+
+            // Parse response
+            const responseData = await responseMiddleware(response)
+
+            // Handle errors
+            if (!response.ok) {
+                await errorMiddleware(response, responseData, requestId)
+            }
+
+            return responseData as T
+        } catch (error) {
+            clearTimeout(timeoutId)
+
+            logger.error('Upload failed', {
+                error: error instanceof Error ? error.message : String(error),
+            })
+
+            throw error
         }
-
-        return responseData as T
     }
 
     /**
@@ -210,33 +266,56 @@ class ApiClient {
         options?: RequestOptions
     ): Promise<Blob> {
         const url = `${this.baseUrl}${endpoint}`
-        const request = new Request(url, { method: 'GET' })
+        const timeout = options?.timeout ?? 120000
 
-        const enrichedRequest = await requestMiddleware(request)
-        const requestId = enrichedRequest.__metadata?.requestId
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-        const response = await this.fetchWithRetry(enrichedRequest, options, requestId)
+        try {
+            // Create request for GET
+            const request = new Request(url, {
+                method: 'GET',
+                signal: controller.signal,
+            })
 
-        if (!response.ok) {
-            const errorData = await responseMiddleware(response)
-            await errorMiddleware(response, errorData, requestId)
+            const enrichedRequest = await requestMiddleware(request)
+            const requestId = enrichedRequest.__metadata?.requestId
+
+            logger.debug(`Downloading from ${endpoint}`, { requestId })
+
+            const response = await fetch(enrichedRequest)
+
+            clearTimeout(timeoutId)
+
+            if (!response.ok) {
+                const errorData = await responseMiddleware(response)
+                await errorMiddleware(response, errorData, requestId)
+            }
+
+            const blob = await response.blob()
+
+            // Trigger download if filename provided
+            if (filename) {
+                const blobUrl = window.URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = blobUrl
+                a.download = filename
+                document.body.appendChild(a)
+                a.click()
+                window.URL.revokeObjectURL(blobUrl)
+                document.body.removeChild(a)
+            }
+
+            return blob
+        } catch (error) {
+            clearTimeout(timeoutId)
+
+            logger.error('Download failed', {
+                error: error instanceof Error ? error.message : String(error),
+            })
+
+            throw error
         }
-
-        const blob = await response.blob()
-
-        // Trigger download if filename provided
-        if (filename) {
-            const url = window.URL.createObjectURL(blob)
-            const a = document.createElement('a')
-            a.href = url
-            a.download = filename
-            document.body.appendChild(a)
-            a.click()
-            window.URL.revokeObjectURL(url)
-            document.body.removeChild(a)
-        }
-
-        return blob
     }
 
     /**

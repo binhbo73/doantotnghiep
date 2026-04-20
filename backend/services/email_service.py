@@ -155,7 +155,7 @@ RAG System Admin
             subject = "[RAG System] Yêu cầu đặt lại mật khẩu"
             
             # Build reset link
-            reset_link = f"{settings.FRONTEND_URL}/auth/reset-password?token={reset_token}"
+            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token}"
             
             context = {
                 'full_name': user.get_full_name() or user.username,

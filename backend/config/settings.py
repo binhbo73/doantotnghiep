@@ -296,6 +296,31 @@ if cors_origins_str:
 CORS_ALLOW_CREDENTIALS = True
 CORS_MAX_AGE = 600
 
+# Allow custom headers from frontend
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-request-id',          # Custom: Request tracking ID
+    'x-api-version',         # Custom: API version
+    'x-timestamp',           # Custom: Request timestamp
+]
+
+# Expose headers to frontend
+CORS_EXPOSE_HEADERS = [
+    'content-type',
+    'x-request-id',          # Return request ID
+    'x-ratelimit-limit',     # Rate limit info
+    'x-ratelimit-remaining',
+    'x-ratelimit-reset',
+]
+
 
 # ============================================================
 # MIDDLEWARE ADDITIONS (Thêm vào MIDDLEWARE list)

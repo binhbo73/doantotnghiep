@@ -58,16 +58,35 @@ export async function errorMiddleware(
             )
 
         case 401:
-            // Unauthorized - clear auth and redirect to login
-            localStorage.removeItem('auth_token')
-            localStorage.removeItem('refresh_token')
+            // Unauthorized - distinguish between invalid credentials and session expired
+            const message = errorObj?.message || ''
+            const lowerMessage = message.toLowerCase()
 
-            // Emit custom event for global auth handling
-            window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+            // Check for credential-related keywords (both English and Vietnamese)
+            const isInvalidCredentials =
+                lowerMessage.includes('password') ||
+                lowerMessage.includes('credentials') ||
+                lowerMessage.includes('mật khẩu') ||
+                lowerMessage.includes('email') ||
+                lowerMessage.includes('username') ||
+                lowerMessage.includes('không chính xác') ||
+                lowerMessage.includes('invalid')
+
+            // Only clear auth tokens if NOT a credentials error (don't clear on wrong password)
+            if (!isInvalidCredentials) {
+                localStorage.removeItem('auth_token')
+                localStorage.removeItem('refresh_token')
+                window.dispatchEvent(new CustomEvent('auth:unauthorized'))
+            }
+
+            // Use backend message if it's about credentials, otherwise show session expired
+            const errorMessage = isInvalidCredentials
+                ? message
+                : 'Session expired. Please login again.'
 
             throw new ApiError(
                 status,
-                'Session expired. Please login again.',
+                errorMessage,
                 errorObj,
                 requestId
             )

@@ -318,6 +318,8 @@ export type ApiError = z.infer<typeof ApiErrorSchema>
 // ============================================
 // AUTH SCHEMAS
 // ============================================
+// LOGIN/AUTH SCHEMAS
+// ============================================
 
 export const LoginRequestSchema = z.object({
     email: z.string().email(),
@@ -325,13 +327,33 @@ export const LoginRequestSchema = z.object({
 })
 export type LoginRequest = z.infer<typeof LoginRequestSchema>
 
-export const LoginResponseSchema = z.object({
-    access: z.string(),
-    refresh: z.string().optional(),
-    user: AccountSchema,
-    expires_in: z.number().int().optional(),
+// Role object in JWT token
+export const RoleSchema = z.object({
+    id: UUIDSchema,
+    code: z.string(),
+    name: z.string(),
 })
-export type LoginResponse = z.infer<typeof LoginResponseSchema>
+export type Role = z.infer<typeof RoleSchema>
+
+// Login response data (inside the 'data' wrapper)
+export const LoginDataSchema = z.object({
+    user: AccountSchema,
+    access_token: z.string(),
+    refresh_token: z.string(),
+    permissions: z.array(z.string()),
+    roles: z.array(RoleSchema),
+    department_id: UUIDSchema.nullable(),
+})
+export type LoginData = z.infer<typeof LoginDataSchema>
+
+// Login response - wrapped response from backend with LoginData inside
+export type LoginResponse = {
+    success: boolean
+    status_code: number
+    message: string
+    data: LoginData
+    timestamp?: string
+}
 
 export const RegisterRequestSchema = z.object({
     email: z.string().email(),
