@@ -1,5 +1,5 @@
 // services/chat.ts - Chat API service
-import { api } from './api'
+import { api } from '@/services/api/client'
 import type { Message, ApiResponse } from '@/types'
 
 export const chatService = {
