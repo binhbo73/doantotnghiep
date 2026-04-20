@@ -1,124 +1,251 @@
 'use client'
 
-import { Display, Heading, Body, Small } from '@/components/ui/text'
-import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
-import { DocumentCard } from '@/components/features/DocumentCard'
-import { ChatBubble } from '@/components/features/ChatBubble'
-import { UserAvatar } from '@/components/features/UserAvatar'
-import { cn } from '@/lib/cn'
+import React, { useState } from 'react'
+import {
+    DashboardHeader,
+    StatCard,
+    ActivitySummary,
+    QuickActionButtons,
+    RecentActivityCard,
+} from '@/components/features/dashboard'
+import { useUsers } from '@/hooks/useUsers'
+import { useDocuments } from '@/hooks/useDocuments'
+import { useDepartments } from '@/hooks/useDashboardMetrics'
 
 export default function DashboardPage() {
-    const mockDocuments = [
+    const [selectedPeriod, setSelectedPeriod] = useState('7days')
+
+    // Custom hooks - Frontend standard flow
+    const { count: userCount, loading: usersLoading, error: usersError } = useUsers()
+    const { count: documentCount, loading: docsLoading, error: docsError } = useDocuments()
+    const { count: departmentCount, loading: deptsLoading, error: deptsError } = useDepartments()
+
+    // Overall loading and error states
+    const isLoading = usersLoading || docsLoading || deptsLoading
+    const errors = [usersError, docsError, deptsError].filter(Boolean)
+    const hasError = errors.length > 0
+
+    // Mock data for stats - will be replaced with real API data
+    const stats = [
         {
-            id: '1',
-            name: 'Budget 2026',
-            size: 2.5,
-            uploadedAt: '2026-04-16',
-            accessLevel: 'internal' as const,
+            id: 'users',
+            icon: '👥',
+            label: 'SỐ NGƯỜI DÙNG',
+            value: isLoading ? '...' : userCount.toLocaleString(),
+            trend: 'up' as const,
+
+            iconBgColor: '#f0f3ff',
         },
         {
-            id: '2',
-            name: 'Annual Report',
-            size: 5.8,
-            uploadedAt: '2026-04-15',
-            accessLevel: 'public' as const,
+            id: 'documents',
+            icon: '📁',
+            label: 'TÀI LIỆU LƯU TRỮ',
+            value: isLoading ? '...' : documentCount.toLocaleString(),
+            trend: 'up' as const,
+
+            iconBgColor: '#fff4e0',
         },
         {
-            id: '3',
-            name: 'Confidential Data',
-            size: 1.2,
-            uploadedAt: '2026-04-14',
-            accessLevel: 'restricted' as const,
+            id: 'departments',
+            icon: '🏢',
+            label: 'SỐ PHÒNG BAN',
+            value: isLoading ? '...' : departmentCount.toLocaleString(),
+            trend: 'neutral' as const,
+            iconBgColor: '#e0f2fe',
         },
     ]
 
-    const mockMessages = [
+    // Quick action buttons
+    const quickActions = [
         {
-            id: '1',
-            sender: 'user' as const,
-            content: "What's in the 2026 budget?",
-            timestamp: '2026-04-16T10:30:00',
-            citations: undefined,
+            id: 'add-user',
+            label: 'Thêm nhân sự',
+            icon: '👤',
+            onClick: () => console.log('Add user'),
         },
         {
-            id: '2',
-            sender: 'ai' as const,
-            content:
-                'The 2026 budget allocates $5M for technology, $3M for marketing, and $2M for operations. This is primarily focused on scaling our AI infrastructure.',
-            citations: [{ documentId: '1', documentName: 'Budget 2026', chapter: 'Executive Summary' }],
-            timestamp: '2026-04-16T10:30:05',
+            id: 'upload-doc',
+            label: 'Tải tài liệu',
+            icon: '📤',
+            onClick: () => console.log('Upload doc'),
+        },
+        {
+            id: 'view-report',
+            label: 'Phản quyền',
+            icon: '🔐',
+            onClick: () => console.log('View permissions'),
+        },
+        {
+            id: 'settings',
+            label: 'Cấu hình AI',
+            icon: '⚙️',
+            onClick: () => console.log('Settings'),
         },
     ]
+
+    // Recent activities
+    const recentActivities = [
+        {
+            id: 'activity1',
+            title: 'Lê Thị Mai đã cập nhật "Tài liệu Marketing Q3"',
+            description: 'Được chia sẻ bởi Team Marketing',
+            time: 'Hôm nay',
+            avatarChar: 'L',
+            avatarBgColor: '#0058be',
+            category: 'Marketing',
+        },
+        {
+            id: 'activity2',
+            title: 'Hệ thống đã phát hiện "12 yêu cầu truy cập mới"',
+            description: 'Cần được phê duyệt bởi quản trị viên',
+            time: '3 giờ trước',
+            avatarChar: 'H',
+            avatarBgColor: '#10b981',
+            category: 'System',
+        },
+        {
+            id: 'activity3',
+            title: 'Trần Anh Quân đã gáp nhật "Dự án: Tối ưu UX/UI"',
+            description: 'Được cập nhật bởi Product Team',
+            time: '5 giờ trước',
+            avatarChar: 'T',
+            avatarBgColor: '#924700',
+            category: 'Product',
+        },
+    ]
+
+    const handleExport = () => {
+        console.log('Export report')
+    }
+
+    const handleViewAllActivities = () => {
+        console.log('View all activities')
+    }
 
     return (
-        <main className="min-h-screen bg-[var(--color-panel-dark)]">
-            {/* Header */}
-            <header className="border-b border-[rgba(255,255,255,0.08)] p-6">
-                <div className="max-w-6xl mx-auto flex items-center justify-between">
-                    <Display level="base" className="text-[#f7f8f8]">
-                        Dashboard
-                    </Display>
-                    <div className="flex items-center gap-4">
-                        <UserAvatar initial="JD" role="admin" size="md" />
-                        <Button variant="ghost" size="md">
-                            Logout
-                        </Button>
+        <main
+            className="min-h-full"
+            style={{
+                backgroundColor: '#f9f9ff',
+            }}
+        >
+            {/* Dashboard Header - Compact */}
+            <div className="px-4 py-3">
+                <DashboardHeader
+                    userName="Admin"
+                    timeOfDay="sáng"
+                    daysLabel="7 ngày qua"
+                    onExport={handleExport}
+                />
+            </div>
+
+            {/* Error Alert */}
+            {hasError && (
+                <div className="px-4 py-2 mb-2">
+                    <div
+                        className="rounded-lg p-3 text-sm"
+                        style={{
+                            backgroundColor: '#ffe0e0',
+                            color: '#d32f2f',
+                            border: '1px solid #ffcdd2',
+                        }}
+                    >
+                        ⚠️ {errors[0]}
                     </div>
                 </div>
-            </header>
+            )}
 
-            <div className="max-w-6xl mx-auto p-6 space-y-12">
-                {/* Welcome Section */}
-                <Card elevation="elevated" padding="lg" className="border-l-4 border-l-[#5e6ad2]">
-                    <Heading level={1} className="text-[#f7f8f8] mb-2">
-                        📊 Dashboard
-                    </Heading>
-                    <Body className="text-[#d0d6e0] mb-3">
-                        Welcome to your RAG System Dashboard with Linear-inspired design.
-                    </Body>
-                    <ul className="space-y-2">
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#10b981]">✓</span>
-                            <Body className="text-[#d0d6e0]">Modern design system integrated</Body>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#10b981]">✓</span>
-                            <Body className="text-[#d0d6e0]">Document management with access control</Body>
-                        </li>
-                        <li className="flex items-start gap-2">
-                            <span className="text-[#10b981]">✓</span>
-                            <Body className="text-[#d0d6e0]">AI-powered chat with citations</Body>
-                        </li>
-                    </ul>
-                </Card>
-
-                {/* Documents Section */}
-                <section className="space-y-4">
-                    <Heading level={1}>Your Documents</Heading>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {mockDocuments.map((doc) => (
-                            <DocumentCard
-                                key={doc.id}
-                                document={doc}
-                                onPreview={() => console.log('Preview:', doc.name)}
-                                onDelete={() => console.log('Delete:', doc.name)}
+            {/* Main Content */}
+            <div className="px-4 pb-6">
+                {/* Stats Section - 3 columns grid, compact */}
+                <section className="mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {stats.map((stat) => (
+                            <StatCard
+                                key={stat.id}
+                                icon={stat.icon}
+                                label={stat.label}
+                                value={stat.value}
+                                trend={stat.trend}
+                                iconBgColor={stat.iconBgColor}
                             />
                         ))}
                     </div>
                 </section>
 
-                {/* Chat Section */}
-                <section className="space-y-4">
-                    <Heading level={1}>Chat Assistant</Heading>
-                    <Card elevation="base" padding="lg" className="max-w-2xl">
-                        <div className="space-y-4 mb-4">
-                            {mockMessages.map((msg) => (
-                                <ChatBubble key={msg.id} {...msg} />
-                            ))}
+                {/* Activity Summary Section */}
+                <section className="mb-4">
+                    <ActivitySummary
+                        title="Biểu đồ Hoạt động Trị Thức"
+                        subtitle="Lưu ý truy cập & đồng góp kiến thức thực tế các giai đoạn"
+                        badges={[
+                            {
+                                label: 'Tuần này',
+                                color: 'success',
+                                onClick: () => console.log('This week'),
+                            },
+                            {
+                                label: 'Dùng giấy',
+                                color: 'warning',
+                                onClick: () => console.log('Draft'),
+                            },
+                        ]}
+                    >
+                        {/* Placeholder for chart */}
+                        <div
+                            className="h-24 rounded-lg flex items-center justify-center text-sm"
+                            style={{
+                                backgroundColor: '#f0f3ff',
+                                color: '#727785',
+                            }}
+                        >
+                            <p>📊 Biểu đồ hoạt động sẽ được hiển thị ở đây</p>
                         </div>
-                    </Card>
+                    </ActivitySummary>
                 </section>
+
+                {/* Quick Actions Section */}
+                <section className="mb-4">
+                    <div
+                        className="rounded-lg p-4"
+                        style={{
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #dce2f3',
+                        }}
+                    >
+                        <h2
+                            className="text-sm font-bold mb-3"
+                            style={{ color: '#151c27' }}
+                        >
+                            ⚡ LỐI TẠT QUẢN TRỊ
+                        </h2>
+                        <QuickActionButtons actions={quickActions} />
+                    </div>
+                </section>
+
+                {/* Recent Activity Section */}
+                <section className="mb-4">
+                    <div
+                        className="rounded-lg p-4"
+                        style={{
+                            backgroundColor: '#ffffff',
+                            border: '1px solid #dce2f3',
+                        }}
+                    >
+                        <RecentActivityCard
+                            activities={recentActivities}
+                            onViewAll={handleViewAllActivities}
+                        />
+                    </div>
+                </section>
+
+                {/* Footer */}
+                <footer
+                    className="text-center text-xs py-4"
+                    style={{ color: '#727785' }}
+                >
+                    <p>© 2024 Enterprise Knowledge OS. Hệ thống quản lý tài liệu tích hợp.</p>
+                </footer>
             </div>
         </main>
     )

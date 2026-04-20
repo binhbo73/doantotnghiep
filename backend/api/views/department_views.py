@@ -20,6 +20,7 @@ Each view:
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
 from django.utils import timezone
 import logging
@@ -33,6 +34,7 @@ from core.exceptions import (
     BusinessLogicError,
     ConflictError,
 )
+from apps.users.models import Department
 from services.department_service import DepartmentService
 from api.serializers.department_serializers import (
     DepartmentTreeSerializer,
@@ -44,43 +46,82 @@ from api.serializers.department_serializers import (
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# CUSTOM PAGINATION
+# ============================================================
+
+class DepartmentPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
 class DepartmentListTreeView(APIView):
     """
     API - Department List & Create
     
-    GET  /api/v1/departments       - Get all departments in tree structure (authenticated users)
+    GET  /api/v1/departments       - Get all departments with pagination (authenticated users)
     POST /api/v1/departments       - Create new department (admin only)
+    
+    Query Parameters (GET):
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 20, max: 100)
     
     Response (GET):
     {
         "success": true,
-        "data": [
-            {
-                "id": "uuid-1",
-                "name": "Sales",
-                "parent_id": null,
-                "manager": {...},
-                "sub_departments": [...]
+        "data": {
+            "items": [
+                {
+                    "id": "uuid-1",
+                    "name": "Sales",
+                    "parent_id": null,
+                    "manager": {...},
+                    "sub_departments": [...]
+                }
+            ],
+            "pagination": {
+                "page": 1,
+                "page_size": 20,
+                "total_items": 50,
+                "total_pages": 3,
+                "has_next": true,
+                "has_previous": false
             }
-        ]
+        },
+        "message": "Department list retrieved successfully"
     }
     """
     
     # GET requires authenticated user, POST requires admin
     permission_classes = [IsAuthenticatedUser]
+    pagination_class = DepartmentPagination
     
     def get(self, request):
-        """GET: Get all departments in tree structure"""
+        """GET: Get all departments with pagination"""
         try:
-            service = DepartmentService()
-            dept_tree = service.get_department_tree(include_deleted=False)
+            # Get all non-deleted departments from ORM (not tree structure for pagination)
+            departments = Department.objects.filter(is_deleted=False).order_by('name')
             
-            logger.info(f"User {request.user.username} retrieved department tree")
+            # Apply pagination
+            paginator = self.pagination_class()
+            paginated_queryset = paginator.paginate_queryset(departments, request)
+            
+            # Serialize with detail serializer
+            serializer = DepartmentDetailSerializer(paginated_queryset, many=True)
+            
+            page_size = paginator.page_size
+            total_count = paginator.page.paginator.count
+            
+            logger.info(f"User {request.user.username} retrieved department list - page {paginator.page.number}")
             
             return Response(
-                ResponseBuilder.success(
-                    data=dept_tree,
-                    message="Department tree retrieved successfully"
+                ResponseBuilder.paginated(
+                    items=serializer.data,
+                    page=paginator.page.number,
+                    page_size=page_size,
+                    total_items=total_count,
+                    message="Department list retrieved successfully"
                 ),
                 status=status.HTTP_200_OK
             )
@@ -165,41 +206,7 @@ class DepartmentListTreeView(APIView):
                 ResponseBuilder.error("Failed to create department", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-            logger.info(f"Department created: {dept.id} by {request.user.username}")
-            
-            return Response(
-                ResponseBuilder.success(
-                    data=response_serializer.data,
-                    message="Department created successfully",
-                    status_code=201
-                ),
-                status=status.HTTP_201_CREATED
-            )
-        
-        except ValidationError as e:
-            logger.warning(f"Validation error: {e}")
-            return Response(
-                ResponseBuilder.error(str(e), status_code=400),
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except NotFoundError as e:
-            logger.warning(f"Not found error: {e}")
-            return Response(
-                ResponseBuilder.error(str(e), status_code=404),
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except BusinessLogicError as e:
-            logger.error(f"Business logic error: {e}")
-            return Response(
-                ResponseBuilder.error(str(e), status_code=400),
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}", exc_info=True)
-            return Response(
-                ResponseBuilder.error("Failed to create department", status_code=500),
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+
 
 
 class DepartmentDetailView(APIView):

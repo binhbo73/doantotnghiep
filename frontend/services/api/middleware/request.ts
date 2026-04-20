@@ -29,6 +29,9 @@ export async function requestMiddleware(
     // Add auth header if token exists
     if (token) {
         request.headers.set('Authorization', `Bearer ${token}`)
+        console.log(`✅ [RequestMiddleware] Authorization header added (token length: ${token.length})`)
+    } else {
+        console.warn(`⚠️ [RequestMiddleware] No auth token found`)
     }
 
     // Add body for non-GET requests
@@ -36,13 +39,18 @@ export async function requestMiddleware(
         try {
             // Only set Content-Type for JSON (not for FormData)
             if (!(data instanceof FormData)) {
+                const jsonBody = JSON.stringify(data)
                 request.headers.set('Content-Type', 'application/json')
                 request = new Request(request, {
-                    body: JSON.stringify(data),
+                    body: jsonBody,
                 })
+
+                console.log(`📡 [RequestMiddleware] Request body:`, jsonBody)
+                console.log(`📡 [RequestMiddleware] Request URL: ${request.url}`)
+                console.log(`📡 [RequestMiddleware] Request method: ${request.method}`)
             }
         } catch (err) {
-            console.error('Error in request middleware:', err)
+            console.error('❌ [RequestMiddleware] Error in request middleware:', err)
             throw err
         }
     }

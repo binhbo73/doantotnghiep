@@ -860,7 +860,7 @@ class AdminCreateAccountView(APIView):
     """
     Admin endpoint để tạo account mới cho user.
     - GET /api/accounts/create: Danh sách account active
-    - POST /api/accounts/create: Tạo account mới + tự động generate temp password + gửi email
+    - POST /api/accounts/create: Tạo account mới + tự động generate temp password + gửi email + gán role
     
     Chỉ admin mới có quyền truy cập.
     """
@@ -905,6 +905,7 @@ class AdminCreateAccountView(APIView):
         """POST: Create new account + generate temp password + send email"""
         try:
             self.user_service = UserService()
+            from core.constants import RoleIds
             
             # Step 1: Extract department_id (OPTIONAL - default NULL)
             # ✅ CORRECT: department_id is optional, only validate if provided
@@ -929,6 +930,39 @@ class AdminCreateAccountView(APIView):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             
+            # Step 1.5: Extract role_id (OPTIONAL - default USER)
+            # ✅ NEW: role_id is optional, only validate if provided
+            role_id = request.data.get('role_id')
+            role_obj = None
+            
+            try:
+                if not role_id:
+                    # role_id is OPTIONAL - default to USER
+                    role_id = RoleIds.USER
+                else:
+                    # Validate role exists if provided
+                    import uuid
+                    # Try to parse as UUID or accept as is
+                    if isinstance(role_id, str):
+                        try:
+                            role_id = uuid.UUID(role_id)
+                        except ValueError:
+                            pass
+                
+                # Get role object (validate exists)
+                role_obj = self.user_service.role_repository.get_by_id(role_id)
+                if not role_obj:
+                    return Response(
+                        ResponseBuilder.error(message=f"Role '{role_id}' not found"),
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            except Exception as e:
+                logger.error(f"Error resolving role: {str(e)}")
+                return Response(
+                    ResponseBuilder.error(message="Error resolving role"),
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
             # Step 2: Extract account fields
             username = request.data.get('username', '').strip()
             email = request.data.get('email', '').strip()
@@ -939,7 +973,6 @@ class AdminCreateAccountView(APIView):
             temp_password = self._generate_temporary_password()
             
             # Step 3: Call Service to create account
-            from core.constants import RoleIds
             account_data = {
                 'username': username,
                 'email': email,
@@ -951,8 +984,13 @@ class AdminCreateAccountView(APIView):
             user = self.user_service.register_account_admin(
                 account_data=account_data,
                 department=department,
-                role_id=RoleIds.USER
+                role_id=role_id,
+                granted_by=request.user  # ✅ Track who created the account
             )
+            
+            # Get role info
+            role_id_str = str(role_id) if role_id else None
+            role_name = role_obj.code if role_obj else "unknown"
             
             # Step 4: Send email
             try:
@@ -970,7 +1008,7 @@ class AdminCreateAccountView(APIView):
                     action='UPLOAD',  # Temp: using UPLOAD as placeholder since CREATE_ACCOUNT not in choices
                     user_id=request.user.id,
                     resource_id=str(user.id),
-                    query_text=f"Admin created account: {username} ({email}). Email status: {email_status}",
+                    query_text=f"Admin created account: {username} ({email}) with role '{role_name}'. Email status: {email_status}",
                     ip_address=self._get_client_ip(request),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
@@ -996,10 +1034,12 @@ class AdminCreateAccountView(APIView):
                         'status': user.status,
                         'department_id': department_id,
                         'department_name': department_name,
+                        'role_id': role_id_str,
+                        'role_name': role_name,
                         'created_at': user.created_at,
                         'email_sent': email_status == "sent"
                     },
-                    message=f"Account '{username}' created successfully. Email: {email_status}"
+                    message=f"Account '{username}' created successfully with role '{role_name}'. Email: {email_status}"
                 ),
                 status=status.HTTP_201_CREATED
             )

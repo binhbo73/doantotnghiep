@@ -1013,7 +1013,7 @@ class UserService(BaseService):
             logger.error(f"Error getting user roles detailed: {str(e)}")
             raise
     
-    def register_account_admin(self, account_data: Dict, department=None, role_id=None) -> Any:
+    def register_account_admin(self, account_data: Dict, department=None, role_id=None, granted_by=None) -> Any:
         """
         Admin create account with specified role and department.
         
@@ -1022,12 +1022,14 @@ class UserService(BaseService):
         2. Create Account
         3. Create UserProfile with department
         4. Assign role (default USER if not specified)
-        5. Return user
+        5. Record who granted the role
+        6. Return user
         
         Args:
             account_data: Dict with username, email, first_name, last_name, password
             department: Department object (optional)
             role_id: Role UUID (optional, uses default USER if not provided)
+            granted_by: Admin user who is granting the role (optional, for audit trail)
         
         Returns:
             Created user object
@@ -1089,12 +1091,14 @@ class UserService(BaseService):
                     logger.warning(f"Role {role_id} not found, skipping assignment")
                     return user  # Return user even if role assignment fails
                 
+                # ✅ FIXED: Include granted_by to track who created this assignment
                 self.repository.create_account_role(
                     account_id=user.id,
                     role_id=role_id,
-                    notes="Created by admin"
+                    granted_by=granted_by,
+                    notes=f"Account created by admin. Role: {role.code}"
                 )
-                logger.info(f"Role {role.code} assigned to {user.username}")
+                logger.info(f"Role {role.code} assigned to {user.username} by {granted_by.username if granted_by else 'system'}")
             except Exception as e:
                 logger.warning(f"Failed to assign role: {str(e)}")
                 # Don't fail - user still created but without role

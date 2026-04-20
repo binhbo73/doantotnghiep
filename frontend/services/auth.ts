@@ -55,11 +55,12 @@ export function getUserPermissions(): string[] {
 }
 
 /**
- * Set auth tokens and user info in localStorage
+ * Set auth tokens and user info in localStorage + cookies
  */
 function setAuthData(data: LoginData) {
     const { access_token, refresh_token, user, permissions } = data
 
+    // Set in localStorage (for client-side access)
     localStorage.setItem('auth_token', access_token)
     if (refresh_token) {
         localStorage.setItem('refresh_token', refresh_token)
@@ -68,16 +69,53 @@ function setAuthData(data: LoginData) {
     if (permissions && permissions.length > 0) {
         localStorage.setItem('user_permissions', JSON.stringify(permissions))
     }
+
+    // Set in cookies (for middleware access)
+    // Cookies lưu 24h hoặc theo thời gian token expiry
+    setCookie('auth_token', access_token, 24 * 60 * 60 * 1000) // 24 hours
+    if (refresh_token) {
+        setCookie('refresh_token', refresh_token, 7 * 24 * 60 * 60 * 1000) // 7 days
+    }
 }
 
 /**
- * Clear auth data from localStorage
+ * Set a cookie with expiration time
+ * @param name Cookie name
+ * @param value Cookie value
+ * @param expirationMs Expiration time in milliseconds
+ */
+function setCookie(name: string, value: string, expirationMs: number) {
+    if (typeof document === 'undefined') return
+
+    const date = new Date()
+    date.setTime(date.getTime() + expirationMs)
+    const expires = `expires=${date.toUTCString()}`
+
+    // Set cookie with path to root so middleware can access it
+    document.cookie = `${name}=${value}; ${expires}; path=/`
+}
+
+/**
+ * Clear auth data from localStorage and cookies
  */
 function clearAuthData() {
+    // Clear from localStorage
     localStorage.removeItem('auth_token')
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('current_user')
     localStorage.removeItem('user_permissions')
+
+    // Clear from cookies
+    deleteCookie('auth_token')
+    deleteCookie('refresh_token')
+}
+
+/**
+ * Delete a cookie
+ */
+function deleteCookie(name: string) {
+    if (typeof document === 'undefined') return
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`
 }
 
 /**
@@ -144,19 +182,46 @@ export async function register(data: RegisterRequest): Promise<LoginData> {
  */
 export async function logout(): Promise<void> {
     try {
+        const accessToken = getAuthToken()
         const refreshToken = getRefreshToken()
 
+        logger.info('Logout starting', {
+            hasAccessToken: !!accessToken,
+            hasRefreshToken: !!refreshToken
+        })
+
         // Try to notify backend (but don't fail if it errors)
-        if (refreshToken) {
-            await api.post('/auth/logout', { refresh: refreshToken }).catch(() => {
-                // Fail silently
+        if (accessToken && refreshToken) {
+            try {
+                logger.debug('Sending logout request to backend', {
+                    accessTokenLength: accessToken.length,
+                    refreshTokenLength: refreshToken.length
+                })
+
+                await api.post('/auth/logout', {
+                    refresh: refreshToken
+                })
+
+                logger.info('Logout API call successful')
+            } catch (err) {
+                logger.warn('Backend logout notification failed (non-critical)', {
+                    error: err instanceof Error ? err.message : String(err)
+                })
+                // Fail silently - still clear tokens locally
+            }
+        } else {
+            logger.warn('Missing tokens for logout', {
+                hasAccessToken: !!accessToken,
+                hasRefreshToken: !!refreshToken
             })
         }
     } catch (err) {
-        logger.warn('Error during logout notification', { error: err })
+        logger.warn('Error during logout', {
+            error: err instanceof Error ? err.message : String(err)
+        })
     } finally {
         clearAuthData()
-        logger.info('Logout successful')
+        logger.info('Logout completed - tokens cleared locally')
     }
 }
 

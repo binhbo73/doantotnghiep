@@ -3,6 +3,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { authService } from '@/services/auth'
+import { initializeToken } from '@/services/token'
 import type { User } from '@/types'
 
 interface AuthContextType {
@@ -22,10 +23,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const initAuth = async () => {
             try {
+                // Initialize token non-blocking (will use placeholder if no token)
+                console.log('🔄 App init - setting up token...')
+                initializeToken()
+
                 if (authService.isAuthenticated()) {
-                    // In a real app, fetch user from /users/profile endpoint
-                    // For now, just mark as loaded
-                    setUser({ id: '', email: '', name: '', role: 'user' })
+                    // Get user from localStorage (set during login)
+                    const currentUser = authService.getCurrentUser()
+                    if (currentUser) {
+                        setUser(currentUser as User)
+                    } else {
+                        // Fallback if no user data in localStorage
+                        setUser({ id: '', email: '', name: '', role: 'user' })
+                    }
                 }
             } catch (error) {
                 console.error('Auth init error:', error)

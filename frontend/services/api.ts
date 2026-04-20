@@ -1,5 +1,7 @@
 // services/api.ts - API client with interceptors, error handling, retries
+// Force rebuild: 2025-04-20
 import { API_TIMEOUTS } from '@/constants/api'
+import { getAuthTokenForAPI } from './token'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
@@ -76,7 +78,18 @@ async function fetchWithRetry(
 // Get auth token from localStorage
 function getAuthToken(): string | null {
     if (typeof window === 'undefined') return null
-    return localStorage.getItem('auth_token')
+
+    try {
+        const token = getAuthTokenForAPI()
+        if (!token) {
+            console.warn('⚠️ No auth token available')
+            return null
+        }
+        return token
+    } catch (err) {
+        console.error('Error getting auth token:', err)
+        return null
+    }
 }
 
 // Handle API response
@@ -92,6 +105,15 @@ async function handleResponse<T>(response: Response): Promise<T> {
     }
 
     if (!response.ok) {
+        // Log error details
+        if (response.status === 401) {
+            console.error('❌ 401 Unauthorized - Token invalid or missing')
+        } else if (response.status === 403) {
+            console.error('❌ 403 Forbidden - Access denied')
+        } else if (response.status === 500) {
+            console.error('❌ 500 Server Error')
+        }
+
         throw new ApiError(
             response.status,
             typeof data === 'object' && data !== null && 'message' in data
@@ -124,6 +146,9 @@ export const api = {
         // Add auth token if available
         if (token) {
             headers['Authorization'] = `Bearer ${token}`
+            console.log(`📡 Request: ${method} ${endpoint} [WITH TOKEN]`)
+        } else {
+            console.warn(`⚠️ Request: ${method} ${endpoint} [NO TOKEN]`)
         }
 
         const fetchOptions: RequestInit & RequestOptions = {
