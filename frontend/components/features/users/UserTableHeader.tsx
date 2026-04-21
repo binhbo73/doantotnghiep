@@ -34,7 +34,7 @@ export function UserTableHeader({
                 {columns.map((column) => (
                     <th
                         key={column.id}
-                        className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors"
+                        className="px-3 py-2 text-left text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors"
                         style={{
                             color: '#584237',
                             width: column.width,

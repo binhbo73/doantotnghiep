@@ -24,12 +24,12 @@ export function PageHeader({
     icon,
 }: PageHeaderProps) {
     return (
-        <div className="mb-8">
+        <div className="mb-4">
             {/* Title and Icon */}
-            <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
 
-                    <h1 className="text-3xl font-bold" style={{ color: '#0d1c2e' }}>
+                    <h1 className="text-xl font-bold" style={{ color: '#0d1c2e' }}>
                         {title}
                     </h1>
                 </div>
@@ -37,13 +37,13 @@ export function PageHeader({
                 {onAddNew && (
                     <button
                         onClick={onAddNew}
-                        className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-white font-medium transition-all hover:shadow-lg"
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm text-white font-medium transition-all hover:shadow-lg"
                         style={{
                             backgroundColor: '#9d4300',
                             backgroundImage: 'linear-gradient(to bottom, #9d4300, #783200)',
                         }}
                     >
-                        <Plus size={20} />
+                        <Plus size={16} />
                         <span>{actionLabel}</span>
                     </button>
                 )}

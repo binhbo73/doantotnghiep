@@ -51,11 +51,11 @@ export function FilterBar({
     }
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-3">
             {/* Search Bar */}
             <div className="relative">
                 <Search
-                    size={20}
+                    size={16}
                     className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
                 />
                 <input
@@ -63,7 +63,7 @@ export function FilterBar({
                     placeholder="Tìm kiếm theo tên, email hoặc username..."
                     value={searchQuery}
                     onChange={(e) => handleSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 rounded-lg border transition-all focus:outline-none focus:ring-2"
+                    className="w-full pl-9 pr-3 py-1.5 text-sm rounded-md border transition-all focus:outline-none focus:ring-2"
                     style={{
                         backgroundColor: '#ffffff',
                         borderColor: '#dce2f3',
@@ -93,10 +93,10 @@ export function FilterBar({
                 <div className="flex items-center justify-between">
                     <button
                         onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
+                        className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium hover:bg-gray-100 transition-colors"
                         style={{ color: '#9d4300' }}
                     >
-                        <Filter size={16} />
+                        <Filter size={14} />
                         <span>Bộ lọc nâng cao</span>
                     </button>
 

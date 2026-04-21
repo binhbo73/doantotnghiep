@@ -329,4 +329,4 @@ class UserProfileRepository:
         if status:
             queryset = queryset.filter(account__status=status)
         
-        return queryset.order_by('-account__date_joined')
+        return queryset.order_by('-account__date_joined', 'id')

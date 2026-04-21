@@ -171,6 +171,10 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
         
         try:
             roles = obj.account.account_roles.filter(is_deleted=False).select_related('role')
+            unique_roles = {}
+            for r in roles:
+                unique_roles[r.role.id] = r
+                
             return [
                 {
                     'id': str(r.role.id),
@@ -181,7 +185,7 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
                         .values_list('permission__code', flat=True)
                     )
                 }
-                for r in roles
+                for r in unique_roles.values()
             ]
         except Exception as e:
             import logging

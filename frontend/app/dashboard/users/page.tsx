@@ -237,10 +237,10 @@ export default function UsersPage() {
 
     return (
         <main
-            className="min-h-screen p-6"
+            className="min-h-screen p-2 lg:p-4"
             style={{ backgroundColor: '#f9f9ff' }}
         >
-            <div className="max-w-7xl mx-auto">
+            <div className="w-full px-2 lg:px-4 mx-auto">
                 {/* Header */}
                 <PageHeader
                     title="👥 Quản lý người dùng"

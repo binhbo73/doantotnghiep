@@ -128,7 +128,7 @@ class UserProfileAdminListView(APIView):
                 AuditLog.log_action(
                     account=request.user,
                     action='LIST_USERS',
-                    resource_id='N/A',
+                    resource_id=None,
                     query_text=f"Listed users. Filters: search={search_query}, dept={department_id}, status={status_filter}",
                     request=request
                 )

@@ -49,7 +49,7 @@ export function UserTableRow({
             onClick={() => onView?.(user)}
         >
             {/* Checkbox */}
-            <td className="px-4 py-3 w-12" onClick={(e) => e.stopPropagation()}>
+            <td className="px-3 py-2 w-12" onClick={(e) => e.stopPropagation()}>
                 <input
                     type="checkbox"
                     checked={isSelected}
@@ -60,13 +60,13 @@ export function UserTableRow({
             </td>
 
             {/* User Info */}
-            <td className="px-4 py-3">
-                <div className="flex items-center gap-3">
+            <td className="px-3 py-2">
+                <div className="flex items-center gap-2">
                     <UserAvatar
                         src={user.avatar_url}
                         alt={user.full_name}
                         initials={getInitials()}
-                        size="md"
+                        size="sm"
                     />
                     <div className="min-w-0">
                         <div className="font-medium text-sm truncate" style={{ color: '#0d1c2e' }}>
@@ -80,25 +80,25 @@ export function UserTableRow({
             </td>
 
             {/* Email */}
-            <td className="px-4 py-3">
+            <td className="px-3 py-2">
                 <div className="text-sm truncate" style={{ color: '#584237' }}>
                     {user.email}
                 </div>
             </td>
 
             {/* Department */}
-            <td className="px-4 py-3">
+            <td className="px-3 py-2">
                 <div className="text-sm" style={{ color: '#584237' }}>
                     {user.department_name || 'N/A'}
                 </div>
             </td>
 
             {/* Role */}
-            <td className="px-4 py-3">
+            <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1">
                     {user.roles && user.roles.length > 0 ? (
-                        user.roles.map((role) => (
-                            <RoleBadge key={role.id} role={role.name} />
+                        user.roles.map((role, idx) => (
+                            <RoleBadge key={`${role.id}-${idx}`} role={role.name} />
                         ))
                     ) : (
                         <span className="text-sm" style={{ color: '#584237' }}>N/A</span>
@@ -107,12 +107,12 @@ export function UserTableRow({
             </td>
 
             {/* Status */}
-            <td className="px-4 py-3">
+            <td className="px-3 py-2">
                 <StatusBadge status={user.status} />
             </td>
 
             {/* Last Login */}
-            <td className="px-4 py-3">
+            <td className="px-3 py-2">
                 <div className="text-xs" style={{ color: '#584237' }}>
                     {user.last_login
                         ? new Date(user.last_login).toLocaleDateString('vi-VN')
@@ -121,7 +121,7 @@ export function UserTableRow({
             </td>
 
             {/* Actions */}
-            <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+            <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                 <ActionMenu
                     onView={() => onView?.(user)}
                     onEdit={() => onEdit?.(user)}

@@ -30,6 +30,12 @@ export const dashboardNavigation: NavItem[] = [
         href: '/dashboard/users',
     },
     {
+        id: 'departments',
+        label: 'Quản lý Phòng ban',
+        icon: '🏢',
+        href: '/dashboard/departments',
+    },
+    {
         id: 'roles',
         label: 'Vai trò & Quyền hạn',
         icon: '🔐',

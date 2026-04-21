@@ -27,13 +27,13 @@ interface UserTableProps {
 }
 
 const TABLE_COLUMNS = [
-    { id: 'checkbox', label: '', sortable: false, width: '48px' },
-    { id: 'user', label: 'Người dùng', sortable: false, width: 'flex-1' },
-    { id: 'email', label: 'Email', sortable: false, width: '200px' },
-    { id: 'department', label: 'Phòng ban', sortable: false, width: '150px' },
-    { id: 'role', label: 'Vai trò', sortable: false, width: '130px' },
-    { id: 'status', label: 'Trạng thái', sortable: false, width: '120px' },
-    { id: 'lastLogin', label: 'Lần đăng nhập', sortable: false, width: '140px' },
+    { id: 'checkbox', label: '', sortable: false, width: '40px' },
+    { id: 'user', label: 'Người dùng', sortable: false, width: '25%' },
+    { id: 'email', label: 'Email', sortable: false, width: '20%' },
+    { id: 'department', label: 'Phòng ban', sortable: false, width: '15%' },
+    { id: 'role', label: 'Vai trò', sortable: false, width: '15%' },
+    { id: 'status', label: 'Trạng thái', sortable: false, width: '12%' },
+    { id: 'lastLogin', label: 'Lần đăng nhập', sortable: false, width: '13%' },
     { id: 'actions', label: '', sortable: false, width: '50px' },
 ]
 
@@ -65,7 +65,7 @@ export function UserTable({
             }}
         >
             <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
+                <table className="w-full border-collapse table-fixed text-sm">
                     <UserTableHeader
                         columns={TABLE_COLUMNS}
                         onSort={onSort}
