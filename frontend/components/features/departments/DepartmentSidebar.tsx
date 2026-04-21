@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import Link from 'next/link'
 import { Department } from '@/types/api'
 
 interface DepartmentSidebarProps {
@@ -53,7 +54,7 @@ export function DepartmentSidebar({
                     <h2 className="text-lg font-black text-[#0d1c2e] leading-none mb-1">{department.name}</h2>
                 </div>
                 <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100">
-                    <img alt="Team activity" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&q=80&w=200"/>
+                    <img alt="Team activity" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&q=80&w=200" />
                 </div>
             </div>
 
@@ -80,7 +81,7 @@ export function DepartmentSidebar({
             <div className="mb-5">
                 <div className="flex justify-between items-center mb-2">
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Thành viên ({member_count})</h3>
-                    <a className="text-[10px] font-bold text-[#9d4300] hover:underline" href="#">Xem tất cả</a>
+                    <Link className="text-[10px] font-bold text-[#9d4300] hover:underline" href={`/dashboard/departments/${department.id}`}>Xem tất cả</Link>
                 </div>
                 <div className="flex -space-x-2">
                     {[1, 2, 3, 4].map((i) => (

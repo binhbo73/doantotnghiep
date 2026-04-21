@@ -1,7 +1,7 @@
 // services/api.ts - API client with interceptors, error handling, retries
 // Force rebuild: 2025-04-20
 import { API_TIMEOUTS } from '@/constants/api'
-import { getAuthTokenForAPI } from './token'
+import { getAuthTokenForAPI, refreshAccessToken, clearAuthToken } from './token'
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
@@ -36,6 +36,7 @@ interface RequestOptions {
     retries?: number
     headers?: Record<string, string>
     signal?: AbortSignal
+    isRetryAfterRefresh?: boolean // Flag to prevent infinite refresh loops
 }
 
 // Retry logic with exponential backoff
@@ -75,23 +76,6 @@ async function fetchWithRetry(
     }
 }
 
-// Get auth token from localStorage
-function getAuthToken(): string | null {
-    if (typeof window === 'undefined') return null
-
-    try {
-        const token = getAuthTokenForAPI()
-        if (!token) {
-            console.warn('⚠️ No auth token available')
-            return null
-        }
-        return token
-    } catch (err) {
-        console.error('Error getting auth token:', err)
-        return null
-    }
-}
-
 // Handle API response
 async function handleResponse<T>(response: Response): Promise<T> {
     const contentType = response.headers.get('content-type')
@@ -126,7 +110,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
         // Log error details
         if (response.status === 401) {
-            console.error('❌ 401 Unauthorized - Token invalid or missing')
+            console.error('❌ 401 Unauthorized - Token invalid or expired')
         } else if (response.status === 403) {
             console.error('❌ 403 Forbidden - Access denied')
         } else if (response.status === 500) {
@@ -154,8 +138,12 @@ export const api = {
         data?: unknown,
         options?: RequestOptions
     ): Promise<T> {
+        // Skip token refresh retry for refresh and login endpoints
+        const isAuthEndpoint = endpoint.includes('/auth/')
+        const isRetryAfterRefresh = options?.isRetryAfterRefresh
+
         const url = `${API_BASE_URL}${endpoint}`
-        const token = getAuthToken()
+        const token = getAuthTokenForAPI()
 
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -182,8 +170,51 @@ export const api = {
             fetchOptions.body = JSON.stringify(data)
         }
 
-        const response = await fetchWithRetry(url, fetchOptions)
-        return handleResponse<T>(response)
+        try {
+            const response = await fetchWithRetry(url, fetchOptions)
+            return handleResponse<T>(response)
+        } catch (error) {
+            // Handle 401 Unauthorized with token refresh
+            if (
+                error instanceof ApiError &&
+                error.status === 401 &&
+                !isAuthEndpoint &&
+                !isRetryAfterRefresh
+            ) {
+                console.log('🔄 [401] Attempting token refresh...')
+
+                // Try to refresh the token
+                const newToken = await refreshAccessToken()
+
+                if (newToken) {
+                    console.log('✅ Token refreshed, retrying original request...')
+
+                    // Retry original request with new token
+                    const retryOptions = {
+                        ...options,
+                        isRetryAfterRefresh: true, // Prevent infinite loop
+                    }
+
+                    return this.request<T>(method, endpoint, data, retryOptions)
+                } else {
+                    console.error('❌ Token refresh failed - logging out...')
+
+                    // Refresh failed, clear auth and redirect to login
+                    if (typeof window !== 'undefined') {
+                        clearAuthToken()
+                        // Redirect to login
+                        window.location.href = '/login'
+                    }
+
+                    throw new ApiError(
+                        401,
+                        'Token expired and refresh failed. Please login again.'
+                    )
+                }
+            }
+
+            throw error
+        }
     },
 
     async get<T>(endpoint: string, options?: RequestOptions): Promise<T> {

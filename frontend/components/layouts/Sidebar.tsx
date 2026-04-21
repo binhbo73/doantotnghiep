@@ -112,20 +112,6 @@ export function Sidebar({
                                     {item.label}
                                 </span>
 
-                                {/* Badge */}
-                                {item.badge && !isCollapsed && (
-                                    <span
-                                        className="ml-auto px-2 py-1 rounded-full text-xs font-bold"
-                                        style={{
-                                            backgroundColor:
-                                                '#d8e2ff',
-                                            color: '#0058be',
-                                        }}
-                                    >
-                                        {item.badge}
-                                    </span>
-                                )}
-
                                 {/* Active Indicator */}
                                 {active && (
                                     <div
@@ -135,20 +121,6 @@ export function Sidebar({
                                                 '#0058be',
                                         }}
                                     />
-                                )}
-
-                                {/* Tooltip */}
-                                {isCollapsed && (
-                                    <div
-                                        className="absolute left-full ml-2 px-2 py-1 rounded-md text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50"
-                                        style={{
-                                            backgroundColor:
-                                                '#151c27',
-                                            color: '#ffffff',
-                                        }}
-                                    >
-                                        {item.label}
-                                    </div>
                                 )}
                             </Link>
                         )
@@ -161,10 +133,6 @@ export function Sidebar({
                 className="px-3 py-4 border-t space-y-2"
                 style={{ borderColor: '#dce2f3' }}
             >
-
-
-
-
                 {/* Logout */}
                 <button
                     onClick={onLogout}

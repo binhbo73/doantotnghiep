@@ -1,3 +1,5 @@
+'use client'
+
 import React, { useMemo } from 'react'
 import { Department } from '@/types/api'
 
@@ -19,15 +21,20 @@ const getIconForName = (name: string) => {
 
 export function DepartmentTree({ departments, selectedId, onSelect }: DepartmentTreeProps) {
     const rootDepartments = useMemo(() => departments.filter((d) => !d.parent_id), [departments])
-    
+
     const getChildren = (parentId: string) => departments.filter((d) => d.parent_id === parentId)
+
+    const handleSelectDepartment = (id: string) => {
+        // Chỉ cập nhật state để hiện thông tin ở sidebar
+        onSelect?.(id)
+    }
 
     const renderNode = (node: Department, depth: number = 0) => {
         const children = getChildren(node.id)
         const isSelected = selectedId === node.id
         const isRoot = depth === 0
         const isLevel2 = depth >= 2
-        
+
         const { icon, color, bg } = getIconForName(node.name)
 
         return (
@@ -35,16 +42,15 @@ export function DepartmentTree({ departments, selectedId, onSelect }: Department
                 {depth > 0 && (
                     <div className="absolute left-[-28px] top-1/2 w-7 h-px bg-[#e0c0b1]"></div>
                 )}
-                
-                <div 
-                    onClick={() => onSelect?.(node.id)}
-                    className={`p-2 rounded-xl cursor-pointer transition-all group ${
-                        isRoot 
-                            ? 'bg-[#ffeaa7]/30 border border-[#f97316]/30 flex items-center justify-between' 
-                            : isLevel2
-                                ? `py-1.5 px-2 rounded-lg flex items-center gap-2 hover:bg-white border border-transparent hover:border-[#e0c0b1] select-none ${isSelected ? 'bg-white ring-1 ring-[#9d4300] shadow-sm' : 'bg-slate-50'}`
-                                : `bg-white shadow-sm border hover:border-[#f97316] select-none ${isSelected ? 'ring-2 ring-[#9d4300] border-transparent shadow-md' : 'border-transparent'}`
-                    }`}
+
+                <div
+                    onClick={() => handleSelectDepartment(node.id)}
+                    className={`p-2 rounded-xl cursor-pointer transition-all group ${isRoot
+                        ? 'bg-[#ffeaa7]/30 border border-[#f97316]/30 flex items-center justify-between'
+                        : isLevel2
+                            ? `py-1.5 px-2 rounded-lg flex items-center gap-2 hover:bg-white border border-transparent hover:border-[#e0c0b1] select-none ${isSelected ? 'bg-white ring-1 ring-[#9d4300] shadow-sm' : 'bg-slate-50'}`
+                            : `bg-white shadow-sm border hover:border-[#f97316] select-none ${isSelected ? 'ring-2 ring-[#9d4300] border-transparent shadow-md' : 'border-transparent'}`
+                        }`}
                 >
                     {isLevel2 ? (
                         <>
@@ -64,7 +70,7 @@ export function DepartmentTree({ departments, selectedId, onSelect }: Department
                                     <p className={`${isRoot ? 'text-[10px]' : 'text-[9px]'} text-slate-400 leading-tight mt-0.5 truncate max-w-[150px]`}>{node.description || 'Chưa có mô tả'}</p>
                                 </div>
                             </div>
-                            
+
                             {isRoot ? (
                                 <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-[#9d4300] transition-colors"><span className="material-symbols-outlined text-sm">edit</span></button>

@@ -126,14 +126,16 @@ class ResponseBuilder:
             'success': True,
             'status_code': 200,
             'message': message,
-            'data': items,
-            'pagination': {
-                'page': page,
-                'page_size': page_size,
-                'total_items': total_items,
-                'total_pages': total_pages,
-                'has_next': has_next,
-                'has_prev': has_prev
+            'data': {
+                'items': items,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_items': total_items,
+                    'total_pages': total_pages,
+                    'has_next': has_next,
+                    'has_prev': has_prev
+                }
             },
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'request_id': request_id or str(uuid.uuid4())

@@ -25,12 +25,12 @@ export default function DepartmentsPage() {
 
     // Auto-select first department when data loads
     React.useEffect(() => {
-        if (departments.length > 0 && !selectedDepartmentId) {
+        if (Array.isArray(departments) && departments.length > 0 && !selectedDepartmentId) {
             setSelectedDepartmentId(departments[0].id)
         }
-    }, [departments, selectedDepartmentId])
+    }, [departments])
 
-    const selectedDepartment = departments.find((d) => d.id === selectedDepartmentId) ?? null
+    const selectedDepartment = (Array.isArray(departments) ? departments : []).find((d) => d.id === selectedDepartmentId) ?? null
 
     const handleAddDepartment = async (data: {
         name: string
@@ -97,25 +97,25 @@ export default function DepartmentsPage() {
                                 members={
                                     selectedDepartment
                                         ? Array.from({ length: Math.min(selectedDepartment.member_count || 0, 5) }, (_, i) => ({
-                                              id: String(i + 1),
-                                              name: `Thành viên ${i + 1}`,
-                                          }))
+                                            id: String(i + 1),
+                                            name: `Thành viên ${i + 1}`,
+                                        }))
                                         : []
                                 }
                                 files={
                                     selectedDepartment
                                         ? [
-                                              {
-                                                  id: '1',
-                                                  name: 'Quy trình nội bộ v1.0.pdf',
-                                                  size: 'Cập nhật 2 ngày trước • 4.2 MB',
-                                              },
-                                              {
-                                                  id: '2',
-                                                  name: 'Kế hoạch Tuyển dụng Q4.xlsx',
-                                                  size: 'Cập nhật 5 ngày trước • 1.1 MB',
-                                              },
-                                          ]
+                                            {
+                                                id: '1',
+                                                name: 'Quy trình nội bộ v1.0.pdf',
+                                                size: 'Cập nhật 2 ngày trước • 4.2 MB',
+                                            },
+                                            {
+                                                id: '2',
+                                                name: 'Kế hoạch Tuyển dụng Q4.xlsx',
+                                                size: 'Cập nhật 5 ngày trước • 1.1 MB',
+                                            },
+                                        ]
                                         : []
                                 }
                             />

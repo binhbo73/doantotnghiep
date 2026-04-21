@@ -50,7 +50,7 @@ export function useRoles(initialParams?: RolesQueryParams) {
     const [error, setError] = useState<Error | null>(null)
     const [pagination, setPagination] = useState<PaginationInfo | null>(null)
     const [useFallback, setUseFallback] = useState(false)
-    
+
     // Use ref to track if we've already loaded
     const hasLoadedRef = useRef(false)
 
@@ -61,8 +61,15 @@ export function useRoles(initialParams?: RolesQueryParams) {
         try {
             const response = await fetchRoles(params || initialParams)
             // Extract data and pagination from response
-            setRoles(response.data)
-            setPagination(response.pagination)
+            // Backend returns { data: { items: [...], pagination: {...} } }
+            const responseData = response.data as any
+            const roles = Array.isArray(responseData)
+                ? responseData
+                : responseData?.items || []
+            const pagination = responseData?.pagination || response.pagination
+
+            setRoles(roles)
+            setPagination(pagination)
         } catch (err) {
             const error = err instanceof Error ? err : new Error('Failed to fetch roles')
             setError(error)

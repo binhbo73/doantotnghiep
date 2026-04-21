@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { useRouter } from 'next/navigation'
 import { Department } from '@/types/api'
 
 interface DepartmentListProps {
@@ -10,6 +11,7 @@ interface DepartmentListProps {
 }
 
 export function DepartmentList({ departments, onAdd, onExport }: DepartmentListProps) {
+    const router = useRouter()
     const totalDepartments = departments.length
     const totalMembers = departments.reduce((acc, d) => acc + (d.member_count || 0), 0)
 
@@ -19,6 +21,10 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
     const getInitials = (name?: string) => {
         if (!name) return '??'
         return name.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
+    }
+
+    const handleNavigateToDepartmentDetail = (deptId: string) => {
+        router.push(`/dashboard/departments/${deptId}`)
     }
 
     const getColorClass = (idx: number) => {
@@ -116,7 +122,7 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
                                 return (
                                     <tr key={dept.id} className="hover:bg-slate-50/80 transition-colors group">
                                         <td className="px-5 py-3">
-                                            <div className="flex items-center gap-3">
+                                            <div className="flex items-center gap-3 cursor-pointer" onClick={() => handleNavigateToDepartmentDetail(dept.id)}>
                                                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs ${colorClass}`}>
                                                     {initials}
                                                 </div>
@@ -149,6 +155,13 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
                                         </td>
                                         <td className="px-5 py-3 text-right">
                                             <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => handleNavigateToDepartmentDetail(dept.id)}
+                                                    className="p-1.5 text-slate-400 hover:text-[#9d4300] bg-white hover:bg-orange-50 rounded shadow-sm border border-transparent transition-all"
+                                                    title="Xem chi tiết"
+                                                >
+                                                    <span className="material-symbols-outlined text-base">open_in_new</span>
+                                                </button>
                                                 <button className="p-1.5 text-slate-400 hover:text-[#9d4300] bg-white hover:bg-orange-50 rounded shadow-sm border border-transparent transition-all">
                                                     <span className="material-symbols-outlined text-base">edit</span>
                                                 </button>

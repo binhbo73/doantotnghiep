@@ -155,6 +155,57 @@ export function getRefreshToken(): string {
 }
 
 /**
+ * Refresh access token using refresh token
+ * Called when access token expires (401 error)
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+    try {
+        const refreshToken = getRefreshToken()
+
+        if (!refreshToken) {
+            console.warn('⚠️ No refresh token available - cannot refresh access token')
+            return null
+        }
+
+        console.log('🔄 Attempting to refresh access token...')
+
+        const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh: refreshToken }),
+            signal: AbortSignal.timeout(10000) // 10 second timeout
+        })
+
+        if (!response.ok) {
+            console.error(`❌ Token refresh failed with status ${response.status}`)
+            const errorData = await response.text()
+            console.error('Error details:', errorData.substring(0, 300))
+            return null
+        }
+
+        const data = await response.json()
+        console.log('📡 Refresh response data:', Object.keys(data || {}))
+
+        // Extract new access token from response
+        // Backend returns: { success: true, data: { access: "..." }, message: "..." }
+        const newAccessToken = data?.data?.access || data?.access
+
+        if (!newAccessToken) {
+            console.error('❌ No access token in refresh response:', JSON.stringify(data).substring(0, 300))
+            return null
+        }
+
+        // Store new access token
+        setAuthToken(newAccessToken)
+        console.log('✅ Access token refreshed successfully')
+        return newAccessToken
+    } catch (err) {
+        console.error('❌ Token refresh error:', err)
+        return null
+    }
+}
+
+/**
  * Clear all tokens on logout
  */
 export function clearAuthToken(): void {

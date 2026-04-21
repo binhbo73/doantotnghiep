@@ -63,7 +63,7 @@ export function usePermissions(initialParams?: PermissionsQueryParams) {
     const [error, setError] = useState<Error | null>(null)
     const [pagination, setPagination] = useState<PaginationInfo | null>(null)
     const [useFallback, setUseFallback] = useState(false)
-    
+
     // Use ref to track if we've already loaded
     const hasLoadedRef = useRef(false)
 
@@ -74,8 +74,15 @@ export function usePermissions(initialParams?: PermissionsQueryParams) {
         try {
             const response = await fetchPermissions(params || initialParams)
             // Extract data and pagination from response
-            setPermissions(response.data)
-            setPagination(response.pagination)
+            // Backend returns { data: { items: [...], pagination: {...} } }
+            const responseData = response.data as any
+            const permissions = Array.isArray(responseData)
+                ? responseData
+                : responseData?.items || []
+            const pagination = responseData?.pagination || response.pagination
+
+            setPermissions(permissions)
+            setPagination(pagination)
         } catch (err) {
             const error = err instanceof Error ? err : new Error('Failed to fetch permissions')
             setError(error)

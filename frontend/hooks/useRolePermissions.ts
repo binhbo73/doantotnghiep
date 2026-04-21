@@ -35,7 +35,12 @@ export function useRolePermissions(roleId: string): UseRolePermissionsReturn {
                 throw new Error(response.message || 'Failed to fetch role permissions')
             }
 
-            setPermissions(response.data || [])
+            // Backend returns { data: { items: [...], pagination: {...} } }
+            const responseData = response.data as any
+            const permissions = Array.isArray(responseData)
+                ? responseData
+                : responseData?.items || []
+            setPermissions(permissions)
         } catch (err) {
             const error = err instanceof Error ? err : new Error('Failed to fetch role permissions')
             setError(error)

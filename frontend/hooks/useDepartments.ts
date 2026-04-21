@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { fetchDepartments, createDepartment, updateDepartment, deleteDepartment, DepartmentQueryParams } from '@/services/department'
 import { Department, ApiResponseWithPagination, PaginationInfo } from '@/types/api'
 
@@ -51,16 +51,24 @@ export function useDepartments(initialParams?: DepartmentQueryParams) {
     const [pagination, setPagination] = useState<PaginationInfo | null>(null)
     const [useFallback, setUseFallback] = useState(false)
     const [searchQuery, setSearchQuery] = useState('')
-    
+
     const hasLoadedRef = useRef(false)
 
     const loadDepartments = useCallback(async (params?: DepartmentQueryParams) => {
         setIsLoading(true)
         setError(null)
         try {
-            const response = await fetchDepartments(params || { search: searchQuery })
-            setDepartments(response.data)
-            setPagination(response.pagination)
+            const response = await fetchDepartments(params || {})
+            // Backend returns { data: { items: [...], pagination: {...} } }
+            // Handle both array and object response formats
+            const responseData = response.data as any
+            const departments = Array.isArray(responseData)
+                ? responseData
+                : responseData?.items || []
+            const pagination = responseData?.pagination || response.pagination
+
+            setDepartments(departments)
+            setPagination(pagination)
             setUseFallback(false)
         } catch (err) {
             const error = err instanceof Error ? err : new Error('Failed to fetch departments')
@@ -72,14 +80,15 @@ export function useDepartments(initialParams?: DepartmentQueryParams) {
         } finally {
             setIsLoading(false)
         }
-    }, [searchQuery])
+    }, [])
 
+    // Load departments only once on mount
     useEffect(() => {
         if (!hasLoadedRef.current) {
             hasLoadedRef.current = true
             loadDepartments()
         }
-    }, [loadDepartments])
+    }, [loadDepartments]) // loadDepartments won't change because no dependencies
 
     const addDepartment = useCallback(async (data: {
         name: string
