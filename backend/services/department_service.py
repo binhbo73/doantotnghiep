@@ -440,3 +440,343 @@ class DepartmentService(BaseService):
         except Exception as e:
             logger.error(f"Error getting department {dept_id}: {e}")
             raise BusinessLogicError(f"Failed to get department: {str(e)}")
+    
+    # ============================================================================
+    # HYBRID APPROACH - DETAIL WITH COUNTS & EXPANDED DATA
+    # ============================================================================
+    
+    def get_department_detail_with_counts(self, dept_id: str) -> Department:
+        """
+        Get department detail with counts (BASIC view).
+        
+        Returns: Department instance (serializer will add counts via SerializerMethodField)
+        
+        Used by:
+        - GET /api/v1/departments/{id}
+        
+        Raises:
+            NotFoundError: If not found
+        """
+        try:
+            dept = self.get_department(dept_id)
+            return dept
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting department detail with counts: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get department detail: {str(e)}")
+    
+    def get_department_with_expanded_data(
+        self,
+        dept_id: str,
+        expand_fields: List[str],
+        page: int = 1,
+        page_size: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get department with expanded data (FULL view).
+        
+        Args:
+            dept_id: Department UUID
+            expand_fields: List of fields to expand (users, folders, documents)
+            page: Page number for pagination
+            page_size: Items per page
+        
+        Returns:
+            Dict with department data + expanded lists
+        
+        Example:
+            data = service.get_department_with_expanded_data(
+                dept_id="uuid",
+                expand_fields=['users', 'folders', 'documents'],
+                page=1,
+                page_size=10
+            )
+        
+        Used by:
+        - GET /api/v1/departments/{id}/detail?expand=users,folders,documents
+        """
+        try:
+            # Get department
+            dept = self.get_department(dept_id)
+            
+            # Build response
+            result = {
+                'id': dept.id,
+                'name': dept.name,
+                'description': dept.description,
+                'parent_id': dept.parent_id,
+                'parent': dept.parent,
+                'manager_id': dept.manager_id,
+                'manager': dept.manager,
+                'member_count': dept.get_all_members(include_subdepts=False).count(),
+                'folder_count': dept.folders.filter(is_deleted=False).count(),
+                'document_count': dept.documents.filter(is_deleted=False).count(),
+                'sub_department_count': dept.sub_departments.filter(is_deleted=False).count(),
+                'sub_departments': self._build_dept_tree_node(dept)['sub_departments'],
+            }
+            
+            # Add expanded fields
+            if 'users' in expand_fields:
+                users_data = self._get_department_users_paginated(dept_id, page, page_size)
+                result['users'] = users_data
+            
+            if 'folders' in expand_fields:
+                folders_data = self._get_department_folders_paginated(dept_id, page, page_size)
+                result['folders'] = folders_data
+            
+            if 'documents' in expand_fields:
+                documents_data = self._get_department_documents_paginated(dept_id, page, page_size)
+                result['documents'] = documents_data
+            
+            return result
+        
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting department with expanded data: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get department with expanded data: {str(e)}")
+    
+    # ============================================================================
+    # PAGINATION HELPERS
+    # ============================================================================
+    
+    def _get_department_users_paginated(
+        self,
+        dept_id: str,
+        page: int = 1,
+        page_size: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get users in department with pagination.
+        
+        Returns: {
+            "items": [...],
+            "pagination": {...}
+        }
+        """
+        try:
+            from django.core.paginator import Paginator
+            
+            dept = self.get_department(dept_id)
+            
+            # Get users via UserProfile relationship
+            users_queryset = dept.users.filter(
+                account__is_deleted=False
+            ).select_related('account').order_by('account__username')
+            
+            # Paginate
+            paginator = Paginator(users_queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # Serialize
+            items = []
+            for user_profile in page_obj:
+                account = user_profile.account
+                items.append({
+                    'id': str(account.id),
+                    'username': account.username,
+                    'email': account.email,
+                    'full_name': user_profile.full_name,
+                    'avatar_url': user_profile.avatar_url,
+                })
+            
+            return {
+                'items': items,
+                'pagination': {
+                    'page': page_obj.number,
+                    'page_size': page_size,
+                    'total_items': paginator.count,
+                    'total_pages': paginator.num_pages,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous(),
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting department users: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get department users: {str(e)}")
+    
+    def _get_department_folders_paginated(
+        self,
+        dept_id: str,
+        page: int = 1,
+        page_size: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get folders in department with pagination.
+        
+        Returns: {
+            "items": [...],
+            "pagination": {...}
+        }
+        """
+        try:
+            from django.core.paginator import Paginator
+            
+            dept = self.get_department(dept_id)
+            
+            # Get root folders of this department
+            folders_queryset = dept.folders.filter(
+                is_deleted=False,
+                parent__isnull=True  # Only root folders
+            ).order_by('name')
+            
+            # Paginate
+            paginator = Paginator(folders_queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # Serialize
+            items = []
+            for folder in page_obj:
+                items.append({
+                    'id': str(folder.id),
+                    'name': folder.name,
+                    'parent_id': str(folder.parent_id) if folder.parent_id else None,
+                    'access_scope': folder.access_scope,
+                    'created_by_id': str(folder.created_by_id) if folder.created_by_id else None,
+                    'document_count': folder.documents.filter(is_deleted=False).count(),
+                    'subfolder_count': folder.subfolders.filter(is_deleted=False).count(),
+                    'created_at': folder.created_at.isoformat() if folder.created_at else None,
+                })
+            
+            return {
+                'items': items,
+                'pagination': {
+                    'page': page_obj.number,
+                    'page_size': page_size,
+                    'total_items': paginator.count,
+                    'total_pages': paginator.num_pages,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous(),
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting department folders: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get department folders: {str(e)}")
+    
+    def _get_department_documents_paginated(
+        self,
+        dept_id: str,
+        page: int = 1,
+        page_size: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get documents in department with pagination.
+        
+        Returns: {
+            "items": [...],
+            "pagination": {...}
+        }
+        """
+        try:
+            from django.core.paginator import Paginator
+            
+            dept = self.get_department(dept_id)
+            
+            # Get documents of this department
+            documents_queryset = dept.documents.filter(
+                is_deleted=False
+            ).select_related('uploader', 'folder').order_by('-created_at')
+            
+            # Paginate
+            paginator = Paginator(documents_queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # Serialize
+            items = []
+            for document in page_obj:
+                items.append({
+                    'id': str(document.id),
+                    'filename': document.filename,
+                    'original_name': document.original_name,
+                    'file_type': document.file_type,
+                    'file_size': document.file_size,
+                    'status': document.status,
+                    'uploader_id': str(document.uploader_id) if document.uploader_id else None,
+                    'department_id': str(document.department_id) if document.department_id else None,
+                    'folder_id': str(document.folder_id) if document.folder_id else None,
+                    'access_scope': document.access_scope,
+                    'created_at': document.created_at.isoformat() if document.created_at else None,
+                    'updated_at': document.updated_at.isoformat() if document.updated_at else None,
+                })
+            
+            return {
+                'items': items,
+                'pagination': {
+                    'page': page_obj.number,
+                    'page_size': page_size,
+                    'total_items': paginator.count,
+                    'total_pages': paginator.num_pages,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous(),
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting department documents: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get department documents: {str(e)}")
+    
+    def get_folder_documents_paginated(
+        self,
+        folder_id: str,
+        page: int = 1,
+        page_size: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Get documents in folder with pagination.
+        
+        Used by:
+        - GET /api/v1/folders/{id}/documents
+        
+        Returns: {
+            "items": [...],
+            "pagination": {...}
+        }
+        """
+        try:
+            from django.core.paginator import Paginator
+            from apps.documents.models import Folder
+            
+            # Get folder
+            folder = Folder.objects.filter(is_deleted=False).get(id=folder_id)
+            
+            # Get documents
+            documents_queryset = folder.documents.filter(
+                is_deleted=False
+            ).select_related('uploader', 'department').order_by('-created_at')
+            
+            # Paginate
+            paginator = Paginator(documents_queryset, page_size)
+            page_obj = paginator.get_page(page)
+            
+            # Serialize
+            items = []
+            for document in page_obj:
+                items.append({
+                    'id': str(document.id),
+                    'filename': document.filename,
+                    'original_name': document.original_name,
+                    'file_type': document.file_type,
+                    'file_size': document.file_size,
+                    'status': document.status,
+                    'uploader_id': str(document.uploader_id) if document.uploader_id else None,
+                    'department_id': str(document.department_id) if document.department_id else None,
+                    'folder_id': str(document.folder_id) if document.folder_id else None,
+                    'access_scope': document.access_scope,
+                    'created_at': document.created_at.isoformat() if document.created_at else None,
+                    'updated_at': document.updated_at.isoformat() if document.updated_at else None,
+                })
+            
+            return {
+                'items': items,
+                'pagination': {
+                    'page': page_obj.number,
+                    'page_size': page_size,
+                    'total_items': paginator.count,
+                    'total_pages': paginator.num_pages,
+                    'has_next': page_obj.has_next(),
+                    'has_previous': page_obj.has_previous(),
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting folder documents: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to get folder documents: {str(e)}")

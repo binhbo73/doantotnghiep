@@ -41,6 +41,8 @@ from api.serializers.department_serializers import (
     DepartmentDetailSerializer,
     DepartmentCreateUpdateSerializer,
     DepartmentListSerializer,
+    DepartmentDetailWithCountsSerializer,
+    DepartmentExpandedSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -241,6 +243,68 @@ class DepartmentDetailView(APIView):
     
     permission_classes = [IsAuthenticatedUser, IsAdmin]
     
+    def get(self, request, dept_id):
+        """
+        GET: Get department detail with counts (BASIC view).
+        
+        Returns department info + member_count, folder_count, document_count,
+        sub_department_count, sub_departments (recursive tree structure).
+        
+        Example Response:
+        {
+            "success": true,
+            "data": {
+                "id": "uuid-1",
+                "name": "Sales",
+                "parent_id": null,
+                "manager": {...},
+                "member_count": 10,
+                "folder_count": 5,
+                "document_count": 20,
+                "sub_department_count": 2,
+                "sub_departments": [{...}],
+                "created_at": "...",
+                "updated_at": "..."
+            },
+            "message": "Department detail retrieved successfully"
+        }
+        """
+        try:
+            service = DepartmentService()
+            dept = service.get_department_detail_with_counts(dept_id)
+            
+            # Serialize with counts
+            serializer = DepartmentDetailWithCountsSerializer(dept)
+            
+            logger.info(f"User {request.user.username} retrieved department detail: {dept_id}")
+            
+            return Response(
+                ResponseBuilder.success(
+                    data=serializer.data,
+                    message="Department detail retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except NotFoundError as e:
+            logger.warning(f"Not found error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except BusinessLogicError as e:
+            logger.error(f"Business logic error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve department detail", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @transaction.atomic()
     def put(self, request, dept_id):
         """PUT: Update department"""
@@ -357,5 +421,468 @@ class DepartmentDetailView(APIView):
             logger.error(f"Unexpected error: {e}", exc_info=True)
             return Response(
                 ResponseBuilder.error("Failed to delete department", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================================
+# HYBRID APPROACH - EXPANDED DETAIL VIEW
+# ============================================================================
+
+class DepartmentDetailExpandView(APIView):
+    """
+    API - Department Detail with Expanded Data (FULL view).
+    
+    GET /api/v1/departments/{id}/detail?expand=users,folders,documents
+    
+    Query Parameters:
+    - expand: Comma-separated list (users, folders, documents) - optional
+    - page: Page number for expanded items (default: 1)
+    - page_size: Items per page (default: 10, max: 50)
+    
+    Example Response:
+    {
+        "success": true,
+        "data": {
+            "id": "uuid-1",
+            "name": "Sales",
+            "parent_id": null,
+            "manager": {...},
+            "member_count": 10,
+            "folder_count": 5,
+            "document_count": 20,
+            "sub_departments": [{...}],
+            "users": {
+                "items": [...],
+                "pagination": {...}
+            },
+            "folders": {
+                "items": [...],
+                "pagination": {...}
+            },
+            "documents": {
+                "items": [...],
+                "pagination": {...}
+            }
+        },
+        "message": "Department detail retrieved successfully"
+    }
+    """
+    
+    permission_classes = [IsAuthenticatedUser]
+    
+    def get(self, request, dept_id):
+        """GET: Get department detail with expanded data"""
+        try:
+            # Parse query parameters
+            expand_str = request.query_params.get('expand', '')
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
+            
+            # Parse expand fields
+            expand_fields = [f.strip() for f in expand_str.split(',') if f.strip()] if expand_str else []
+            
+            # Validate expand fields
+            valid_fields = {'users', 'folders', 'documents'}
+            expand_fields = [f for f in expand_fields if f in valid_fields]
+            
+            service = DepartmentService()
+            data = service.get_department_with_expanded_data(
+                dept_id=dept_id,
+                expand_fields=expand_fields,
+                page=page,
+                page_size=page_size
+            )
+            
+            # Serialize
+            serializer = DepartmentExpandedSerializer(data)
+            
+            logger.info(
+                f"User {request.user.username} retrieved expanded department detail: {dept_id} "
+                f"(expand={','.join(expand_fields)})"
+            )
+            
+            return Response(
+                ResponseBuilder.success(
+                    data=serializer.data,
+                    message="Department detail retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except NotFoundError as e:
+            logger.warning(f"Not found error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            logger.warning(f"Invalid query parameter: {e}")
+            return Response(
+                ResponseBuilder.error(f"Invalid query parameter: {str(e)}", status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except BusinessLogicError as e:
+            logger.error(f"Business logic error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve department detail", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================================
+# HYBRID APPROACH - SUB-RESOURCE VIEWS
+# ============================================================================
+
+class DepartmentUsersView(APIView):
+    """
+    API - Get users in department.
+    
+    GET /api/v1/departments/{id}/users
+    
+    Query Parameters:
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 10, max: 50)
+    
+    Response:
+    {
+        "success": true,
+        "data": {
+            "items": [
+                {
+                    "id": "uuid",
+                    "username": "john_doe",
+                    "email": "john@example.com",
+                    "full_name": "John Doe",
+                    "avatar_url": "..."
+                }
+            ],
+            "pagination": {...}
+        },
+        "message": "Users retrieved successfully"
+    }
+    """
+    
+    permission_classes = [IsAuthenticatedUser]
+    
+    def get(self, request, dept_id):
+        """GET: Get users in department with pagination"""
+        try:
+            # Parse query parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
+            
+            service = DepartmentService()
+            data = service._get_department_users_paginated(
+                dept_id=dept_id,
+                page=page,
+                page_size=page_size
+            )
+            
+            logger.info(f"User {request.user.username} retrieved department users: {dept_id} - page {page}")
+            
+            return Response(
+                ResponseBuilder.paginated(
+                    items=data['items'],
+                    page=data['pagination']['page'],
+                    page_size=data['pagination']['page_size'],
+                    total_items=data['pagination']['total_items'],
+                    message="Users retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except NotFoundError as e:
+            logger.warning(f"Not found error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            logger.warning(f"Invalid query parameter: {e}")
+            return Response(
+                ResponseBuilder.error(f"Invalid query parameter: {str(e)}", status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except BusinessLogicError as e:
+            logger.error(f"Business logic error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve users", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DepartmentFoldersView(APIView):
+    """
+    API - Get folders in department.
+    
+    GET /api/v1/departments/{id}/folders
+    
+    Query Parameters:
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 10, max: 50)
+    
+    Response:
+    {
+        "success": true,
+        "data": {
+            "items": [
+                {
+                    "id": "uuid",
+                    "name": "Folder Name",
+                    "parent_id": null,
+                    "access_scope": "department",
+                    "document_count": 5,
+                    "subfolder_count": 2,
+                    "created_at": "..."
+                }
+            ],
+            "pagination": {...}
+        },
+        "message": "Folders retrieved successfully"
+    }
+    """
+    
+    permission_classes = [IsAuthenticatedUser]
+    
+    def get(self, request, dept_id):
+        """GET: Get folders in department with pagination"""
+        try:
+            # Parse query parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
+            
+            service = DepartmentService()
+            data = service._get_department_folders_paginated(
+                dept_id=dept_id,
+                page=page,
+                page_size=page_size
+            )
+            
+            logger.info(f"User {request.user.username} retrieved department folders: {dept_id} - page {page}")
+            
+            return Response(
+                ResponseBuilder.paginated(
+                    items=data['items'],
+                    page=data['pagination']['page'],
+                    page_size=data['pagination']['page_size'],
+                    total_items=data['pagination']['total_items'],
+                    message="Folders retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except NotFoundError as e:
+            logger.warning(f"Not found error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            logger.warning(f"Invalid query parameter: {e}")
+            return Response(
+                ResponseBuilder.error(f"Invalid query parameter: {str(e)}", status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except BusinessLogicError as e:
+            logger.error(f"Business logic error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve folders", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DepartmentDocumentsView(APIView):
+    """
+    API - Get documents in department.
+    
+    GET /api/v1/departments/{id}/documents
+    
+    Query Parameters:
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 10, max: 50)
+    
+    Response:
+    {
+        "success": true,
+        "data": {
+            "items": [
+                {
+                    "id": "uuid",
+                    "filename": "document.pdf",
+                    "original_name": "annual_report.pdf",
+                    "file_type": "pdf",
+                    "file_size": 1024000,
+                    "status": "completed",
+                    "uploader_id": "uuid",
+                    "folder_id": "uuid",
+                    "access_scope": "department",
+                    "created_at": "..."
+                }
+            ],
+            "pagination": {...}
+        },
+        "message": "Documents retrieved successfully"
+    }
+    """
+    
+    permission_classes = [IsAuthenticatedUser]
+    
+    def get(self, request, dept_id):
+        """GET: Get documents in department with pagination"""
+        try:
+            # Parse query parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
+            
+            service = DepartmentService()
+            data = service._get_department_documents_paginated(
+                dept_id=dept_id,
+                page=page,
+                page_size=page_size
+            )
+            
+            logger.info(f"User {request.user.username} retrieved department documents: {dept_id} - page {page}")
+            
+            return Response(
+                ResponseBuilder.paginated(
+                    items=data['items'],
+                    page=data['pagination']['page'],
+                    page_size=data['pagination']['page_size'],
+                    total_items=data['pagination']['total_items'],
+                    message="Documents retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except NotFoundError as e:
+            logger.warning(f"Not found error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            logger.warning(f"Invalid query parameter: {e}")
+            return Response(
+                ResponseBuilder.error(f"Invalid query parameter: {str(e)}", status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except BusinessLogicError as e:
+            logger.error(f"Business logic error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve documents", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class FolderDocumentsView(APIView):
+    """
+    API - Get documents in a specific folder.
+    
+    GET /api/v1/folders/{id}/documents
+    
+    Query Parameters:
+    - page: Page number (default: 1)
+    - page_size: Items per page (default: 10, max: 50)
+    
+    Response:
+    {
+        "success": true,
+        "data": {
+            "items": [
+                {
+                    "id": "uuid",
+                    "filename": "document.pdf",
+                    "original_name": "annual_report.pdf",
+                    "file_type": "pdf",
+                    "file_size": 1024000,
+                    "status": "completed",
+                    "uploader_id": "uuid",
+                    "folder_id": "uuid",
+                    "access_scope": "department",
+                    "created_at": "..."
+                }
+            ],
+            "pagination": {...}
+        },
+        "message": "Documents retrieved successfully"
+    }
+    """
+    
+    permission_classes = [IsAuthenticatedUser]
+    
+    def get(self, request, folder_id):
+        """GET: Get documents in folder with pagination"""
+        try:
+            # Parse query parameters
+            page = int(request.query_params.get('page', 1))
+            page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
+            
+            service = DepartmentService()
+            data = service.get_folder_documents_paginated(
+                folder_id=folder_id,
+                page=page,
+                page_size=page_size
+            )
+            
+            logger.info(f"User {request.user.username} retrieved folder documents: {folder_id} - page {page}")
+            
+            return Response(
+                ResponseBuilder.paginated(
+                    items=data['items'],
+                    page=data['pagination']['page'],
+                    page_size=data['pagination']['page_size'],
+                    total_items=data['pagination']['total_items'],
+                    message="Documents retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except NotFoundError as e:
+            logger.warning(f"Not found error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except ValueError as e:
+            logger.warning(f"Invalid query parameter: {e}")
+            return Response(
+                ResponseBuilder.error(f"Invalid query parameter: {str(e)}", status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except BusinessLogicError as e:
+            logger.error(f"Business logic error: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve documents", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

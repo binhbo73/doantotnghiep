@@ -36,7 +36,12 @@ from api.views.iam_views import (
 )
 from api.views.department_views import (
     DepartmentListTreeView,
-    DepartmentDetailView
+    DepartmentDetailView,
+    DepartmentDetailExpandView,
+    DepartmentUsersView,
+    DepartmentFoldersView,
+    DepartmentDocumentsView,
+    FolderDocumentsView,
 )
 from api.views.folder_views import (
     FolderListCreateView,
@@ -161,9 +166,23 @@ urlpatterns = [
     # POST /api/v1/departments - Create new department
     re_path(r"^departments/?$", DepartmentListTreeView.as_view(), name="department_list_create"),
     
+    # GET /api/v1/departments/{dept_id} - Get department detail with counts
     # PUT /api/v1/departments/{dept_id} - Update department
     # DELETE /api/v1/departments/{dept_id} - Soft delete department
     re_path(rf"^departments/(?P<dept_id>{UUID_PATTERN})/?$", DepartmentDetailView.as_view(), name="department_detail"),
+    
+    # GET /api/v1/departments/{dept_id}/detail?expand=users,folders,documents
+    # Hybrid Approach: Get department with expanded data (pagination supported)
+    re_path(rf"^departments/(?P<dept_id>{UUID_PATTERN})/detail/?$", DepartmentDetailExpandView.as_view(), name="department_detail_expand"),
+    
+    # GET /api/v1/departments/{dept_id}/users - Get users in department (paginated)
+    re_path(rf"^departments/(?P<dept_id>{UUID_PATTERN})/users/?$", DepartmentUsersView.as_view(), name="department_users"),
+    
+    # GET /api/v1/departments/{dept_id}/folders - Get folders in department (paginated)
+    re_path(rf"^departments/(?P<dept_id>{UUID_PATTERN})/folders/?$", DepartmentFoldersView.as_view(), name="department_folders"),
+    
+    # GET /api/v1/departments/{dept_id}/documents - Get documents in department (paginated)
+    re_path(rf"^departments/(?P<dept_id>{UUID_PATTERN})/documents/?$", DepartmentDocumentsView.as_view(), name="department_documents"),
     
     # ============================================================
     # FOLDER MANAGEMENT ENDPOINTS (Phase 4A - Document Organization)
@@ -180,6 +199,10 @@ urlpatterns = [
     
     # PATCH /api/v1/folders/{folder_id}/move - Move folder to new parent
     re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/move/?$", FolderMoveView.as_view(), name="folder_move"),
+    
+    # GET /api/v1/folders/{folder_id}/documents - Get documents in folder (paginated)
+    # Hybrid Approach: List documents in specific folder
+    re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/documents/?$", FolderDocumentsView.as_view(), name="folder_documents"),
     
     # Folder permissions endpoints
     re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/permissions/?$", 

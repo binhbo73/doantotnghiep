@@ -80,10 +80,19 @@ class UserRepository(BaseRepository):
         """
         Get all users in a department.
         
+        Query through UserProfile relationship (department is FK on UserProfile, not Account).
+        
         Example:
             users = repo.list_by_department(dept_id)
         """
-        return self.list(department_id=department_id)
+        try:
+            queryset = self.get_base_queryset().filter(
+                user_profile__department_id=department_id
+            )
+            return list(queryset)
+        except Exception as e:
+            logger.error(f"Error listing users by department: {e}", exc_info=True)
+            return []
     
     def list_by_role(self, role_id) -> List[Account]:
         """
