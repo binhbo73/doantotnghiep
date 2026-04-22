@@ -33,26 +33,7 @@ export default function DepartmentDetailLayout({
                         </Link>
                     </div>
 
-                    {/* Search & Profile Icons */}
-                    <div className="flex items-center gap-4">
-                        <div className="relative group">
-                            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
-                            <input 
-                                type="text" 
-                                placeholder="Tìm kiếm..." 
-                                className="pl-10 pr-4 py-2 bg-white border border-[#e0c0b1]/20 rounded-xl text-xs font-medium w-[240px] focus:outline-none focus:ring-2 focus:ring-[#9d4300]/10 transition-all shadow-sm"
-                            />
-                        </div>
-
-                        <button className="relative w-9 h-9 flex items-center justify-center rounded-xl bg-white border border-[#e0c0b1]/10 text-slate-400">
-                            <span className="material-symbols-outlined text-xl">notifications</span>
-                            <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-red-500 rounded-full border border-white" />
-                        </button>
-
-                        <div className="w-9 h-9 rounded-xl overflow-hidden ring-1 ring-slate-100">
-                            <img src="https://i.pravatar.cc/100?u=current-user" alt="User" className="w-full h-full object-cover" />
-                        </div>
-                    </div>
+                    
                 </div>
             </div>
 

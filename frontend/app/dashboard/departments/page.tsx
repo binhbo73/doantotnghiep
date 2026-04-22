@@ -94,30 +94,6 @@ export default function DepartmentsPage() {
                         <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
                             <DepartmentSidebar
                                 department={selectedDepartment}
-                                members={
-                                    selectedDepartment
-                                        ? Array.from({ length: Math.min(selectedDepartment.member_count || 0, 5) }, (_, i) => ({
-                                            id: String(i + 1),
-                                            name: `Thành viên ${i + 1}`,
-                                        }))
-                                        : []
-                                }
-                                files={
-                                    selectedDepartment
-                                        ? [
-                                            {
-                                                id: '1',
-                                                name: 'Quy trình nội bộ v1.0.pdf',
-                                                size: 'Cập nhật 2 ngày trước • 4.2 MB',
-                                            },
-                                            {
-                                                id: '2',
-                                                name: 'Kế hoạch Tuyển dụng Q4.xlsx',
-                                                size: 'Cập nhật 5 ngày trước • 1.1 MB',
-                                            },
-                                        ]
-                                        : []
-                                }
                             />
                         </div>
                     </div>

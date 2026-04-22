@@ -500,6 +500,9 @@ class DepartmentService(BaseService):
             # Get department
             dept = self.get_department(dept_id)
             
+            from apps.documents.models import Document
+            from django.db.models import Q
+            
             # Build response
             result = {
                 'id': dept.id,
@@ -511,7 +514,10 @@ class DepartmentService(BaseService):
                 'manager': dept.manager,
                 'member_count': dept.get_all_members(include_subdepts=False).count(),
                 'folder_count': dept.folders.filter(is_deleted=False).count(),
-                'document_count': dept.documents.filter(is_deleted=False).count(),
+                'document_count': Document.objects.filter(
+                    Q(department=dept) | Q(folder__department=dept),
+                    is_deleted=False
+                ).distinct().count(),
                 'sub_department_count': dept.sub_departments.filter(is_deleted=False).count(),
                 'sub_departments': self._build_dept_tree_node(dept)['sub_departments'],
             }
@@ -673,10 +679,14 @@ class DepartmentService(BaseService):
             
             dept = self.get_department(dept_id)
             
+            from apps.documents.models import Document
+            from django.db.models import Q
+            
             # Get documents of this department
-            documents_queryset = dept.documents.filter(
+            documents_queryset = Document.objects.filter(
+                Q(department=dept) | Q(folder__department=dept),
                 is_deleted=False
-            ).select_related('uploader', 'folder').order_by('-created_at')
+            ).select_related('uploader', 'folder').distinct().order_by('-created_at')
             
             # Paginate
             paginator = Paginator(documents_queryset, page_size)

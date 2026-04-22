@@ -390,7 +390,12 @@ class DepartmentDetailWithCountsSerializer(serializers.ModelSerializer):
     
     def get_document_count(self, obj):
         """Count documents in this department"""
-        return obj.documents.filter(is_deleted=False).count()
+        from apps.documents.models import Document
+        from django.db.models import Q
+        return Document.objects.filter(
+            Q(department=obj) | Q(folder__department=obj),
+            is_deleted=False
+        ).distinct().count()
     
     def get_sub_department_count(self, obj):
         """Count direct sub-departments"""

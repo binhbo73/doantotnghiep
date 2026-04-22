@@ -15,7 +15,7 @@ import DepartmentDetailHeader from '@/components/departments/sections/Department
 import ManagerCard from '@/components/departments/sections/ManagerCard';
 import SubDepartmentsSection from '@/components/departments/sections/SubDepartmentsSection';
 import StaffTableSection from '@/components/departments/sections/StaffTableSection';
-import InfoCardsSection from '@/components/departments/sections/InfoCardsSection';
+// import InfoCardsSection from '@/components/departments/sections/InfoCardsSection';
 import LoadingSkeletons from '@/components/departments/loading/LoadingSkeletons';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail';
@@ -85,11 +85,7 @@ export default function DepartmentDetailPage() {
                     departmentDetail={departmentDetail}
                 />
 
-                {/* 4. Info Cards (Full Width) */}
-                <InfoCardsSection
-                    deptId={deptId}
-                    departmentName={departmentDetail.name}
-                />
+
             </div>
         </DepartmentDetailLayout>
     );
