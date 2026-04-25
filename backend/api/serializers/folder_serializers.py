@@ -28,6 +28,8 @@ class FolderTreeSerializer(serializers.ModelSerializer):
     
     created_by_username = serializers.SerializerMethodField()
     department_name = serializers.SerializerMethodField()
+    subfolder_count = serializers.SerializerMethodField()
+    document_count = serializers.SerializerMethodField()
     sub_folders = serializers.SerializerMethodField()
     
     class Meta:
@@ -42,6 +44,8 @@ class FolderTreeSerializer(serializers.ModelSerializer):
             'department_name',
             'created_by_id',
             'created_by_username',
+            'subfolder_count',
+            'document_count',
             'created_at',
             'updated_at',
             'sub_folders',
@@ -59,6 +63,14 @@ class FolderTreeSerializer(serializers.ModelSerializer):
         if obj.department:
             return obj.department.name
         return None
+
+    def get_subfolder_count(self, obj):
+        """Count direct sub-folders"""
+        return obj.subfolders.filter(is_deleted=False).count()
+    
+    def get_document_count(self, obj):
+        """Count documents directly in this folder"""
+        return obj.documents.filter(is_deleted=False).count()
     
     def get_sub_folders(self, obj):
         """Recursively serialize sub-folders"""

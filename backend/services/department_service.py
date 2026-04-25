@@ -26,7 +26,7 @@ import logging
 from typing import List, Dict, Optional, Any
 from uuid import UUID
 
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
 
 from repositories.department_repository import DepartmentRepository
@@ -728,6 +728,8 @@ class DepartmentService(BaseService):
     def get_folder_documents_paginated(
         self,
         folder_id: str,
+        user_id: Optional[str] = None,
+        is_admin: bool = False,
         page: int = 1,
         page_size: int = 10
     ) -> Dict[str, Any]:
@@ -753,6 +755,21 @@ class DepartmentService(BaseService):
             documents_queryset = folder.documents.filter(
                 is_deleted=False
             ).select_related('uploader', 'department').order_by('-created_at')
+            
+            # Apply accessibility filtering if not admin
+            if not is_admin and user_id:
+                from apps.users.models import UserProfile
+                try:
+                    user_profile = UserProfile.objects.get(account_id=user_id)
+                    user_department_id = user_profile.department_id
+                except UserProfile.DoesNotExist:
+                    user_department_id = None
+
+                documents_queryset = documents_queryset.filter(
+                    models.Q(access_scope='company') |
+                    models.Q(access_scope='department', department_id=user_department_id) |
+                    models.Q(access_scope='personal', uploader_id=user_id)
+                ).distinct()
             
             # Paginate
             paginator = Paginator(documents_queryset, page_size)

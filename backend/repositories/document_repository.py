@@ -326,8 +326,9 @@ class DocumentRepository(BaseRepository):
         
         Access Rules:
         - 'personal': Only owner
-        - 'department': Owner's department members
+        - 'department': Owner's department members (or all dept docs if user has no dept)
         - 'company': All users
+        - Admin (no department): sees ALL documents
         
         Returns:
             QuerySet of accessible documents
@@ -336,8 +337,17 @@ class DocumentRepository(BaseRepository):
             docs = repo.get_accessible_documents(user_id)
         """
         try:
-            from apps.users.models import UserProfile
+            from apps.users.models import UserProfile, Account, RoleIds
             from django.db.models import Q
+            
+            # Check if user is admin (has admin role)
+            try:
+                user = Account.objects.get(pk=user_id)
+                # Admin users see ALL documents regardless of access_scope
+                if user.has_role(RoleIds.ADMIN):
+                    return self.get_base_queryset()
+            except Exception:
+                pass
             
             # Get user's department from UserProfile
             user_department_id = None
@@ -347,13 +357,24 @@ class DocumentRepository(BaseRepository):
             except UserProfile.DoesNotExist:
                 pass
             
-            queryset = self.get_base_queryset().filter(
-                Q(access_scope='company') |  # Everyone
-                Q(access_scope='department', department_id=user_department_id) |  # Department
-                Q(access_scope='personal', uploader_id=user_id)  # Personal
-            )
+            if user_department_id:
+                # Normal user with department: filter by scope
+                queryset = self.get_base_queryset().filter(
+                    Q(access_scope='company') |                                              # Everyone
+                    Q(access_scope='department', department_id=user_department_id) |         # Same department
+                    Q(access_scope='personal', uploader_id=user_id)                          # Personal
+                )
+            else:
+                # User without department (e.g. no profile yet):
+                # See company + own personal + ALL department docs (no dept restriction)
+                queryset = self.get_base_queryset().filter(
+                    Q(access_scope='company') |
+                    Q(access_scope='department') |
+                    Q(access_scope='personal', uploader_id=user_id)
+                )
             
             return queryset
         except Exception as e:
             logger.error(f"Error getting accessible documents: {e}", exc_info=True)
             return self.get_base_queryset().none()
+

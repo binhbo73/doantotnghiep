@@ -13,8 +13,9 @@ Flow: View → Service → Repository → ORM
 
 import logging
 from typing import Optional, List, Dict, Any
+from collections import defaultdict
 from uuid import UUID
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
 from django.apps import apps
 
@@ -26,6 +27,7 @@ from core.exceptions import (
     BusinessLogicError,
     PermissionDeniedError,
 )
+from core.constants import RoleIds
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +90,26 @@ class FolderService(BaseService):
             except self.UserProfile.DoesNotExist:
                 user_department_id = None
             
-            # Get root folders accessible to user
-            root_folders = self.repository.get_accessible_folders(
+            # Determine if user is Admin
+            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            
+            # Get all accessible folders
+            all_accessible_folders = self.repository.get_accessible_folders(
                 user_id=user_id,
-                user_department_id=user_department_id
+                user_department_id=user_department_id,
+                is_admin=is_admin
             )
             
-            # Filter root level only (parent=NULL)
-            root_folders = [f for f in root_folders if f.parent_id is None]
+            # Map folders by parent_id for efficient lookup
+            folders_by_parent = defaultdict(list)
+            for f in all_accessible_folders:
+                folders_by_parent[str(f.parent_id) if f.parent_id else None].append(f)
             
-            # Build tree structure recursively
+            # Build tree structure recursively from memory
             tree = []
+            root_folders = folders_by_parent[None]
             for folder in root_folders:
-                tree.append(self._build_folder_tree_node(folder, user_id, user_department_id))
+                tree.append(self._build_folder_tree_node_optimized(folder, folders_by_parent, user_id, user_department_id, is_admin))
             
             logger.info(f"Retrieved folder tree for user {user_id}: {len(tree)} root folders")
             return tree
@@ -109,35 +118,37 @@ class FolderService(BaseService):
             logger.error(f"Error getting folder tree: {str(e)}")
             raise
     
-    def _build_folder_tree_node(
+    def _build_folder_tree_node_optimized(
         self,
         folder: 'Folder',
+        folders_by_parent: Dict[Optional[str], List['Folder']],
         user_id: str,
-        user_department_id: Optional[str] = None
+        user_department_id: Optional[str] = None,
+        is_admin: bool = False
     ) -> Dict[str, Any]:
         """
-        Recursively build single folder node with sub_folders.
-        
-        Args:
-            folder: Folder object
-            user_id: For permission checking
-            user_department_id: For access scope filtering
-        
-        Returns:
-            Dict with folder info + nested sub_folders
+        Recursively build single folder node with sub_folders from memory map.
         """
-        # Get accessible subfolders
-        subfolders = self.repository.get_subfolders(str(folder.id))
-        subfolders = [
-            f for f in subfolders
-            if self._is_folder_accessible(f, user_id, user_department_id)
-        ]
+        # Get children from map
+        subfolders = folders_by_parent.get(str(folder.id), [])
         
         # Recursively build sub-nodes
         sub_nodes = [
-            self._build_folder_tree_node(sf, user_id, user_department_id)
+            self._build_folder_tree_node_optimized(sf, folders_by_parent, user_id, user_department_id, is_admin)
             for sf in subfolders
         ]
+        
+        # Get documents count (still requires query per folder, but better than query per subfolder)
+        # TODO: Could pre-fetch document counts for all folders in one query
+        documents_query = folder.documents.filter(is_deleted=False)
+        if not is_admin:
+            documents_query = documents_query.filter(
+                models.Q(access_scope='company') |
+                models.Q(access_scope='department', department_id=user_department_id) |
+                models.Q(access_scope='personal', uploader_id=user_id)
+            ).distinct()
+        
+        document_count = documents_query.count()
         
         return {
             'id': str(folder.id),
@@ -149,6 +160,8 @@ class FolderService(BaseService):
             'created_at': folder.created_at.isoformat(),
             'updated_at': folder.updated_at.isoformat(),
             'sub_folders': sub_nodes,
+            'subfolder_count': len(subfolders),
+            'document_count': document_count,
         }
     
     def _is_folder_accessible(

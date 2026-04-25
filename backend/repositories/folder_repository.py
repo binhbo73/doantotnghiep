@@ -194,47 +194,29 @@ class FolderRepository(BaseRepository):
             logger.error(f"Error checking circular reference: {str(e)}")
             raise
     
-    def get_accessible_folders(self, user_id: str, user_department_id: Optional[str] = None) -> List[Folder]:
+    def get_accessible_folders(
+        self, 
+        user_id: str, 
+        user_department_id: Optional[str] = None,
+        is_admin: bool = False
+    ) -> List[Folder]:
         """
-        Get folders that user can access based on access_scope.
+        Get folders that user can access based on access_scope and roles.
         
         LOGIC:
+        - Admin (is_admin=True) → Access all folders
         - 'company' → all users can access
         - 'department' → only users in same department
         - 'personal' → only creator
-        
-        Args:
-            user_id: User account ID
-            user_department_id: User's department ID (optional, for efficiency)
-        
-        Returns:
-            List of accessible folders
-        
-        Example:
-            accessible = repo.get_accessible_folders(user_id="uuid-user")
         """
         try:
             query = self.get_base_queryset()
             
-            # Company-wide accessible folders (everyone)
-            company_folders = query.filter(access_scope='company')
+            # If Admin, return all folders
+            if is_admin:
+                return list(query.order_by('name'))
             
-            # Department-based accessible (if user_department_id provided)
-            if user_department_id:
-                department_folders = query.filter(
-                    access_scope='department',
-                    department_id=user_department_id
-                )
-            else:
-                department_folders = Folder.objects.none()
-            
-            # Personal folders (creator only)
-            personal_folders = query.filter(
-                access_scope='personal',
-                created_by_id=user_id
-            )
-            
-            # Combine all using Q objects
+            # Combine filters using Q objects for regular users
             accessible = query.filter(
                 Q(access_scope='company') |
                 Q(access_scope='department', department_id=user_department_id) |

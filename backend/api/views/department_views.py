@@ -843,8 +843,12 @@ class FolderDocumentsView(APIView):
             page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
             
             service = DepartmentService()
+            is_admin = request.user.is_superuser or request.user.has_role(RoleIds.ADMIN)
+            
             data = service.get_folder_documents_paginated(
                 folder_id=folder_id,
+                user_id=str(request.user.id),
+                is_admin=is_admin,
                 page=page,
                 page_size=page_size
             )
