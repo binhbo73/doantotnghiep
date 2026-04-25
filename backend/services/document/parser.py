@@ -53,6 +53,7 @@ class DocumentParser:
     SUPPORTED_TYPES = {
         'application/pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
+        'application/msword',  # .doc
         'text/plain',
         'text/markdown',
     }
@@ -80,12 +81,13 @@ class DocumentParser:
     # MAIN PARSING METHOD
     # ============================================================================
     
-    def parse_file(self, file_path: str) -> Tuple[str, Dict[str, Any]]:
+    def parse_file(self, file_path: str, file_type: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
         """
         Parse document file and extract text + metadata
         
         Args:
             file_path: Path to document file
+            file_type: Optional MIME type. If not provided, will guess from extension.
         
         Returns:
             (text, metadata) tuple
@@ -116,8 +118,9 @@ class DocumentParser:
                     f"File too large: {file_size_mb:.1f}MB > {self.max_file_size_mb}MB"
                 )
             
-            # Get file type
-            file_type = mimetypes.guess_type(file_path)[0] or 'unknown'
+            # Get file type if not provided
+            if not file_type:
+                file_type = mimetypes.guess_type(file_path)[0] or 'unknown'
             
             # Parse based on type
             if file_type == 'application/pdf':

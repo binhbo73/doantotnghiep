@@ -350,10 +350,14 @@ LLM_API_URL = os.environ.get(
 )
 LLM_MODEL_NAME = os.environ.get("LLM_MODEL", "Qwen3-4B-Instruct-2507-Q4_K_M.gguf")
 
+# Aliases for LlamaClient compatibility
+LLAMA_API_URL = LLM_API_URL
+LLAMA_MODEL = LLM_MODEL_NAME
+
 # Embedding configuration
 EMBEDDING_API_URL = os.environ.get("EMBEDDING_BASE_URL", LLM_API_URL)
 EMBEDDING_MODEL_NAME = os.environ.get("EMBEDDING_MODEL", LLM_MODEL_NAME)
-EMBEDDING_DIMENSION = 1536  # Qwen3 embedding dimension
+EMBEDDING_DIMENSION = 2560  # Qwen3-4B embedding dimension
 
 # LLM Parameters
 LLM_TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.7"))
@@ -361,9 +365,32 @@ LLM_TOP_P = float(os.environ.get("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "2048"))
 LLM_CONTEXT_WINDOW = int(os.environ.get("LLM_CONTEXT_WINDOW", "8192"))
 
+# Backward-compatible aliases used by services.ai.llama_client
+LLAMA_TEMPERATURE = LLM_TEMPERATURE
+LLAMA_TOP_P = LLM_TOP_P
+LLAMA_MAX_TOKENS = LLM_MAX_TOKENS
+LLAMA_TIMEOUT = int(os.environ.get("LLAMA_TIMEOUT", str(os.environ.get("LLM_REQUEST_TIMEOUT", "120"))))
+LLAMA_RETRY_TIMES = int(os.environ.get("LLAMA_RETRY_TIMES", "3"))
+
 # Request timeouts
 LLM_REQUEST_TIMEOUT = 120  # 2 minutes for LLM requests
 EMBEDDING_REQUEST_TIMEOUT = 60  # 1 minute for embedding request
+
+# Aliases for Qdrant compatibility
+QDRANT_COLLECTION = QDRANT_COLLECTION_NAME
+QDRANT_VECTOR_SIZE = EMBEDDING_DIMENSION
+
+
+# ============================================================
+# CHUNKING CONFIGURATION
+# ============================================================
+# Recommended balanced defaults for RAG retrieval quality/speed.
+CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "240"))
+CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "48"))
+
+# Legacy aliases used by older code paths.
+CHUNK_SIZE = CHUNK_TOKEN_SIZE
+CHUNK_OVERLAP = CHUNK_TOKEN_OVERLAP
 
 
 # ============================================================

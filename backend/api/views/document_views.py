@@ -42,11 +42,13 @@ from core.exceptions import (
     FileSizeExceededError,
 )
 from services.document_service import DocumentService
+from services.document_upload_service import DocumentUploadService
 from services.folder_service import FolderService
 from api.serializers.document_serializers import (
     DocumentSerializer,
     DocumentCreateSerializer,
     DocumentChunkSerializer,
+    DocumentUploadSerializer,
 )
 from api.serializers.folder_serializers import FolderPermissionSerializer
 
@@ -173,74 +175,58 @@ class DocumentListView(APIView):
 class DocumentUploadView(APIView):
     """
     API Endpoint: POST /api/v1/documents/upload
-    
-    Upload file and trigger async indexing.
-    
-    CRITICAL ENDPOINT - Complex business logic:
-    1. Validate file type & size
-    2. Check folder permission (write)
-    3. Save file to uploads/ directory
-    4. Create Document record (status='pending')
-    5. Auto-create DocumentPermission for uploader
-    6. Submit AsyncTask for INDEX_DOCUMENT
-    7. Write AuditLog
-    8. Return doc_id + status='pending'
+
+    Upload tài liệu nội bộ (multipart/form-data).
+
+    Logic scoping tự động:
+      - folder_id + folder.department  → doc thuộc folder + phòng ban đó  (Case A)
+      - folder_id + folder không dept  → doc thuộc folder công ty           (Case B)
+      - department_id (không folder)   → doc thuộc phòng ban, không folder  (Case C)
+      - không folder, không dept       → tài liệu toàn công ty              (Case D)
+
+    Pipeline sau khi lưu file:
+      1. Parse text (PDF/DOCX/TXT/MD)
+      2. Chunk văn bản
+      3. Embed từng chunk → Qdrant + DocumentEmbedding
+      4. Cập nhật Document.status = 'completed' | 'failed'
     """
-    
+
     permission_classes = [IsAuthenticatedUser]
     parser_classes = (MultiPartParser, FormParser)
-    
+
     def post(self, request):
         """
         POST /api/v1/documents/upload
-        
-        Upload file with metadata.
-        
-        Request:
-        - file (required): File to upload
-        - folder_id (optional): Target folder
-        - tags (optional): Comma-separated tags
-        - description (optional): Document description
-        
-        Response:
+
+        Request (multipart/form-data):
+          - file          : File cần upload (bắt buộc)
+          - folder_id     : UUID folder đích (optional)
+          - department_id : UUID phòng ban (optional, dùng khi không có folder)
+          - access_scope  : 'personal'|'department'|'company' (optional)
+          - description   : Mô tả tài liệu (optional)
+          - tags          : Tags phân cách bằng dấu phẩy, vd 'hợp đồng,2024' (optional)
+
+        Response 201:
         {
             "success": true,
-            "status_code": 201,
-            "message": "Document uploaded successfully",
             "data": {
                 "id": "uuid",
-                "original_name": "report.pdf",
-                "status": "pending",
-                "processing_status": "pending"
+                "original_name": "bao_cao_q1.pdf",
+                "status": "completed",
+                "access_scope": "department",
+                "department": "uuid-dept",
+                "folder": null,
+                "chunk_count": 18
             }
         }
         """
         try:
-            # 1. Validate file provided
-            if 'file' not in request.FILES:
-                return Response(
-                    ResponseBuilder.error("File is required", status_code=400),
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            file = request.FILES['file']
-            
-            # 2. Get optional parameters
-            folder_id = request.POST.get('folder_id', '').strip() or None
-            tags = request.POST.get('tags', '').split(',') if request.POST.get('tags') else []
-            description = request.POST.get('description', '').strip() or None
-            
-            # 3. Validate via serializer
-            serializer = DocumentCreateSerializer(data={
-                'original_name': file.name,
-                'file': file,
-                'folder_id': folder_id,
-                'description': description,
-                'tags': tags,
+            # ── Validate input ────────────────────────────────────────────────
+            serializer = DocumentUploadSerializer(data={
+                **request.POST.dict(),
+                'file': request.FILES.get('file'),
             })
-            
             if not serializer.is_valid():
-                logger.warning(f"Invalid document upload: {serializer.errors}")
                 return Response(
                     ResponseBuilder.error(
                         f"Validation failed: {serializer.errors}",
@@ -248,22 +234,28 @@ class DocumentUploadView(APIView):
                     ),
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # 4. Check folder permission if folder_id provided
+
+            validated = serializer.validated_data
+            file = validated['file']
+            folder_id = str(validated['folder_id']) if validated.get('folder_id') else None
+            department_id = str(validated['department_id']) if validated.get('department_id') else None
+            access_scope = validated.get('access_scope')   # có thể None → auto-detect
+            description = validated.get('description') or None
+            tags = validated.get('tags')                    # đã được convert sang list trong serializer
+
+            # ── Kiểm tra quyền ghi trên folder (nếu có) ──────────────────────
             if folder_id:
                 folder_service = FolderService()
                 try:
-                    # Check user has write permission on folder
-                    has_permission = folder_service.check_folder_permission(
+                    has_perm = folder_service.check_folder_permission(
                         folder_id=folder_id,
                         user_id=request.user.id,
-                        permission_required='write'
+                        permission='write',
                     )
-                    if not has_permission:
-                        logger.warning(f"User {request.user.id} lacks write permission on folder {folder_id}")
+                    if not has_perm:
                         return Response(
                             ResponseBuilder.error(
-                                f"You don't have write permission on this folder",
+                                "Bạn không có quyền ghi vào folder này",
                                 status_code=403
                             ),
                             status=status.HTTP_403_FORBIDDEN
@@ -273,23 +265,24 @@ class DocumentUploadView(APIView):
                         ResponseBuilder.error(str(e), status_code=404),
                         status=status.HTTP_404_NOT_FOUND
                     )
-            
-            # 5. Call service with transaction
-            service = DocumentService()
-            
-            with transaction.atomic():
-                document = service.upload_document(
-                    file=file,
-                    user_id=request.user.id,
-                    folder_id=folder_id,
-                    description=description,
-                    tags=tags,
-                )
-                
-                # 6. Log upload action
+
+            # ── Gọi DocumentUploadService ─────────────────────────────────────
+            upload_service = DocumentUploadService()
+            document = upload_service.upload(
+                file=file,
+                user_id=request.user.id,
+                folder_id=folder_id,
+                department_id=department_id,
+                access_scope=access_scope,
+                description=description,
+                tags=tags,
+                run_processing=True,   # parse + chunk + embed ngay
+            )
+
+            # ── Audit log ─────────────────────────────────────────────────────
+            try:
                 from services.audit_service import AuditService
-                audit_service = AuditService()
-                audit_service.log(
+                AuditService().log(
                     action='DOCUMENT_UPLOAD',
                     account=request.user,
                     resource_id=str(document.id),
@@ -297,29 +290,42 @@ class DocumentUploadView(APIView):
                     metadata={
                         'file_name': document.original_name,
                         'file_size': document.file_size,
-                        'folder_id': str(folder_id) if folder_id else None,
+                        'folder_id': folder_id,
+                        'department_id': department_id,
+                        'access_scope': document.access_scope,
+                        'status': document.status,
                     }
                 )
-            
-            # 7. Serialize response
+            except Exception as audit_err:
+                logger.warning(f"Audit log failed (non-critical): {audit_err}")
+
+            # ── Response ──────────────────────────────────────────────────────
             response_data = {
                 'id': str(document.id),
                 'original_name': document.original_name,
                 'status': document.status,
                 'file_size': document.file_size,
+                'access_scope': document.access_scope,
+                'department': str(document.department_id) if document.department_id else None,
+                'folder': str(document.folder_id) if document.folder_id else None,
+                'chunk_count': document.chunks.filter(is_deleted=False).count(),
+                'metadata': document.metadata,
             }
-            
-            logger.info(f"Document uploaded by {request.user.id}: {document.id}")
-            
+
+            logger.info(
+                f"[Upload] User {request.user.id} uploaded '{document.original_name}' "
+                f"→ {document.status} (scope={document.access_scope})"
+            )
+
             return Response(
                 ResponseBuilder.success(
                     data=response_data,
-                    message="Document uploaded successfully and queued for processing",
+                    message=f"Tài liệu đã được upload và xử lý ({document.status})",
                     status_code=201
                 ),
                 status=status.HTTP_201_CREATED
             )
-        
+
         except FileSizeExceededError as e:
             logger.warning(f"File size exceeded: {e}")
             return Response(
@@ -335,7 +341,7 @@ class DocumentUploadView(APIView):
         except Exception as e:
             logger.error(f"Error uploading document: {e}", exc_info=True)
             return Response(
-                ResponseBuilder.error("Failed to upload document", status_code=500),
+                ResponseBuilder.error(f"Upload thất bại: {str(e)}", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

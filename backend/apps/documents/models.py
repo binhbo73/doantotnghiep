@@ -94,9 +94,9 @@ class Document(BaseModel):
     filename = models.CharField(max_length=255, help_text="Stored filename")
     original_name = models.CharField(max_length=255, help_text="Original filename from upload")
     storage_path = models.TextField(help_text="Full path in storage (S3, local, etc.)")
-    file_type = models.CharField(max_length=50, help_text="File type (pdf, docx, txt, markdown)")
+    file_type = models.CharField(max_length=255, help_text="File type (pdf, docx, txt, markdown)")
     file_size = models.BigIntegerField(default=0, help_text="File size in bytes")
-    mime_type = models.CharField(max_length=100, null=True, blank=True, help_text="MIME type")
+    mime_type = models.CharField(max_length=255, null=True, blank=True, help_text="MIME type")
     uploader = models.ForeignKey(
         Account,
         on_delete=models.SET_NULL,

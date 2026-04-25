@@ -187,6 +187,77 @@ class FolderService(BaseService):
         else:
             logger.warning(f"Unknown access_scope: {folder.access_scope}")
             return False
+
+    def check_folder_permission(
+        self,
+        folder_id: str,
+        user_id: str,
+        permission: str = 'read'
+    ) -> bool:
+        """
+        Check if user has specific permission on a folder.
+        Checks: Admin status, Ownership, and FolderPermission table.
+        """
+        try:
+            folder = self.repository.get_by_id(folder_id)
+            if not folder:
+                return False
+            
+            # 1. Admin bypass
+            user = self.Account.objects.filter(id=user_id).first()
+            if not user:
+                return False
+            
+            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            if is_admin:
+                return True
+            
+            # 2. Creator bypass (Ownership)
+            if str(folder.created_by_id) == str(user_id):
+                return True
+            
+            # 3. Check access scope first (Accessibility)
+            try:
+                user_profile = self.UserProfile.objects.get(account_id=user_id)
+                user_department_id = user_profile.department_id
+            except self.UserProfile.DoesNotExist:
+                user_department_id = None
+            
+            if not self._is_folder_accessible(folder, user_id, user_department_id):
+                return False
+            
+            # 4. Check specific FolderPermission table (Account or Role)
+            # Permission levels: delete > write > read
+            perm_levels = {'read': 1, 'write': 2, 'delete': 3}
+            req_level = perm_levels.get(permission, 1)
+            
+            FolderPermission = apps.get_model('documents', 'FolderPermission')
+            
+            # Get user's roles
+            user_role_ids = [str(r.id) for r in user.roles.all()]
+            
+            # Query permissions for this account OR any of user's roles
+            perms = FolderPermission.objects.filter(
+                folder_id=folder_id,
+                is_active=True,
+                is_deleted=False
+            ).filter(
+                (models.Q(subject_type='account', subject_id=str(user_id))) |
+                (models.Q(subject_type='role', subject_id__in=user_role_ids))
+            )
+            
+            for p in perms:
+                if perm_levels.get(p.permission, 0) >= req_level:
+                    return True
+            
+            # Default: If scope is company/department, user has 'read' but maybe not 'write'
+            if permission == 'read':
+                return True
+                
+            return False
+        except Exception as e:
+            logger.error(f"Error checking folder permission: {e}")
+            return False
     
     # ============================================================
     # CREATE FOLDER
