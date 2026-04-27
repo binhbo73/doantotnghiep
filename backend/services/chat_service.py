@@ -33,12 +33,10 @@ class ChatService:
     View → ChatService → ConversationRepository/MessageRepository → ORM → Models
     """
     
-    SYSTEM_PROMPT = """Bạn là trợ lý ảo AI thông minh, hỗ trợ người dùng dựa trên KIẾN THỨC NỘI BỘ được cung cấp.
-    HÃY TUÂN THỦ CÁC QUY TẮC SAU:
-    1. Chỉ trả lời dựa trên phần 'Nội dung tham khảo' bên dưới. 
-    2. Nếu không có thông tin trong nội dung tham khảo, hãy nói: 'Xin lỗi, tôi không tìm thấy thông tin này trong tài liệu hệ thống'.
-    3. Trình bày rõ ràng, súc tích, chuyên nghiệp.
-    4. Trích dẫn tên tài liệu nếu có (ví dụ: '[Nguồn: Báo cáo năm 2023.pdf]').
+    SYSTEM_PROMPT = """Bạn là trợ lý ảo AI thông minh, hỗ trợ người dùng giải đáp các thắc mắc.
+    Nếu có 'Nội dung tham khảo' bên dưới, hãy ưu tiên sử dụng nó để trả lời và trích dẫn nguồn (ví dụ: '[Nguồn: Tên tài liệu.pdf]').
+    Nếu nội dung tham khảo không chứa thông tin cần thiết hoặc không có tài liệu liên quan, bạn hãy sử dụng kiến thức tổng quát của mình để trả lời người dùng một cách chính xác và hữu ích nhất.
+    Luôn duy trì thái độ chuyên nghiệp, lịch sự và hỗ trợ.
     """
 
     def __init__(self):
@@ -57,113 +55,108 @@ class ChatService:
         filters: Dict = None
     ) -> Tuple[str, Any]:
         """
-        Thực hiện chu trình RAG hoàn chỉnh (Hỏi đáp trên tài liệu)
-        
-        Args:
-            user_id: ID người hỏi
-            query: Câu hỏi của người dùng
-            conversation_id: ID cuộc hội thoại (nếu có)
-            filters: Các điều kiện lọc tài liệu (theo department, folder...)
-            
-        Returns:
-            (phiên_bản_text_trả_lời, đối_tượng_tin_nhắn_bot)
-        
-        ✅ CORRECT FLOW:
-        - Calls ConversationRepository (not ORM)
-        - Calls MessageRepository (not ORM)
-        - Never calls Conversation.objects.* or Message.objects.*
+        Thực hiện hỏi đáp trực tiếp (Direct Q&A) với hỗ trợ tài liệu nếu có.
         """
         try:
-            # 1. Quản lý Conversation via Repository
+            # 1. Quản lý Conversation
             if conversation_id:
-                # ✅ CORRECT: Use repository
-                conversation = self.conversation_repo.get_conversation_by_id(
-                    conversation_id,
-                    account_id=user_id
-                )
+                conversation = self.conversation_repo.get_conversation_by_id(conversation_id, account_id=user_id)
                 if not conversation:
                     raise ValidationError(f"Conversation {conversation_id} not found")
             else:
-                # ✅ CORRECT: Use repository to create
-                conversation = self.conversation_repo.create_conversation(
-                    account_id=user_id,
-                    title=query[:50] + "..."
-                )
+                conversation = self.conversation_repo.create_conversation(account_id=user_id, title=query[:50])
 
-            # 2. Lưu tin nhắn của Người dùng via Repository
-            # ✅ CORRECT: Use repository
+            # 2. Lưu tin nhắn User
             user_message = self.message_repo.create_user_message(
                 conversation_id=conversation.id,
                 account_id=user_id,
                 content=query
             )
 
-            # 3. Retrieval - Tìm kiếm kiến thức liên quan (Vector Search)
-            # a. Tạo embedding cho câu hỏi
+            # 3. Lấy ngữ cảnh (Chỉ dùng nếu tìm thấy kết quả tốt)
             query_vector = self.llama.create_embedding(query)
+            search_results = self.qdrant.search_similar(embedding=query_vector, limit=3, score_threshold=0.7)
             
-            # b. Tìm kiếm top K đoạn văn bản trong Qdrant
-            search_results = self.qdrant.search_similar(
-                embedding=query_vector,
-                limit=5,
-                score_threshold=0.7,
-                filter_payload=filters  # Lọc theo quyền truy cập của User
-            )
+            context_texts = [res[2].get('text_preview', '') for res in search_results]
+            source_docs = list(set([res[2].get('document_id') for res in search_results if res[2].get('document_id')]))
             
-            # c. Trích xuất text từ các kết quả tìm thấy
-            context_texts = []
-            source_docs = set()
-            for vector_id, score, payload in search_results:
-                text = payload.get('text_preview', '[Thông tin không xác định]')
-                doc_id = payload.get('document_id')
-                if doc_id:
-                    source_docs.add(doc_id)
-                context_texts.append(f"- {text}")
-            
-            context_str = "\n".join(context_texts) if context_texts else "Không tìm thấy tài liệu liên quan."
+            # 4. Lấy lịch sử
+            messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
+            if len(messages_for_llm) > 6:
+                messages_for_llm = messages_for_llm[-6:]
 
-            # 4. Lấy lịch sử chat via Repository (NOT ORM)
-            # ✅ CORRECT: Use repository to get history as dicts for LLM
-            messages_for_llm = self.message_repo.get_message_history(
-                conversation.id,
-                as_dicts=True
-            )
-            
-            # Giới hạn 4 tin nhắn gần nhất để giữ ngữ cảnh
-            if len(messages_for_llm) > 4:
-                messages_for_llm = messages_for_llm[-4:]
+            # 5. Đính kèm tài liệu vào câu hỏi nếu có
+            if context_texts:
+                context_str = "\n".join(context_texts)
+                messages_for_llm[-1]["content"] += f"\n\n[Tài liệu tham khảo nội bộ]:\n{context_str}"
 
-            # 5. Xây dựng Final Prompt (Augmentation)
-            full_prompt = f"Dựa trên các thông tin sau để trả lời người dùng:\n\nNỘI DUNG THAM KHẢO:\n{context_str}\n\nCÂU HỎI: {query}"
-            
-            # Thay thế câu hỏi mới nhất bằng prompt có chứa context
-            if messages_for_llm:
-                messages_for_llm[-1]["content"] = full_prompt
-            else:
-                messages_for_llm = [{"role": "user", "content": full_prompt}]
-
-            # 6. Gọi LLM để sinh câu trả lời (Generation)
+            # 6. Gọi LLM trực tiếp (Giống như chat trực tiếp ở port 11435)
             bot_response_text = self.llama.chat_complete(
                 messages=messages_for_llm,
-                system_prompt=self.SYSTEM_PROMPT
+                system_prompt="" # Xóa hoàn toàn ràng buộc hệ thống
             )
 
-            # 7. Lưu câu trả lời của Bot via Repository
-            # ✅ CORRECT: Use repository to create
+            # 7. Lưu tin nhắn Bot
             bot_message = self.message_repo.create_bot_message(
                 conversation_id=conversation.id,
                 content=bot_response_text,
-                metadata={
-                    'sources': list(source_docs),
-                    'total_context_chunks': len(context_texts)
-                }
+                metadata={'sources': source_docs}
             )
 
             return bot_response_text, bot_message
 
         except Exception as e:
-            logger.error(f"Error in RAG process: {str(e)}", exc_info=True)
-            raise LLMServiceError(f"Hệ thống RAG gặp sự cố: {str(e)}")
+            logger.error(f"Error in Chat: {str(e)}", exc_info=True)
+            raise LLMServiceError(f"Lỗi kết nối LLM: {str(e)}")
+
+    def ask_stream(
+        self, 
+        user_id: int, 
+        query: str, 
+        conversation_id: int = None,
+        filters: Dict = None
+    ):
+        """
+        Chat TRỰC TIẾP với Model (Không RAG, không Prompt ràng buộc)
+        """
+        try:
+            # 1. Quản lý Conversation & Tin nhắn User
+            if conversation_id:
+                conversation = self.conversation_repo.get_conversation_by_id(conversation_id, account_id=user_id)
+            else:
+                conversation = self.conversation_repo.create_conversation(account_id=user_id, title=query[:50])
+
+            self.message_repo.create_user_message(conversation_id=conversation.id, account_id=user_id, content=query)
+
+            # 2. Lấy lịch sử tin nhắn (Chỉ lấy tin nhắn gốc của user và bot)
+            messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
+            if len(messages_for_llm) > 10:
+                messages_for_llm = messages_for_llm[-10:]
+
+            full_response = ""
+            try:
+                # 3. Stream kết quả trực tiếp từ LLM (Model Qwen3-4B của bạn)
+                for chunk in self.llama.chat_complete_stream(
+                    messages=messages_for_llm
+                ):
+                    full_response += chunk
+                    yield chunk
+            finally:
+                # 4. LUÔN LUÔN lưu kết quả vào DB (ngay cả khi client ngắt kết nối)
+                if full_response:
+                    try:
+                        self.message_repo.create_bot_message(
+                            conversation_id=conversation.id,
+                            content=full_response,
+                            metadata={'direct_chat': True, 'streaming': True}
+                        )
+                        logger.info(f"✅ Đã lưu tin nhắn Bot vào DB cho conversation {conversation.id}")
+                    except Exception as save_err:
+                        logger.error(f"❌ Lỗi khi lưu tin nhắn Bot: {str(save_err)}")
+
+        except Exception as e:
+            logger.error(f"Stream error: {str(e)}")
+            yield f"Lỗi hệ thống: {str(e)}"
 
     def get_conversation_history(self, conversation_id: int, user_id: int) -> List[Any]:
         """

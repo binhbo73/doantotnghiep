@@ -24,6 +24,12 @@ export const dashboardNavigation: NavItem[] = [
         href: '/dashboard/documents',
     },
     {
+        id: 'chat',
+        label: 'Chat',
+        icon: '💬',
+        href: '/dashboard/chat',
+    },
+    {
         id: 'users',
         label: 'Quản lý người',
         icon: '👥',
@@ -60,7 +66,10 @@ export const dashboardNavigation: NavItem[] = [
  * 
  * /dashboard (Main Dashboard - Bảng điều khiển)
  * ├── /dashboard/documents (Kho tài liệu)
+ * ├── /dashboard/chat (Chat)
  * ├── /dashboard/users (Quản lý người)
+ * ├── /dashboard/departments (Quản lý Phòng ban)
+ * ├── /dashboard/roles (Vai trò & Quyền hạn)
  * ├── /dashboard/projects (Dự án)
  * └── /dashboard/reports (Báo cáo)
  * 

@@ -31,6 +31,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     // Get user from localStorage (set during login)
                     const currentUser = authService.getCurrentUser()
                     if (currentUser) {
+                        console.log('👤 Current authenticated user:', {
+                            id: currentUser.id,
+                            email: currentUser.email,
+                            name: currentUser.name,
+                            role: currentUser.role
+                        })
                         setUser(currentUser as User)
                     } else {
                         // Fallback if no user data in localStorage

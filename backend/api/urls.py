@@ -62,6 +62,14 @@ from api.views.document_views import (
     DocumentStatusView,
     DocumentReprocessView,
 )
+from api.views.chat_views import (
+    ConversationListCreateView,
+    ConversationDetailView,
+    MessageSendView,
+    MessageListView,
+    MessageDetailView,
+    MessageFeedbackView,
+)
 
 # UUID regex pattern for URL routing
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -243,4 +251,54 @@ urlpatterns = [
     
     # 10. POST /api/v1/documents/{doc_id}/reprocess - Re-index document
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/reprocess/?$", DocumentReprocessView.as_view(), name="document_reprocess"),
+    
+    # ============================================================
+    # CHAT ENDPOINTS (Phase 5 - RAG Chat with Real-time Messaging)
+    # ============================================================
+    # Conversation Management
+    # GET /api/v1/chat/conversations - List user's conversations (paginated)
+    # POST /api/v1/chat/conversations - Create new conversation
+    re_path(r"^chat/conversations/?$", ConversationListCreateView.as_view({
+        'get': 'list',
+        'post': 'create'
+    }), name="chat_conversations_list_create"),
+    
+    # GET /api/v1/chat/conversations/{id} - Get conversation details
+    # PUT /api/v1/chat/conversations/{id} - Update conversation
+    # DELETE /api/v1/chat/conversations/{id} - Delete conversation
+    re_path(rf"^chat/conversations/(?P<conversation_id>{UUID_PATTERN})/?$", ConversationDetailView.as_view({
+        'get': 'retrieve',
+        'put': 'update',
+        'delete': 'destroy'
+    }), name="chat_conversation_detail"),
+    
+    # Message Management
+    # POST /api/v1/chat/messages - Send message to AI (triggers RAG pipeline)
+    re_path(r"^chat/messages/?$", MessageSendView.as_view({
+        'post': 'create'
+    }), name="chat_messages_send"),
+    
+    # POST /api/v1/chat/messages/stream - Streaming Q&A
+    re_path(r"^chat/messages/stream/?$", MessageSendView.as_view({
+        'post': 'stream'
+    }), name="chat_messages_stream"),
+    
+    # GET /api/v1/chat/messages/{id} - Get message details
+    re_path(rf"^chat/messages/(?P<message_id>{UUID_PATTERN})/?$", MessageDetailView.as_view({
+        'get': 'retrieve'
+    }), name="chat_message_detail"),
+    
+    # GET /api/v1/chat/conversations/{conversation_id}/messages - List messages in conversation
+    re_path(rf"^chat/conversations/(?P<conversation_id>{UUID_PATTERN})/messages/?$", MessageListView.as_view({
+        'get': 'list'
+    }), name="chat_messages_list"),
+    
+    # Feedback Management
+    # POST /api/v1/chat/messages/{id}/feedback - Submit feedback (upvote/downvote)
+    # GET /api/v1/chat/messages/{id}/feedback - Get all feedback on message
+    re_path(rf"^chat/messages/(?P<message_id>{UUID_PATTERN})/feedback/?$", MessageFeedbackView.as_view({
+        'post': 'create',
+        'get': 'retrieve'
+    }), name="chat_message_feedback"),
 ]
+

@@ -48,7 +48,7 @@ class MessageRepository(BaseRepository):
             conversation_id: Conversation ID
             account_id: Account/User ID
             content: Message content
-            metadata: Additional data
+            metadata: Additional data (stored as citations)
         
         Returns:
             Created Message instance
@@ -56,10 +56,9 @@ class MessageRepository(BaseRepository):
         try:
             message = self.create(
                 conversation_id=conversation_id,
-                account_id=account_id,
                 role='user',
                 content=content,
-                metadata=metadata or {}
+                citations=metadata or []
             )
             logger.debug(f"User message created in conversation {conversation_id}")
             return message
@@ -87,10 +86,9 @@ class MessageRepository(BaseRepository):
         try:
             message = self.create(
                 conversation_id=conversation_id,
-                account_id=None,  # System message
                 role='assistant',
                 content=content,
-                metadata=metadata or {}
+                citations=metadata or []
             )
             logger.debug(f"Bot message created in conversation {conversation_id}")
             return message

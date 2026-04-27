@@ -9,9 +9,8 @@ import json
 
 class Conversation(BaseModel):
     """
-    Chat conversation model.
-    Each conversation contains multiple messages from user and AI.
-    Supports attaching documents and folders as context.
+    RAG Chat conversation model.
+    User asks AI questions about documents.
     
     Inherits from BaseModel: automatic soft delete + timestamps + SoftDeleteManager
     """
@@ -20,16 +19,16 @@ class Conversation(BaseModel):
         Account,
         on_delete=models.CASCADE,
         related_name='conversations',
-        help_text="User who owns this conversation"
+        help_text="Owner of the conversation"
     )
     title = models.CharField(
         max_length=255,
-        help_text="Conversation title (auto-generated from first message)"
+        help_text="Conversation title"
     )
     summary = models.TextField(
         null=True,
         blank=True,
-        help_text="AI-generated summary of conversation"
+        help_text="Summary of conversation"
     )
 
     class Meta:
@@ -37,9 +36,8 @@ class Conversation(BaseModel):
         verbose_name = "Conversation"
         verbose_name_plural = "Conversations"
         indexes = [
-            models.Index(fields=['account_id', 'updated_at'], name='idx_conversations_user_updated'),
-            models.Index(fields=['created_at'], name='idx_conversations_created_at'),
-            models.Index(fields=['is_deleted']),
+            models.Index(fields=['account_id', 'updated_at']),
+            models.Index(fields=['created_at']),
         ]
 
     def __str__(self):
