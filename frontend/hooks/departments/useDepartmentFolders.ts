@@ -1,11 +1,7 @@
-/**
- * Hook for Department Folders & Documents API
- * Fetches folders and documents for a department in tree structure
- */
-
 import { useEffect, useState, useCallback } from 'react';
 import { FolderDetail } from '@/types/folders';
 import { api } from '@/services/api/client';
+import { fetchAllFolders, FolderResponse } from '@/services/folder';
 
 export interface DocumentNode {
     id: string;
@@ -20,7 +16,7 @@ export interface DocumentNode {
     uploader?: any;
 }
 
-export interface FolderTreeNode extends FolderDetail {
+export interface FolderTreeNode extends FolderResponse {
     subFolders: FolderTreeNode[];
     documents: DocumentNode[];
     expanded?: boolean;
@@ -53,59 +49,61 @@ export function useDepartmentFolders(deptId: string): UseDepartmentFoldersResult
             setLoading(true);
             setError(null);
 
-            // Fetch folders for department - API base already includes /api/v1
-            const foldersResponse = await api.get<any>(
-                `/departments/${deptId}/folders?page=1&page_size=1000`
-            );
+            // The core issue is that the department-specific API does not return subfolders.
+            // We use the global folders API which returns a complete NESTED tree.
+            const allFolders = await fetchAllFolders();
 
             // Fetch documents for department
             const docsResponse = await api.get<any>(
                 `/departments/${deptId}/documents?page=1&page_size=1000`
             );
 
-            if (foldersResponse.success && foldersResponse.data?.items) {
-                const folderMap = new Map<string, FolderTreeNode>();
-                const rootFolders: FolderTreeNode[] = [];
-                const documents: DocumentNode[] = docsResponse.data?.items || [];
+            const documents: DocumentNode[] = docsResponse.data?.items || [];
 
-                // First pass: create all folder nodes
-                foldersResponse.data.items.forEach((folder: any) => {
-                    const treeNode: FolderTreeNode = {
-                        ...folder,
-                        subFolders: [],
-                        documents: [],
-                        expanded: false,
-                        totalFiles: folder.document_count || 0,
-                    };
-                    folderMap.set(folder.id, treeNode);
-                });
+            // Helper to recursively map FolderResponse to FolderTreeNode and assign documents
+            const mapToTreeNode = (folder: FolderResponse): FolderTreeNode => {
+                const node: FolderTreeNode = {
+                    ...folder,
+                    subFolders: (folder.sub_folders || []).map(mapToTreeNode),
+                    documents: documents.filter(doc => (doc.folder_id || doc.folder) === folder.id),
+                    expanded: true, // Default to expanded
+                    totalFiles: folder.document_count || 0
+                };
+                return node;
+            };
 
-                // Assign documents to folders
-                documents.forEach((doc: DocumentNode) => {
-                    if (doc.folder_id) {
-                        const folder = folderMap.get(doc.folder_id);
-                        if (folder) {
-                            folder.documents.push(doc);
-                        }
-                    }
-                });
+            // 1. Map all folders to tree nodes first (if they are nested in the response)
+            // 2. Filter root folders that belong to this department
+            const deptRootFolders = allFolders
+                .filter(f => f.department_id === deptId)
+                .map(mapToTreeNode);
 
-                // Second pass: build hierarchy
-                folderMap.forEach((folder) => {
-                    if (folder.parent_id) {
-                        const parent = folderMap.get(folder.parent_id);
-                        if (parent) {
-                            parent.subFolders.push(folder);
-                        }
-                    } else {
-                        rootFolders.push(folder);
-                    }
-                });
+            // 3. Find documents that don't belong to any folder
+            const unassignedDocuments = documents.filter(
+                doc => !doc.folder_id && !doc.folder
+            );
 
-                setFolders(rootFolders);
-            } else {
-                setError(foldersResponse.message || 'Failed to load folders');
+            // 4. Create virtual node for unassigned documents if there are any
+            if (unassignedDocuments.length > 0) {
+                const unassignedNode: FolderTreeNode = {
+                    id: `__unassigned_${deptId}`,
+                    name: '📄 Tài liệu không có thư mục',
+                    department_id: deptId,
+                    access_scope: 'department',
+                    document_count: unassignedDocuments.length,
+                    subfolder_count: 0,
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString(),
+                    sub_folders: [],
+                    subFolders: [],
+                    documents: unassignedDocuments,
+                    expanded: true,
+                    totalFiles: unassignedDocuments.length
+                };
+                deptRootFolders.push(unassignedNode);
             }
+
+            setFolders(deptRootFolders);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load folders');
         } finally {

@@ -118,7 +118,7 @@ export function DepartmentSidebar({
             {/* Documents Section */}
             <div>
                 <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Tài liệu bộ phận</h3>
-                <div className="space-y-1.5">
+                <div className="space-y-1.5 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
                     {loading ? (
                         <div className="text-xs text-slate-400 text-center py-4">Đang tải tài liệu...</div>
                     ) : docsList.length > 0 ? docsList.map((file, idx) => (
@@ -129,7 +129,7 @@ export function DepartmentSidebar({
                                         'description'}
                             </span>
                             <div className="flex-1">
-                                <p className="text-xs font-semibold text-[#0d1c2e] leading-tight line-clamp-1">{file.filename}</p>
+                                <p className="text-xs font-semibold text-[#0d1c2e] leading-tight whitespace-normal break-words">{file.original_name}</p>
                                 <p className="text-[9px] text-slate-400">
                                     {new Date(file.updated_at || file.created_at).toLocaleDateString('vi-VN')} • {formatFileSize(file.file_size)}
                                 </p>

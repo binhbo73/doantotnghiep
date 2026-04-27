@@ -107,11 +107,11 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
                             >
                                 <td className="px-4 py-3">
                                     <div className="flex items-center gap-2">
-                                        <span className="text-lg">
+                                        <span className="text-lg flex-shrink-0">
                                             {getFileIcon(doc.file_type)}
                                         </span>
-                                        <span className="font-medium text-on-surface truncate">
-                                            {doc.filename}
+                                        <span className="font-medium text-on-surface whitespace-normal break-words">
+                                            {doc.original_name}
                                         </span>
                                     </div>
                                 </td>

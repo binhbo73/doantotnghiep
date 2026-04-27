@@ -49,6 +49,7 @@ export interface FolderDetail {
 export interface DocumentDetail {
     id: string;
     filename: string;
+    original_name: string;
     file_type: string;
     file_size: number;
     status: 'DRAFT' | 'ACTIVE' | 'ARCHIVED' | 'DELETED';

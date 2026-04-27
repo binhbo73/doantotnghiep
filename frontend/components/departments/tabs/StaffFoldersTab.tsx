@@ -1,39 +1,22 @@
 /**
  * Staff Folders Tab
- * Displays paginated list of department folders
- * API: GET /api/v1/departments/{id}/folders?page=1&page_size=10
+ * Displays department folders in a pure tree structure (folders only)
  */
 
 'use client';
 
-import React, { useState } from 'react';
-import Link from 'next/link';
-import { useDepartmentFolders } from '@/hooks/departments/useDepartmentDetail';
-import Pagination from '@/components/common/Pagination';
+import React from 'react';
+import { useDepartmentFolders, FolderTreeNode } from '@/hooks/departments/useDepartmentFolders';
 import TabLoading from '@/components/departments/loading/TabLoading';
-import { FolderDetail } from '@/types/folders';
-import { PaginatedResponse } from '@/types/departments';
+import Link from 'next/link';
 
 interface StaffFoldersTabProps {
     deptId: string;
-    initialData?: PaginatedResponse<FolderDetail>;
 }
 
-export default function StaffFoldersTab({ deptId, initialData }: StaffFoldersTabProps) {
-    const [page, setPage] = useState(1);
-    const [pageSize, setPageSize] = useState(10);
-
-    // API Hook: Fetch folders with pagination
-    const hookResult = useDepartmentFolders(
-        page === 1 && initialData ? '' : deptId,
-        page,
-        pageSize
-    );
-
-    // Combine local hook data with initial data
-    const data = page === 1 && initialData ? initialData : hookResult.data;
-    const loading = page === 1 && initialData ? false : hookResult.loading;
-    const error = hookResult.error;
+export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
+    // API Hook: Fetch folders in tree structure
+    const { folders, loading, error, toggleFolder } = useDepartmentFolders(deptId);
 
     if (loading) {
         return <TabLoading />;
@@ -41,91 +24,129 @@ export default function StaffFoldersTab({ deptId, initialData }: StaffFoldersTab
 
     if (error) {
         return (
-            <div className="p-6 bg-error-container rounded-lg text-error">
-                <p className="font-medium">Lỗi tải danh sách thư mục</p>
-                <p className="text-sm mt-1">{error}</p>
+            <div className="p-6 bg-error-container rounded-lg text-error border border-error/20">
+                <p className="font-medium flex items-center gap-2">
+                    <span className="material-symbols-outlined">error</span>
+                    Lỗi tải danh sách thư mục
+                </p>
+                <p className="text-sm mt-1 ml-7">{error}</p>
             </div>
         );
     }
 
-    if (!data?.items || data.items.length === 0) {
+    if (!folders || folders.length === 0) {
         return (
-            <div className="p-6 text-center text-on-surface-variant">
-                Không có thư mục nào trong phòng ban
+            <div className="p-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
+                <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4">
+                    <span className="material-symbols-outlined text-3xl text-slate-300">folder_off</span>
+                </div>
+                <p className="text-slate-500 font-medium italic text-sm">
+                    Không có thư mục nào trong phòng ban này
+                </p>
             </div>
         );
     }
+
+    const renderFolderNode = (node: FolderTreeNode, depth: number = 0): React.ReactNode => {
+        const hasChildren = (node.subFolders && node.subFolders.length > 0) || ((node.subfolder_count || 0) > 0);
+        const isExpanded = node.expanded;
+
+        return (
+            <div key={node.id} className="relative">
+                {/* Horizontal connector line from parent */}
+                {depth > 0 && (
+                    <div className="absolute left-[-28px] top-[24px] w-7 h-px bg-[#e0c0b1]"></div>
+                )}
+
+                {/* Folder Item Row */}
+                <div 
+                    onClick={() => hasChildren && toggleFolder(node.id)}
+                    className={`group flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all ${
+                        isExpanded 
+                        ? 'bg-[#fef5ed] shadow-sm ring-1 ring-[#f97316]/10' 
+                        : 'hover:bg-slate-50'
+                    }`}
+                >
+                    {/* Expand/Collapse Chevron */}
+                    <div className={`w-6 h-6 flex items-center justify-center transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
+                        {hasChildren ? (
+                            <span className={`material-symbols-outlined text-xl ${isExpanded ? 'text-[#9d4300]' : 'text-slate-400'}`}>
+                                chevron_right
+                            </span>
+                        ) : (
+                            <div className="w-1.5 h-1.5 rounded-full bg-slate-200 ml-1"></div>
+                        )}
+                    </div>
+
+                    {/* Folder Icon (Purple like screenshot) */}
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${
+                        isExpanded ? 'bg-[#7c3aed] text-white' : 'bg-[#f5f3ff] text-[#7c3aed]'
+                    }`}>
+                        <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>
+                            work
+                        </span>
+                    </div>
+
+                    {/* Folder Details */}
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                            <h3 className={`text-sm font-black truncate ${isExpanded ? 'text-[#9d4300]' : 'text-[#0d1c2e]'}`}>
+                                {node.name}
+                            </h3>
+                            {node.access_scope === 'PRIVATE' && (
+                                <span className="material-symbols-outlined text-xs text-red-400">lock</span>
+                            )}
+                        </div>
+                        {node.description && (
+                            <p className="text-[11px] text-slate-400 font-medium truncate mt-0.5">
+                                {node.description}
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Badge Stats on the Right */}
+                    <div className="flex items-center gap-2">
+                        {/* Subfolder Badge */}
+                        {node.subfolder_count !== undefined && node.subfolder_count > 0 && (
+                            <div className="flex items-center gap-1 px-2.5 py-1.5 bg-[#eff6ff] rounded-xl border border-blue-100 text-blue-600">
+                                <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>folder_zip</span>
+                                <span className="text-xs font-black">{node.subfolder_count}</span>
+                            </div>
+                        )}
+                        
+                        {/* Document Badge */}
+                        <div className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 rounded-xl border border-slate-100 text-slate-500">
+                            <span className="material-symbols-outlined text-lg">description</span>
+                            <span className="text-xs font-black">{node.document_count || 0}</span>
+                        </div>
+
+                        {/* Link to detail */}
+                        <Link 
+                            href={`/dashboard/folders/${node.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-9 h-9 flex items-center justify-center rounded-xl bg-white border border-[#e0c0b1]/30 text-slate-400 hover:text-[#9d4300] hover:border-[#9d4300] transition-all ml-1 shadow-sm"
+                        >
+                            <span className="material-symbols-outlined text-xl">open_in_new</span>
+                        </Link>
+                    </div>
+                </div>
+
+                {/* Recursive Sub-folders */}
+                {isExpanded && hasChildren && (
+                    <div className={`${depth === 0 ? 'ml-10' : 'ml-8'} mt-2 space-y-2 relative`}>
+                        {/* Vertical line connector */}
+                        <div className="absolute left-[-28px] top-[-12px] w-px h-[calc(100%-12px)] bg-[#e0c0b1]"></div>
+                        {node.subFolders.map(child => renderFolderNode(child, depth + 1))}
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     return (
-        <div className="space-y-4">
-            {/* Folders Table */}
-            <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                    <thead className="border-b border-outline-variant bg-surface-container-low">
-                        <tr>
-                            <th className="px-4 py-3 font-semibold text-on-surface">Tên thư mục</th>
-                            <th className="px-4 py-3 font-semibold text-on-surface">Phạm vi truy cập</th>
-                            <th className="px-4 py-3 font-semibold text-on-surface text-center">Tài liệu</th>
-                            <th className="px-4 py-3 font-semibold text-on-surface text-center">Thư mục con</th>
-                            <th className="px-4 py-3 font-semibold text-on-surface">Hành động</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-outline-variant">
-                        {data.items.map((folder: FolderDetail) => (
-                            <tr
-                                key={folder.id}
-                                className="hover:bg-surface-container-low transition-colors"
-                            >
-                                <td className="px-4 py-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-lg">📁</span>
-                                        <span className="font-medium text-on-surface">{folder.name}</span>
-                                    </div>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <span
-                                        className={`px-2 py-1 rounded text-label-md font-medium ${folder.access_scope === 'PRIVATE'
-                                                ? 'bg-error-container text-error'
-                                                : 'bg-primary-fixed text-on-primary-fixed'
-                                            }`}
-                                    >
-                                        {folder.access_scope === 'PRIVATE' ? '🔒 Riêng tư' : '👥 Công khai'}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                    <span className="inline-block bg-surface-container-highest px-2 py-1 rounded">
-                                        {folder.document_count || 0}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                    <span className="inline-block bg-surface-container-highest px-2 py-1 rounded">
-                                        {folder.subfolder_count || 0}
-                                    </span>
-                                </td>
-                                <td className="px-4 py-3">
-                                    <Link
-                                        href={`/dashboard/folders/${folder.id}`}
-                                        className="text-primary hover:underline font-medium"
-                                    >
-                                        Xem chi tiết →
-                                    </Link>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* Pagination */}
-            {data.pagination && (
-                <Pagination
-                    currentPage={data.pagination.page}
-                    totalPages={data.pagination.total_pages}
-                    pageSize={pageSize}
-                    onPageChange={setPage}
-                    onPageSizeChange={setPageSize}
-                />
-            )}
+        <div className="p-1 space-y-2">
+            {folders.map(folder => renderFolderNode(folder, 0))}
         </div>
     );
 }
+
