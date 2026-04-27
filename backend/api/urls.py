@@ -65,6 +65,7 @@ from api.views.document_views import (
 from api.views.chat_views import (
     ConversationListCreateView,
     ConversationDetailView,
+    ConversationAttachmentView,
     MessageSendView,
     MessageListView,
     MessageDetailView,
@@ -271,6 +272,13 @@ urlpatterns = [
         'put': 'update',
         'delete': 'destroy'
     }), name="chat_conversation_detail"),
+
+    # GET|POST|DELETE /api/v1/chat/conversations/{conversation_id}/attachments
+    re_path(rf"^chat/conversations/(?P<conversation_id>{UUID_PATTERN})/attachments/?$", ConversationAttachmentView.as_view({
+        'get': 'retrieve',
+        'post': 'create',
+        'delete': 'destroy'
+    }), name="chat_conversation_attachments"),
     
     # Message Management
     # POST /api/v1/chat/messages - Send message to AI (triggers RAG pipeline)
@@ -296,9 +304,11 @@ urlpatterns = [
     # Feedback Management
     # POST /api/v1/chat/messages/{id}/feedback - Submit feedback (upvote/downvote)
     # GET /api/v1/chat/messages/{id}/feedback - Get all feedback on message
+    # DELETE /api/v1/chat/messages/{id}/feedback - Delete own feedback
     re_path(rf"^chat/messages/(?P<message_id>{UUID_PATTERN})/feedback/?$", MessageFeedbackView.as_view({
         'post': 'create',
-        'get': 'retrieve'
+        'get': 'retrieve',
+        'delete': 'destroy'
     }), name="chat_message_feedback"),
 ]
 

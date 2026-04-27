@@ -77,8 +77,8 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                             key={conv.id}
                             onClick={() => onSelectConversation?.(conv.id)}
                             className={`w-full text-left p-3 rounded-xl text-sm truncate flex items-center gap-2 transition-all ${selectedConversationId === conv.id
-                                    ? 'bg-primary/10 text-primary font-semibold border border-primary/20'
-                                    : 'text-slate-600 hover:bg-white dark:hover:bg-slate-800 dark:text-slate-400'
+                                ? 'bg-primary/10 text-primary font-semibold border border-primary/20'
+                                : 'text-slate-600 hover:bg-white dark:hover:bg-slate-800 dark:text-slate-400'
                                 }`}
                             title={conv.title}
                         >
@@ -125,25 +125,6 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                 )}
             </div>
 
-            <div className="mt-auto space-y-1 p-4 border-t border-outline-variant/10">
-                <button className="w-full bg-orange-50 dark:bg-orange-950/20 text-orange-600 dark:text-orange-400 py-3 rounded-xl font-bold text-xs hover:bg-orange-100 dark:hover:bg-orange-950/40 transition-colors mb-2">
-                    Nâng cấp Workspace
-                </button>
-                <a
-                    href="#"
-                    className="flex items-center gap-3 px-4 py-2 text-slate-500 dark:text-slate-400 text-xs hover:text-orange-600 dark:hover:text-orange-400 transition-all rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                    <HelpCircle size={16} />
-                    <span>Trung tâm trợ giúp</span>
-                </a>
-                <button
-                    onClick={onLogout}
-                    className="w-full flex items-center gap-3 px-4 py-2 text-slate-500 dark:text-slate-400 text-xs hover:text-orange-600 dark:hover:text-orange-400 transition-all rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                    <LogOut size={16} />
-                    <span>Đăng xuất</span>
-                </button>
-            </div>
         </aside>
     )
 }

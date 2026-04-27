@@ -24,6 +24,8 @@ export default function ChatPage() {
         messages,
         isLoading,
         isFetchingConversations,
+        userFeedback,
+        feedbackLoading,
         createConversation,
         sendMessage,
         sendFeedback,
@@ -93,6 +95,8 @@ export default function ChatPage() {
                         messages={messages}
                         isLoading={isLoading}
                         onFeedback={sendFeedback}
+                        userFeedback={userFeedback}
+                        feedbackLoading={feedbackLoading}
                         onCopy={(content) => {
                             navigator.clipboard.writeText(content)
                         }}
@@ -102,8 +106,7 @@ export default function ChatPage() {
                     <ChatInput
                         isLoading={isLoading}
                         onSendMessage={(content, attachments) => {
-                            const files = attachments ? [] : undefined
-                            sendMessage(content, files)
+                            sendMessage(content, attachments)
                         }}
                     />
                 </main>

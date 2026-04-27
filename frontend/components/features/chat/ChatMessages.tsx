@@ -1,8 +1,10 @@
 'use client'
 
-import React from 'react'
-import { Zap, ThumbsUp, ThumbsDown, Copy, Share2 } from 'lucide-react'
+import React, { useState } from 'react'
+import { Zap, Star, Copy, Share2, Loader } from 'lucide-react'
 import { KnowledgeCard } from './KnowledgeCard'
+import { useFeedback } from '@/hooks/useFeedback'
+import { useToast } from '@/hooks/useToast'
 
 export interface Message {
     id: string
@@ -22,16 +24,63 @@ export interface Message {
 interface ChatMessagesProps {
     messages?: Message[]
     isLoading?: boolean
-    onFeedback?: (messageId: string, helpful: boolean) => void
     onCopy?: (content: string) => void
+    onFeedback?: (messageId: string, rating: string, comment?: string) => Promise<void>
+    userFeedback?: Map<string, string>
+    feedbackLoading?: Map<string, boolean>
 }
 
 export const ChatMessages: React.FC<ChatMessagesProps> = ({
     messages = [],
     isLoading = false,
-    onFeedback,
     onCopy,
+    onFeedback,
+    userFeedback: propUserFeedback,
+    feedbackLoading: propFeedbackLoading,
 }) => {
+    const { submitFeedback, userFeedback: internalUserFeedback, loading: internalFeedbackLoading } = useFeedback()
+    const userFeedback = propUserFeedback || internalUserFeedback
+    const feedbackLoading = propFeedbackLoading || internalFeedbackLoading
+    const { toast } = useToast()
+    const [feedbackComments, setFeedbackComments] = useState<Map<string, string>>(new Map())
+    const [showCommentBox, setShowCommentBox] = useState<string | null>(null)
+    const [currentRating, setCurrentRating] = useState<string | null>(null)
+    const [hoveredStar, setHoveredStar] = useState<{ [messageId: string]: number }>({})
+
+    const handleFeedback = async (messageId: string, rating: string, forceSubmit: boolean = false) => {
+        // For star rating, we might want to show comment box immediately after rating
+        if (!showCommentBox && !forceSubmit) {
+            setShowCommentBox(messageId)
+            setCurrentRating(rating)
+            return
+        }
+
+        try {
+            const comment = feedbackComments.get(messageId)?.trim()
+            if (onFeedback) {
+                await onFeedback(messageId, rating, comment)
+            } else {
+                await submitFeedback(messageId, rating, comment)
+            }
+            
+            // Success!
+            setShowCommentBox(null)
+            setCurrentRating(null)
+        } catch (err) {
+            console.error('Failed to submit feedback:', err)
+        }
+    }
+
+    const handleCopy = (content: string) => {
+        navigator.clipboard.writeText(content)
+        toast({
+            title: 'Copied',
+            description: 'Message copied to clipboard',
+            type: 'success',
+        })
+        onCopy?.(content)
+    }
+
     return (
         <div className="flex-1 overflow-y-auto p-6 md:p-12 space-y-10">
             {messages.length === 0 && !isLoading && (
@@ -87,35 +136,105 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                 )}
 
                                 {!message.isLoading && (
-                                    <div className="flex items-center justify-between pt-2">
-                                        <div className="flex items-center gap-4">
-                                            <button
-                                                onClick={() => onFeedback?.(message.id, true)}
-                                                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-primary transition-colors"
-                                            >
-                                                <ThumbsUp size={16} />
-                                                Hữu ích
-                                            </button>
-                                            <button
-                                                onClick={() => onFeedback?.(message.id, false)}
-                                                className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 hover:text-error transition-colors"
-                                            >
-                                                <ThumbsDown size={16} />
-                                                Không hữu ích
-                                            </button>
+                                    <div className="space-y-3 pt-2">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex flex-col gap-3">
+                                                <div className="flex items-center gap-1">
+                                                    {[1, 2, 3, 4, 5].map((star) => {
+                                                        const isSelected = (parseInt(userFeedback.get(message.id) || '0')) >= star || (parseInt(currentRating || '0')) >= star;
+                                                        const isHovered = (hoveredStar[message.id] || 0) >= star;
+                                                        
+                                                        return (
+                                                            <button
+                                                                key={star}
+                                                                onMouseEnter={() => setHoveredStar(prev => ({ ...prev, [message.id]: star }))}
+                                                                onMouseLeave={() => setHoveredStar(prev => ({ ...prev, [message.id]: 0 }))}
+                                                                onClick={() => handleFeedback(message.id, star.toString())}
+                                                                disabled={feedbackLoading.get(message.id) || false}
+                                                                className="p-1 transition-all transform hover:scale-110 active:scale-95 disabled:opacity-50"
+                                                            >
+                                                                <Star
+                                                                    size={18}
+                                                                    className={`${
+                                                                        isHovered || isSelected
+                                                                            ? 'text-amber-400 fill-amber-400'
+                                                                            : 'text-slate-300 dark:text-slate-600 hover:text-amber-200'
+                                                                    } transition-colors duration-200`}
+                                                                />
+                                                            </button>
+                                                        )
+                                                    })}
+                                                    <span className="ml-2 text-[10px] text-slate-400 font-medium">
+                                                        {userFeedback.get(message.id) ? 'Đã đánh giá' : 'Đánh giá câu trả lời này'}
+                                                    </span>
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => handleCopy(message.content)}
+                                                    className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                                                    title="Copy message"
+                                                >
+                                                    <Copy size={16} />
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        if (navigator.share) {
+                                                            navigator.share({
+                                                                title: 'AI Response',
+                                                                text: message.content,
+                                                                url: window.location.href,
+                                                            })
+                                                        } else {
+                                                            toast({
+                                                                title: 'Sharing not supported',
+                                                                description: 'Your browser does not support native sharing.',
+                                                                variant: 'destructive',
+                                                            })
+                                                        }
+                                                    }}
+                                                    className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                                                    title="Share message"
+                                                >
+                                                    <Share2 size={16} />
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                            <button
-                                                onClick={() => onCopy?.(message.content)}
-                                                className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                                                title="Copy"
-                                            >
-                                                <Copy size={16} />
-                                            </button>
-                                            <button className="p-2 text-slate-400 hover:text-primary transition-colors rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" title="Share">
-                                                <Share2 size={16} />
-                                            </button>
-                                        </div>
+
+                                        {/* Feedback Comment Box */}
+                                        {showCommentBox === message.id && (
+                                            <div className="mt-3 p-3 bg-slate-100 dark:bg-slate-700 rounded-lg space-y-2">
+                                                <textarea
+                                                    value={feedbackComments.get(message.id) || ''}
+                                                    onChange={(e) =>
+                                                        setFeedbackComments((prev) => new Map(prev).set(message.id, e.target.value))
+                                                    }
+                                                    placeholder="Hãy cho chúng tôi biết lý do (tùy chọn)..."
+                                                    maxLength={1000}
+                                                    className="w-full p-3 text-sm bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-900 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500/50 transition-all resize-none"
+                                                    rows={3}
+                                                />
+                                                <div className="flex gap-2 justify-end">
+                                                    <button
+                                                        onClick={() => setShowCommentBox(null)}
+                                                        className="px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors"
+                                                    >
+                                                        Hủy
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            const rating = currentRating || userFeedback.get(message.id) || '5'
+                                                            handleFeedback(message.id, rating, true)
+                                                        }}
+                                                        disabled={feedbackLoading.get(message.id)}
+                                                        className="px-4 py-1.5 text-xs font-semibold bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors shadow-sm shadow-amber-200 dark:shadow-none disabled:opacity-50"
+                                                    >
+                                                        {feedbackLoading.get(message.id) ? 'Đang gửi...' : 'Gửi đánh giá'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>

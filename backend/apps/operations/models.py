@@ -173,7 +173,13 @@ class HumanFeedback(BaseModel):
     
     Inherits from BaseModel for soft delete support.
     """
-    RATING_CHOICES = [('upvote', 'Upvote'), ('downvote', 'Downvote')]
+    RATING_CHOICES = [
+        ('1', '1 Star'),
+        ('2', '2 Stars'),
+        ('3', '3 Stars'),
+        ('4', '4 Stars'),
+        ('5', '5 Stars'),
+    ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     message = models.ForeignKey(
@@ -191,7 +197,7 @@ class HumanFeedback(BaseModel):
     rating = models.CharField(
         max_length=50,
         choices=RATING_CHOICES,
-        help_text="Rating (upvote or downvote)"
+        help_text="Rating from 1 to 5 stars"
     )
     comment = models.TextField(null=True, blank=True, help_text="Additional feedback comment")
 

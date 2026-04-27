@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { ChatService, MessageDTO, ConversationDTO } from '@/services/chatService'
+import { ChatService, MessageDTO, ConversationDTO, ConversationAttachmentPayload } from '@/services/chatService'
 import { useToast } from './useToast'
 import { Message } from '@/components/features/chat/ChatMessages'
 
@@ -17,10 +17,12 @@ export const useChat = (options: UseChatOptions = {}) => {
 
     // State
     const [conversations, setConversations] = useState<ConversationDTO[]>([])
-    const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+    const [currentConversationId, setCurrentConversationId] = useState<string | undefined>(undefined)
     const [messages, setMessages] = useState<Message[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [isFetchingConversations, setIsFetchingConversations] = useState(false)
+    const [userFeedback, setUserFeedback] = useState<Map<string, string>>(new Map())
+    const [feedbackLoading, setFeedbackLoading] = useState<Map<string, boolean>>(new Map())
 
     // Check if we have authentication token
     const hasToken = typeof window !== 'undefined' && !!localStorage.getItem('auth_token')  // Fixed: access_token -> auth_token
@@ -92,7 +94,7 @@ export const useChat = (options: UseChatOptions = {}) => {
 
     // Send message (Streaming support)
     const sendMessage = useCallback(
-        async (content: string, attachments?: File[]) => {
+        async (content: string, attachments?: ConversationAttachmentPayload) => {
             if (!content.trim()) return
 
             try {
@@ -104,6 +106,17 @@ export const useChat = (options: UseChatOptions = {}) => {
                     const conv = await createConversation(content.substring(0, 50))
                     if (!conv) return
                     convId = conv.id
+                }
+
+                if (!convId) return
+
+                const conversationId = convId
+
+                if (attachments?.documentIds?.length || attachments?.folderIds?.length) {
+                    await ChatService.attachConversationResources(conversationId, {
+                        documentIds: attachments.documentIds,
+                        folderIds: attachments.folderIds,
+                    })
                 }
 
                 // 2. Thêm tin nhắn User lạc quan
@@ -127,9 +140,9 @@ export const useChat = (options: UseChatOptions = {}) => {
 
                 // 4. Gọi Stream API
                 let fullContent = ''
-                await ChatService.sendMessageStream(content, convId, (chunk) => {
+                await ChatService.sendMessageStream(content, conversationId, (chunk) => {
                     fullContent += chunk
-                    setMessages((prev) => 
+                    setMessages((prev) =>
                         prev.map(msg => msg.id === botMsgId ? { ...msg, content: fullContent } : msg)
                     )
                 })
@@ -148,13 +161,17 @@ export const useChat = (options: UseChatOptions = {}) => {
     )
 
     // Provide feedback
-    const sendFeedback = useCallback(async (messageId: string, isHelpful: boolean) => {
+    const sendFeedback = useCallback(async (messageId: string, rating: string, comment?: string) => {
         try {
-            await ChatService.sendFeedback(messageId, isHelpful)
-            showSuccess(isHelpful ? 'Cảm ơn phản hồi của bạn!' : 'Cảm ơn phản hồi của bạn!')
+            setFeedbackLoading((prev) => new Map(prev).set(messageId, true))
+            await ChatService.sendFeedback(messageId, rating, comment)
+            setUserFeedback((prev) => new Map(prev).set(messageId, rating))
+            showSuccess('Cảm ơn phản hồi của bạn!')
         } catch (error) {
             showError('Không thể gửi phản hồi')
             console.error('Failed to send feedback:', error)
+        } finally {
+            setFeedbackLoading((prev) => new Map(prev).set(messageId, false))
         }
     }, [showError, showSuccess])
 
@@ -181,6 +198,8 @@ export const useChat = (options: UseChatOptions = {}) => {
         messages,
         isLoading,
         isFetchingConversations,
+        userFeedback,
+        feedbackLoading,
 
         // Actions
         createConversation,

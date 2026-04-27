@@ -32,6 +32,11 @@ export interface SendMessageRequest {
     attachments?: File[]
 }
 
+export interface ConversationAttachmentPayload {
+    documentIds?: string[]
+    folderIds?: string[]
+}
+
 export interface SendMessageResponse {
     message?: MessageDTO
     id?: string
@@ -117,6 +122,29 @@ export class ChatService {
     }
 
     /**
+     * Attach existing system documents/folders to a conversation
+     */
+    static async attachConversationResources(
+        conversationId: string,
+        payload: ConversationAttachmentPayload
+    ) {
+        try {
+            const response = await apiClient.post(
+                `${API_ENDPOINTS.CHAT.CONVERSATIONS}/${conversationId}/attachments/`,
+                {
+                    document_ids: payload.documentIds || [],
+                    folder_ids: payload.folderIds || [],
+                }
+            )
+
+            return response.data.data
+        } catch (error) {
+            console.error(`Failed to attach resources for conversation ${conversationId}:`, error)
+            throw error
+        }
+    }
+
+    /**
      * Get messages in a conversation
      */
     static async getMessages(conversationId: string, page: number = 1, pageSize: number = 50) {
@@ -179,7 +207,7 @@ export class ChatService {
 
                 const chunk = decoder.decode(value)
                 const lines = chunk.split('\n')
-                
+
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
                         try {
@@ -237,12 +265,13 @@ export class ChatService {
     /**
      * Provide feedback on a message
      */
-    static async sendFeedback(messageId: string, isHelpful: boolean) {
+    static async sendFeedback(messageId: string, rating: string, comment?: string) {
         try {
             const response = await apiClient.post(
                 `${API_ENDPOINTS.CHAT.MESSAGES}/${messageId}/feedback/`,
                 {
-                    is_helpful: isHelpful,
+                    rating,
+                    comment,
                 }
             )
             return response.data.data

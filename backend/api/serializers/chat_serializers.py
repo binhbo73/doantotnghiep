@@ -89,7 +89,8 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
             {
                 'id': str(att.document.id),
                 'name': att.document.original_name,
-                'document_type': att.document.document_type,
+                'file_type': att.document.file_type,
+                'folder_id': str(att.document.folder.id) if att.document.folder else None,
             }
             for att in attachments if att.document and not att.document.is_deleted
         ]
@@ -113,11 +114,54 @@ class ConversationCreateSerializer(serializers.Serializer):
         required=True,
         help_text="Conversation title"
     )
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        help_text="Document IDs to attach as context"
+    )
     folder_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
         help_text="Folder IDs to attach as context"
     )
+    summary = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text="Optional conversation summary"
+    )
+
+    def _attach_documents(self, conversation, document_ids):
+        for doc_id in document_ids:
+            try:
+                document = Document.objects.get(id=doc_id, is_deleted=False)
+            except Document.DoesNotExist:
+                continue
+
+            attachment, created = ConversationAttachedDocument.objects.get_or_create(
+                conversation=conversation,
+                document=document,
+            )
+            if not created and attachment.is_deleted:
+                attachment.is_deleted = False
+                attachment.deleted_at = None
+                attachment.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+    def _attach_folders(self, conversation, folder_ids):
+        for folder_id in folder_ids:
+            try:
+                folder = Folder.objects.get(id=folder_id, is_deleted=False)
+            except Folder.DoesNotExist:
+                continue
+
+            attachment, created = ConversationAttachedFolder.objects.get_or_create(
+                conversation=conversation,
+                folder=folder,
+            )
+            if not created and attachment.is_deleted:
+                attachment.is_deleted = False
+                attachment.deleted_at = None
+                attachment.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
     
     def create(self, validated_data):
         """Create RAG conversation with attached documents/folders"""
@@ -134,40 +178,37 @@ class ConversationCreateSerializer(serializers.Serializer):
             summary=summary
         )
         
-        # Attach documents
-        for doc_id in document_ids:
-            try:
-                doc = Document.objects.get(id=doc_id, is_deleted=False)
-                ConversationAttachedDocument.objects.create(
-                    conversation=conversation,
-                    document=doc
-                )
-            except Document.DoesNotExist:
-                pass
-        
-        # Attach folders
-        for folder_id in folder_ids:
-            try:
-                folder = Folder.objects.get(id=folder_id, is_deleted=False)
-                ConversationAttachedFolder.objects.create(
-                    conversation=conversation,
-                    folder=folder
-                )
-            except Folder.DoesNotExist:
-                    pass
-            
-            # Attach folders
-            for folder_id in folder_ids:
-                try:
-                    folder = Folder.objects.get(id=folder_id, is_deleted=False)
-                    ConversationAttachedFolder.objects.create(
-                        conversation=conversation,
-                        folder=folder
-                    )
-                except Folder.DoesNotExist:
-                    pass
+        self._attach_documents(conversation, document_ids)
+        self._attach_folders(conversation, folder_ids)
         
         return conversation
+
+
+class ConversationAttachmentSerializer(serializers.Serializer):
+    """Serializer for adding or removing conversation attachments."""
+    document_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+        help_text="Document IDs to attach or detach"
+    )
+    folder_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+        help_text="Folder IDs to attach or detach"
+    )
+
+    def validate(self, attrs):
+        if not attrs.get('document_ids') and not attrs.get('folder_ids'):
+            raise serializers.ValidationError(
+                'At least one document_id or folder_id must be provided.'
+            )
+        return attrs
+
+    @staticmethod
+    def serialize_conversation(conversation):
+        return ConversationDetailSerializer(conversation).data
 
 
 # ============================================================
@@ -332,52 +373,101 @@ class HumanFeedbackCreateSerializer(serializers.Serializer):
     """Serializer for creating feedback on a message"""
     message_id = serializers.UUIDField(required=True)
     rating = serializers.ChoiceField(
-        choices=['upvote', 'downvote'],
-        help_text="User's rating (upvote or downvote)"
+        choices=['1', '2', '3', '4', '5'],
+        help_text="User's rating (1 to 5 stars)"
     )
     comment = serializers.CharField(
         max_length=1000,
         required=False,
         allow_blank=True,
-        help_text="Optional feedback comment"
+        help_text="Optional feedback comment (max 1000 characters)"
     )
     
+    def validate_message_id(self, value):
+        """Validate message exists and belongs to user"""
+        account = self.context['request'].user
+        
+        try:
+            message = Message.objects.get(
+                id=value,
+                is_deleted=False,
+                conversation__account=account
+            )
+        except Message.DoesNotExist:
+            raise serializers.ValidationError(
+                "Message not found or you don't have permission to feedback on this message"
+            )
+        
+        # Only assistant messages can be feedback
+        if message.role != 'assistant':
+            raise serializers.ValidationError(
+                "Can only provide feedback on AI assistant responses, not user messages"
+            )
+        
+        return value
+    
     def create(self, validated_data):
-        """Create or update feedback"""
+        """Create or update feedback with soft-delete recovery"""
         account = self.context['request'].user
         message_id = validated_data['message_id']
         rating = validated_data['rating']
-        comment = validated_data.get('comment', '')
+        comment = validated_data.get('comment', '').strip() or None
         
-        # Get message and verify it exists
-        try:
-            message = Message.objects.get(id=message_id, is_deleted=False)
-        except Message.DoesNotExist:
-            raise serializers.ValidationError("Message not found")
+        # Get message
+        message = Message.objects.get(id=message_id, is_deleted=False)
         
-        # Create or update feedback
-        feedback, created = HumanFeedback.objects.update_or_create(
+        # Handle soft-delete recovery: if feedback was soft-deleted, restore it
+        existing_feedback = HumanFeedback.objects.filter(
             message=message,
-            account=account,
-            defaults={
-                'rating': rating,
-                'comment': comment
-            }
-        )
+            account=account
+        ).first()  # Get even deleted records
+        
+        if existing_feedback:
+            if existing_feedback.is_deleted:
+                # Recover soft-deleted feedback
+                existing_feedback.is_deleted = False
+                existing_feedback.deleted_at = None
+                existing_feedback.rating = rating
+                existing_feedback.comment = comment
+                existing_feedback.save(update_fields=['is_deleted', 'deleted_at', 'rating', 'comment', 'updated_at'])
+                feedback = existing_feedback
+                created = False
+            else:
+                # Update existing active feedback
+                existing_feedback.rating = rating
+                existing_feedback.comment = comment
+                existing_feedback.save(update_fields=['rating', 'comment', 'updated_at'])
+                feedback = existing_feedback
+                created = False
+        else:
+            # Create new feedback
+            feedback = HumanFeedback.objects.create(
+                message=message,
+                account=account,
+                rating=rating,
+                comment=comment
+            )
+            created = True
+        
+        # Store in context for logging
+        self.context['feedback_created'] = created
+        self.context['feedback_action'] = 'SUBMIT' if created else 'UPDATE'
         
         return feedback
 
 
 class HumanFeedbackSerializer(serializers.ModelSerializer):
-    """Serializer for HumanFeedback model"""
+    """Serializer for HumanFeedback model (read-only)"""
     message_id = serializers.UUIDField(source='message.id', read_only=True)
+    account_id = serializers.IntegerField(source='account.id', read_only=True)
     account_username = serializers.CharField(source='account.username', read_only=True)
+    message_role = serializers.CharField(source='message.role', read_only=True)
     
     class Meta:
         model = HumanFeedback
         fields = [
-            'id', 'message_id', 'account_username', 'rating',
-            'comment', 'created_at', 'updated_at'
+            'id', 'message_id', 'account_id', 'account_username',
+            'message_role', 'rating', 'comment', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
