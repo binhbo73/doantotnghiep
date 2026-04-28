@@ -32,7 +32,11 @@ const RESOURCE_GROUP_MAP: Record<string, { name: string; icon: string }> = {
     roles: { name: 'Nhóm Vai trò', icon: '👑' },
 }
 
-export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
+interface PermissionMatrixPropsInternal extends PermissionMatrixProps {
+    refreshKey?: number
+}
+
+export function PermissionMatrix({ selectedRoleId, refreshKey }: PermissionMatrixPropsInternal) {
     const { permissions, loading: permissionsLoading, error: permissionsError, useFallback: permissionsUseFallback, refetch } = usePermissions({
         page: 1,
         page_size: 100,
@@ -108,6 +112,13 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
         }
     }
 
+    // If parent requests a refresh (via changing `refreshKey`), re-fetch permissions
+    React.useEffect(() => {
+        if (typeof refreshKey !== 'undefined') {
+            refetch()
+        }
+    }, [refreshKey])
+
     if (permissionsLoading) {
         return <div style={{ color: '#727785' }}>Đang tải quyền hạn...</div>
     }
@@ -119,7 +130,7 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
     return (
         <div>
             {/* Status Message */}
-           
+
 
             {/* Permission Groups */}
             {permissionGroups.length === 0 ? (
@@ -138,58 +149,9 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
                 </div>
             )}
 
-            {/* Additional Actions */}
-            <div className="flex flex-col sm:flex-row gap-1.5 mt-3">
-                <button
-                    type="button"
-                    onClick={() => setIsCreatePermissionDialogOpen(true)}
-                    className="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center gap-1.5"
-                    style={{
-                        backgroundColor: '#ffffff',
-                        color: '#0058be',
-                        border: '1px solid #0058be',
-                    }}
-                >
-                    <span>🔐</span> Tạo quyền hạn mới
-                </button>
-                <button
-                    className="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center gap-1.5"
-                    style={{
-                        backgroundColor: '#ffffff',
-                        color: '#0058be',
-                        border: '1px solid #0058be',
-                    }}
-                >
-                    <span>👥</span> Tạo vai trò nhanh
-                </button>
-            </div>
+            {/* Additional Actions: create-permission button moved to parent header */}
 
-            <CreatePermissionDialog
-                isOpen={isCreatePermissionDialogOpen}
-                onClose={() => setIsCreatePermissionDialogOpen(false)}
-                onSubmit={handleCreatePermission}
-            />
 
-            {/* Bottom Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-1.5 mt-2 pt-2 border-t" style={{ borderColor: '#dce2f3' }}>
-                <button
-                    type="button"
-                    className="px-3 py-1.5 rounded-lg font-medium text-xs text-white transition flex items-center gap-1.5"
-                    style={{ backgroundColor: '#0058be' }}
-                >
-                    <span>💾</span> Lưu thay đổi
-                </button>
-                <button
-                    type="button"
-                    className="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center gap-1.5"
-                    style={{
-                        backgroundColor: '#f0f3ff',
-                        color: '#0058be',
-                    }}
-                >
-                    <span>✅</span> Áp dụng ngay
-                </button>
-            </div>
         </div>
     )
 }

@@ -6,12 +6,14 @@ import {
     DepartmentTree,
     DepartmentSidebar,
     AddDepartmentDialog,
+    EditDepartmentDialog,
     DepartmentList,
 } from '@/components/features/departments'
 import { useDepartments } from '@/hooks/useDepartments'
 
 export default function DepartmentsPage() {
     const [isDialogOpen, setIsDialogOpen] = useState(false)
+    const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
     const [selectedDepartmentId, setSelectedDepartmentId] = useState<string | null>(null)
     const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree')
     const [isSubmitting, setIsSubmitting] = useState(false)
@@ -20,6 +22,7 @@ export default function DepartmentsPage() {
         departments,
         isLoading,
         addDepartment,
+        updateDepartment,
         refetch,
     } = useDepartments()
 
@@ -48,7 +51,32 @@ export default function DepartmentsPage() {
             })
             setIsDialogOpen(false)
         } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Không thể tạo phòng ban'
             console.error('Failed to add department:', err)
+            throw new Error(errorMessage)
+        } finally {
+            setIsSubmitting(false)
+        }
+    }
+
+    const handleEditDepartment = async (data: {
+        name: string
+        description: string
+        manager_id: string | null
+    }) => {
+        if (!selectedDepartmentId) return
+        try {
+            setIsSubmitting(true)
+            await updateDepartment(selectedDepartmentId, {
+                name: data.name,
+                description: data.description || undefined,
+                manager_id: data.manager_id,
+            })
+            setIsEditDialogOpen(false)
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Không thể cập nhật phòng ban'
+            console.error('Failed to update department:', err)
+            throw new Error(errorMessage)
         } finally {
             setIsSubmitting(false)
         }
@@ -94,6 +122,7 @@ export default function DepartmentsPage() {
                         <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
                             <DepartmentSidebar
                                 department={selectedDepartment}
+                                onEdit={() => setIsEditDialogOpen(true)}
                             />
                         </div>
                     </div>
@@ -103,6 +132,10 @@ export default function DepartmentsPage() {
                         <DepartmentList
                             departments={departments}
                             onAdd={() => setIsDialogOpen(true)}
+                            onEdit={(dept) => {
+                                setSelectedDepartmentId(dept.id)
+                                setIsEditDialogOpen(true)
+                            }}
                             onExport={handleExport}
                         />
                     </>
@@ -115,6 +148,15 @@ export default function DepartmentsPage() {
                     onSubmit={handleAddDepartment}
                     isLoading={isSubmitting}
                     departments={departments}
+                />
+
+                {/* Edit Department Dialog */}
+                <EditDepartmentDialog
+                    isOpen={isEditDialogOpen}
+                    onClose={() => setIsEditDialogOpen(false)}
+                    onSubmit={handleEditDepartment}
+                    isLoading={isSubmitting}
+                    department={selectedDepartment}
                 />
             </main>
 

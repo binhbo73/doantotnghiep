@@ -53,6 +53,11 @@ export default function UserDetailPage() {
             return
         }
 
+        if (!user) {
+            setError('Không tìm thấy người dùng')
+            return
+        }
+
         try {
             setIsDeleting(true)
             await deleteUser(user.account_id)

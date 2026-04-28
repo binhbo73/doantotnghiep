@@ -20,9 +20,17 @@ const getIconForName = (name: string) => {
 }
 
 export function DepartmentTree({ departments, selectedId, onSelect }: DepartmentTreeProps) {
-    const rootDepartments = useMemo(() => departments.filter((d) => !d.parent_id), [departments])
+    const visibleDepartments = useMemo(
+        () => departments.filter((d) => !d.is_deleted),
+        [departments]
+    )
 
-    const getChildren = (parentId: string) => departments.filter((d) => d.parent_id === parentId)
+    const rootDepartments = useMemo(() => {
+        const ids = new Set(visibleDepartments.map((d) => d.id))
+        return visibleDepartments.filter((d) => !d.parent_id || !ids.has(d.parent_id))
+    }, [visibleDepartments])
+
+    const getChildren = (parentId: string) => visibleDepartments.filter((d) => d.parent_id === parentId)
 
     const handleSelectDepartment = (id: string) => {
         // Chỉ cập nhật state để hiện thông tin ở sidebar
@@ -106,7 +114,7 @@ export function DepartmentTree({ departments, selectedId, onSelect }: Department
 
             <div className="space-y-4">
                 {rootDepartments.map(node => renderNode(node, 0))}
-                {rootDepartments.length === 0 && departments.length > 0 && (
+                {rootDepartments.length === 0 && visibleDepartments.length > 0 && (
                     <p className="text-xs text-slate-400 text-center py-10">Không tìm thấy gốc tổ chức. Kiểm tra dữ liệu phân cấp.</p>
                 )}
             </div>

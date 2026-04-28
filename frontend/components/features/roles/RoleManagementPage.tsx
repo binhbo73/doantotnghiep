@@ -4,6 +4,8 @@ import React, { useState, useMemo } from 'react'
 import { RoleCarousel } from './RoleCarousel'
 import { PermissionMatrix } from './PermissionMatrix'
 import { CreateRoleDialog, RoleDetailDialog } from './dialogs'
+import { CreatePermissionDialog } from './dialogs'
+import { createPermission } from '@/services/iam'
 import { useRoles } from '@/hooks/useRoles'
 import { useUpdateRole } from '@/hooks/useUpdateRole'
 import { useDeleteRole } from '@/hooks/useDeleteRole'
@@ -12,8 +14,10 @@ import { useRolePermissions } from '@/hooks/useRolePermissions'
 export function RoleManagementPage() {
   const [selectedRoleId, setSelectedRoleId] = useState<string>('')
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isCreatePermissionDialogOpen, setIsCreatePermissionDialogOpen] = useState(false)
   const [detailRoleId, setDetailRoleId] = useState<string | null>(null)
   const [editRoleId, setEditRoleId] = useState<string | null>(null)
+  const [permissionRefreshKey, setPermissionRefreshKey] = useState(0)
 
   const { roles, loading: rolesLoading, error: rolesError, useFallback: rolesUseFallback, refetch: refetchRoles } = useRoles({
     page: 1,
@@ -42,6 +46,31 @@ export function RoleManagementPage() {
     console.log('Creating role:', data)
     setIsCreateDialogOpen(false)
     refetchRoles()
+  }
+
+  const handleCreatePermission = async (data: {
+    code: string
+    name: string
+    resource: string
+    action: string
+    description: string
+  }) => {
+    try {
+      await createPermission({
+        code: data.code.trim().toLowerCase(),
+        name: data.name.trim(),
+        resource: data.resource.trim(),
+        action: data.action.trim(),
+        description: data.description.trim(),
+      })
+
+      setIsCreatePermissionDialogOpen(false)
+      // trigger permission matrix to refresh
+      setPermissionRefreshKey((k) => k + 1)
+    } catch (error) {
+      console.error('Failed to create permission:', error)
+      throw error
+    }
   }
 
   const handleEditRole = (roleId: string) => {
@@ -125,13 +154,28 @@ export function RoleManagementPage() {
               Xây dựng kiến trúc bảo mật và phân tầng truy cập cho doanh nghiệp của bạn.
             </p>
           </div>
-          <button
-            onClick={() => setIsCreateDialogOpen(true)}
-            className="px-3 py-1.5 rounded-lg font-medium text-xs text-white transition whitespace-nowrap ml-4 flex items-center gap-1"
-            style={{ backgroundColor: '#b75b00' }}
-          >
-            <span>➕</span> Tạo vai trò mới
-          </button>
+          <div className="flex items-center ml-4 gap-2">
+            <button
+              type="button"
+              onClick={() => setIsCreatePermissionDialogOpen(true)}
+              className="px-3 py-1.5 rounded-lg font-medium text-xs transition whitespace-nowrap flex items-center gap-1"
+              style={{
+                backgroundColor: '#ffffff',
+                color: '#0058be',
+                border: '1px solid #0058be',
+              }}
+            >
+              <span>🔐</span> Tạo quyền hạn mới
+            </button>
+
+            <button
+              onClick={() => setIsCreateDialogOpen(true)}
+              className="px-3 py-1.5 rounded-lg font-medium text-xs text-white transition whitespace-nowrap flex items-center gap-1"
+              style={{ backgroundColor: '#b75b00' }}
+            >
+              <span>➕</span> Tạo vai trò mới
+            </button>
+          </div>
         </div>
       </div>
 
@@ -171,7 +215,8 @@ export function RoleManagementPage() {
           <h2 className="text-base font-bold mb-2" style={{ color: '#151c27' }}>
             Danh mục Quyền hạn Hệ thống
           </h2>
-          <PermissionMatrix selectedRoleId={selectedRoleId} />
+          {/* pass permission refresh key so matrix can refetch when new permission created */}
+          <PermissionMatrix selectedRoleId={selectedRoleId} refreshKey={permissionRefreshKey} />
         </div>
       </div>
 
@@ -185,6 +230,12 @@ export function RoleManagementPage() {
           setEditRoleId(null)
         }}
         onSubmit={editRoleId ? handleUpdateRole : handleCreateRole}
+      />
+
+      <CreatePermissionDialog
+        isOpen={isCreatePermissionDialogOpen}
+        onClose={() => setIsCreatePermissionDialogOpen(false)}
+        onSubmit={handleCreatePermission}
       />
 
       {/* Role Detail Dialog */}

@@ -87,7 +87,7 @@ export function useDepartmentFolders(deptId: string): UseDepartmentFoldersResult
             if (unassignedDocuments.length > 0) {
                 const unassignedNode: FolderTreeNode = {
                     id: `__unassigned_${deptId}`,
-                    name: '📄 Tài liệu không có thư mục',
+                    name: ' Tài liệu không có thư mục',
                     department_id: deptId,
                     access_scope: 'department',
                     document_count: unassignedDocuments.length,

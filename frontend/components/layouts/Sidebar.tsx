@@ -26,7 +26,7 @@ export function Sidebar({
 
     return (
         <aside
-            className="flex flex-col h-screen transition-all duration-300 relative z-50"
+            className="flex flex-col h-screen max-h-screen overflow-hidden transition-all duration-300 relative z-50"
             style={{
                 width: isCollapsed ? '80px' : '240px',
                 backgroundColor: '#ffffff',
@@ -36,7 +36,7 @@ export function Sidebar({
         >
             {/* Logo Section */}
             <div
-                className="flex items-center justify-between px-2 py-4 border-b"
+                className="flex items-center justify-between px-2 py-4 border-b flex-shrink-0"
                 style={{ borderColor: '#dce2f3' }}
             >
                 <div
@@ -79,7 +79,7 @@ export function Sidebar({
             </div>
 
             {/* Navigation Items */}
-            <nav className="flex-1 px-3 py-4">
+            <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
                 <div className="space-y-1">
                     {dashboardNavigation.map((item) => {
                         const active = isActive(item.href)
@@ -130,7 +130,7 @@ export function Sidebar({
 
             {/* Bottom Actions */}
             <div
-                className="px-3 py-4 border-t space-y-2"
+                className="px-3 py-4 border-t space-y-2 flex-shrink-0"
                 style={{ borderColor: '#dce2f3' }}
             >
                 {/* Logout */}

@@ -74,17 +74,6 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
     };
 
-    const getStatusBadge = (status: string) => {
-        const statusMap: Record<string, { label: string; color: string }> = {
-            DRAFT: { label: '⏳ Nháp', color: 'bg-secondary-container text-on-secondary-container' },
-            ACTIVE: { label: '✓ Hoạt động', color: 'bg-primary-fixed text-on-primary-fixed' },
-            ARCHIVED: { label: '📦 Lưu trữ', color: 'bg-surface-container-high text-on-surface' },
-            DELETED: { label: '🗑️ Đã xóa', color: 'bg-error-container text-error' },
-        };
-        const info = statusMap[status] || statusMap['ACTIVE'];
-        return <span className={`px-2 py-1 rounded text-label-md font-medium ${info.color}`}>{info.label}</span>;
-    };
-
     return (
         <div className="space-y-4">
             {/* Documents Table */}
@@ -95,7 +84,6 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
                             <th className="px-4 py-3 font-semibold text-on-surface">Tên tài liệu</th>
                             <th className="px-4 py-3 font-semibold text-on-surface">Loại</th>
                             <th className="px-4 py-3 font-semibold text-on-surface text-right">Kích thước</th>
-                            <th className="px-4 py-3 font-semibold text-on-surface">Trạng thái</th>
                             <th className="px-4 py-3 font-semibold text-on-surface">Hành động</th>
                         </tr>
                     </thead>
@@ -124,9 +112,6 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
                                     <span className="text-on-surface-variant">
                                         {formatFileSize(doc.file_size)}
                                     </span>
-                                </td>
-                                <td className="px-4 py-3">
-                                    {getStatusBadge(doc.status)}
                                 </td>
                                 <td className="px-4 py-3">
                                     <Link

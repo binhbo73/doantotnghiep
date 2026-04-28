@@ -13,7 +13,7 @@ import { useState } from 'react';
 import DepartmentDetailLayout from '@/components/departments/layout/DepartmentDetailLayout';
 import DepartmentDetailHeader from '@/components/departments/sections/DepartmentDetailHeader';
 import ManagerCard from '@/components/departments/sections/ManagerCard';
-import SubDepartmentsSection from '@/components/departments/sections/SubDepartmentsSection';
+import SubDepartmentsTreeSection from '@/components/departments/sections/SubDepartmentsTreeSection';
 import StaffTableSection from '@/components/departments/sections/StaffTableSection';
 // import InfoCardsSection from '@/components/departments/sections/InfoCardsSection';
 import LoadingSkeletons from '@/components/departments/loading/LoadingSkeletons';
@@ -71,7 +71,7 @@ export default function DepartmentDetailPage() {
 
                     {/* Right: Sub-departments (Col 8) */}
                     <div className="lg:col-span-8 bg-[#eff4ff]/30 rounded-[2.5rem] p-8 border border-[#eff4ff] self-stretch">
-                        <SubDepartmentsSection
+                        <SubDepartmentsTreeSection
                             subDepartments={departmentDetail.sub_departments || []}
                         />
                     </div>

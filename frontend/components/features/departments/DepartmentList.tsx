@@ -7,10 +7,11 @@ import { Department } from '@/types/api'
 interface DepartmentListProps {
     departments: Department[]
     onAdd?: () => void
+    onEdit?: (dept: Department) => void
     onExport?: () => void
 }
 
-export function DepartmentList({ departments, onAdd, onExport }: DepartmentListProps) {
+export function DepartmentList({ departments, onAdd, onEdit, onExport }: DepartmentListProps) {
     const router = useRouter()
     const totalDepartments = departments.length
     const totalMembers = departments.reduce((acc, d) => acc + (d.member_count || 0), 0)
@@ -46,14 +47,14 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Tổng phòng ban</p>
                     <div className="flex items-baseline gap-2">
                         <span className="text-2xl font-black text-slate-900">{totalDepartments}</span>
-                        <span className="text-[11px] font-bold text-[#9d4300]">+2 tháng này</span>
+
                     </div>
                 </div>
                 <div className="p-4 bg-white rounded-xl shadow-sm border border-[#e0c0b1]/30">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Nhân sự thực tế</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Nhân sự</p>
                     <div className="flex items-baseline gap-2">
                         <span className="text-2xl font-black text-slate-900">{totalMembers}</span>
-                        <span className="text-[11px] font-bold text-blue-600">98% Active</span>
+
                     </div>
                 </div>
                 <div className="p-4 bg-white rounded-xl shadow-sm border border-[#e0c0b1]/30">
@@ -87,18 +88,7 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
                         type="text"
                     />
                 </div>
-                <div className="flex gap-2 w-full md:w-auto">
-                    <button className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-[#e0c0b1]/30 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                        <span className="material-symbols-outlined text-base">filter_list</span>
-                        Bộ lọc nâng cao
-                    </button>
-                    {onExport && (
-                        <button onClick={onExport} className="flex-1 md:flex-none flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-[#e0c0b1]/30 rounded-xl text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                            <span className="material-symbols-outlined text-base">download</span>
-                            Xuất báo cáo
-                        </button>
-                    )}
-                </div>
+
             </div>
 
             {/* List View Table */}
@@ -154,7 +144,7 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
                                             <span className="text-xs font-bold text-slate-800">{dept.member_count}</span>
                                         </td>
                                         <td className="px-5 py-3 text-right">
-                                            <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <div className="flex items-center justify-end gap-1.5">
                                                 <button
                                                     onClick={() => handleNavigateToDepartmentDetail(dept.id)}
                                                     className="p-1.5 text-slate-400 hover:text-[#9d4300] bg-white hover:bg-orange-50 rounded shadow-sm border border-transparent transition-all"
@@ -162,7 +152,11 @@ export function DepartmentList({ departments, onAdd, onExport }: DepartmentListP
                                                 >
                                                     <span className="material-symbols-outlined text-base">open_in_new</span>
                                                 </button>
-                                                <button className="p-1.5 text-slate-400 hover:text-[#9d4300] bg-white hover:bg-orange-50 rounded shadow-sm border border-transparent transition-all">
+                                                <button
+                                                    onClick={() => onEdit?.(dept)}
+                                                    className="p-1.5 text-slate-400 hover:text-blue-600 bg-white hover:bg-blue-50 rounded shadow-sm border border-transparent transition-all"
+                                                    title="Chỉnh sửa phòng ban"
+                                                >
                                                     <span className="material-symbols-outlined text-base">edit</span>
                                                 </button>
                                                 <button className="p-1.5 text-slate-400 hover:text-red-600 bg-white hover:bg-red-50 rounded shadow-sm border border-transparent transition-all">

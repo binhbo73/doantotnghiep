@@ -8,11 +8,13 @@ import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail'
 interface DepartmentSidebarProps {
     department: Department | null
     onClose?: () => void
+    onEdit?: () => void
 }
 
 export function DepartmentSidebar({
     department,
     onClose,
+    onEdit,
 }: DepartmentSidebarProps) {
     // Fetch expanded details for the selected department
     const { data: deptDetail, loading } = useDepartmentDetail(department?.id || '')
@@ -59,8 +61,19 @@ export function DepartmentSidebar({
                     <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-[9px] font-bold uppercase rounded tracking-wider mb-1 inline-block">Đang xem chi tiết</span>
                     <h2 className="text-lg font-black text-[#0d1c2e] leading-none mb-1">{department.name}</h2>
                 </div>
-                <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100">
-                    <img alt="Team activity" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&q=80&w=200" />
+                <div className="flex items-center gap-2">
+                    {onEdit && (
+                        <button
+                            onClick={onEdit}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="Chỉnh sửa phòng ban"
+                        >
+                            <span className="material-symbols-outlined text-xl">edit</span>
+                        </button>
+                    )}
+                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100">
+                        <img alt="Team activity" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&q=80&w=200" />
+                    </div>
                 </div>
             </div>
 

@@ -31,11 +31,11 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
     // API Hook: Fetch users with pagination
     // Only call hook if we're not on page 1 OR if initialData wasn't provided
     const hookResult = useDepartmentUsers(
-        page === 1 && initialData ? '' : deptId, 
-        page, 
+        page === 1 && initialData ? '' : deptId,
+        page,
         pageSize
     );
-    
+
     // Combine local hook data with initial data
     const data = page === 1 && initialData ? initialData : hookResult.data;
     const loading = page === 1 && initialData ? false : hookResult.loading;
@@ -80,7 +80,7 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
                         {data.items.map((user: UserDetail, idx: number) => {
                             const position = POSITIONS[idx % POSITIONS.length];
                             const status = STATUSES[idx % STATUSES.length];
-                            
+
                             return (
                                 <tr key={user.id} className="group hover:bg-slate-50/50 transition-colors">
                                     <td className="px-4 py-4">
@@ -108,9 +108,7 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
                                                 <p className="text-xs font-bold text-[#0d1c2e] group-hover:text-[#9d4300] transition-colors truncate">
                                                     {user.full_name}
                                                 </p>
-                                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter mt-0.5">
-                                                    ID: #EMP-{user.id.substring(0, 3).toUpperCase()}
-                                                </p>
+
                                             </div>
                                         </div>
                                     </td>
@@ -127,7 +125,7 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
                                         </span>
                                     </td>
                                     <td className="px-4 py-2 text-right">
-                                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="flex items-center justify-end gap-2">
                                             <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-[#9d4300] hover:bg-white transition-all">
                                                 <span className="material-symbols-outlined text-base">edit</span>
                                             </button>
@@ -142,11 +140,6 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
                     </tbody>
                 </table>
             </div>
-
-            {/* Floating Action Button (Matches Stitch UI) */}
-            <button className="absolute -bottom-4 right-0 w-12 h-12 bg-[#9d4300] text-white rounded-2xl shadow-xl hover:scale-110 active:scale-95 transition-all flex items-center justify-center hover:shadow-[#9d4300]/50 z-10">
-                <span className="material-symbols-outlined text-2xl font-black">person_add</span>
-            </button>
 
             {/* Pagination */}
             {data.pagination && (

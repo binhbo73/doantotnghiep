@@ -42,18 +42,6 @@ export default function StaffTableSection({
                         ({tabs.find(t => t.id === activeTab)?.count || 0})
                     </span>
                 </div>
-
-                <div className="flex items-center gap-1.5">
-                    <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-[#e0c0b1]/30 text-slate-400 text-sm">
-                        <span className="material-symbols-outlined text-xl">filter_list</span>
-                    </button>
-                    <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-white border border-[#e0c0b1]/30 text-slate-400">
-                        <span className="material-symbols-outlined text-xl">download</span>
-                    </button>
-                    <button className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#9d4300] text-white shadow-md ml-1">
-                        <span className="material-symbols-outlined text-xl">person_add</span>
-                    </button>
-                </div>
             </div>
 
             {/* Tab Navigation - Compact */}

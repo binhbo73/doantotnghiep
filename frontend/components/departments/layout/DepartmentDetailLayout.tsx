@@ -7,6 +7,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 
 interface DepartmentDetailLayoutProps {
     children: React.ReactNode;
@@ -17,23 +18,60 @@ export default function DepartmentDetailLayout({
     children,
     deptId,
 }: DepartmentDetailLayoutProps) {
+    const pathname = usePathname();
+    const router = useRouter();
+    const isStorageTabActive = pathname.endsWith('/storage');
+
+    const handleBack = () => {
+        if (window.history.length > 1) {
+            router.back();
+            return;
+        }
+
+        router.push('/dashboard/departments');
+    };
+
     return (
         <div className="min-h-screen bg-[#f8f9ff]">
             {/* Premium Top Bar - Compact */}
             <div className="sticky top-0 z-30 bg-[#f8f9ff]/80 backdrop-blur-xl border-b border-[#e0c0b1]/10 px-6 py-2">
-                <div className="max-w-[1600px] mx-auto flex items-center justify-between">
-                    {/* Secondary Tabs */}
-                    <div className="flex items-center gap-6">
-                        <Link href={`/dashboard/departments/${deptId}`} className="relative py-2 text-xs font-black text-[#9d4300]">
-                            Phòng ban
-                            <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#9d4300] rounded-full" />
-                        </Link>
-                        <Link href={`/dashboard/departments/${deptId}/storage`} className="py-2 text-xs font-bold text-slate-400 hover:text-slate-600 transition-colors">
-                            Kho lưu trữ
-                        </Link>
+                <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                        <button
+                            type="button"
+                            onClick={handleBack}
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-[#e0c0b1]/30 bg-white/80 text-[#584237] shadow-sm transition-all hover:-translate-x-0.5 hover:bg-white hover:shadow-md"
+                            aria-label="Quay lại danh sách phòng ban"
+                        >
+                            <span className="material-symbols-outlined text-[22px]">arrow_back</span>
+                        </button>
+
+                        {/* Secondary Tabs */}
+                        <div className="flex items-center gap-6">
+                            <Link
+                                href={`/dashboard/departments/${deptId}`}
+                                className="relative py-2 text-xs font-black transition-colors"
+                                style={{ color: isStorageTabActive ? '#8b9ab6' : '#9d4300' }}
+                            >
+                                Phòng ban
+                                {!isStorageTabActive && (
+                                    <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#9d4300] rounded-full" />
+                                )}
+                            </Link>
+                            <Link
+                                href={`/dashboard/departments/${deptId}/storage`}
+                                className="relative py-2 text-xs font-black transition-colors"
+                                style={{ color: isStorageTabActive ? '#9d4300' : '#94a3b8' }}
+                            >
+                                Kho lưu trữ
+                                {isStorageTabActive && (
+                                    <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#9d4300] rounded-full" />
+                                )}
+                            </Link>
+                        </div>
                     </div>
 
-                    
+
                 </div>
             </div>
 
@@ -45,14 +83,7 @@ export default function DepartmentDetailLayout({
                 </div>
             </div>
 
-            {/* Footer */}
-            <footer className="mt-20 py-12 px-8 border-t border-[#e0c0b1]/10 bg-white/50 backdrop-blur-sm">
-                <div className="max-w-[1600px] mx-auto text-center">
-                    <p className="text-sm font-bold text-slate-300 uppercase tracking-widest">
-                        © 2026 Enterprise Knowledge Operating System • Cognitive Architect
-                    </p>
-                </div>
-            </footer>
+
         </div>
     );
 }
