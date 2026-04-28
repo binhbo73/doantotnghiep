@@ -110,10 +110,15 @@ export default function UsersPage() {
                     email: data.email,
                     first_name: data.first_name,
                     last_name: data.last_name,
+                    full_name: `${data.first_name} ${data.last_name}`.trim(),
                     department_id: data.department_id,
                     role_id: data.role_id,
                 }
-                await updateUser(editingUser.id, updatePayload)
+                // Filter out empty values
+                const filteredPayload = Object.fromEntries(
+                    Object.entries(updatePayload).filter(([_, value]) => value !== '' && value !== null)
+                ) as UpdateUserPayload
+                await updateUser(editingUser.id, filteredPayload)
                 setSuccess('Người dùng đã được cập nhật thành công')
             } else {
                 // Create new user
@@ -124,7 +129,6 @@ export default function UsersPage() {
                     last_name: data.last_name,
                     department_id: data.department_id,
                     role_id: data.role_id,
-                    password: data.password,
                 }
                 await createUser(payload)
                 setSuccess('Người dùng mới đã được tạo thành công')
@@ -156,7 +160,7 @@ export default function UsersPage() {
 
         try {
             setLoading(true)
-            await deleteUser(user.id)
+            await deleteUser(user.account_id)
             setSuccess('Người dùng đã được xóa thành công')
             setCurrentPage(1)
             fetchUsers()

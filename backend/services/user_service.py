@@ -104,10 +104,20 @@ class UserService(BaseService):
         # ⚠️ Unpack dict to kwargs vì BaseService.update(pk, **data)
         return self.update(user_id, **account_data)
 
+    @transaction.atomic
     def deactivate_account(self, user_id: int):
-        """Soft-delete tài khoản (set is_deleted=True)"""
+        """Soft-delete tài khoản và profile liên quan."""
         user = self.get_by_id(user_id)
-        self.repository.update_account(user_id, is_deleted=True)
+        deleted_at = timezone.now()
+        self.repository.update_account(user_id, is_deleted=True, deleted_at=deleted_at)
+        user.is_deleted = True
+        user.deleted_at = deleted_at
+
+        try:
+            self.profile_repository.soft_delete_profile(user_id)
+        except Exception as e:
+            logger.warning(f"Failed to soft-delete profile for account {user_id}: {str(e)}")
+
         logger.warning(f"Account {user_id} soft-deleted")
     
     def change_account_status(self, user_id: int, new_status: str, reason: str = '') -> Any:
@@ -495,6 +505,174 @@ class UserService(BaseService):
         except Exception as e:
             logger.error(f"Error updating profile: {str(e)}")
             raise
+    
+    @transaction.atomic
+    def update_user_by_admin(self, account_id: str, update_data: Dict[str, Any]) -> Any:
+        """
+        Update user (Account + Profile) by Admin.
+        ✅ CORRECT FLOW: View → Service → Repository → ORM → DB
+        
+        Handles updating multiple entities:
+        - Account fields: email, first_name, last_name, is_active
+        - Profile fields: full_name, address, birthday, metadata
+        - Department assignment
+        - Role assignment
+        
+        Business Logic:
+        1. Validate account exists by account_id
+        2. Use repositories to update:
+           a. Account (via user_repository)
+           b. UserProfile (via profile_repository)
+           c. Department (via profile update)
+           d. Role (via role_repository)
+        3. Return updated user profile with all info
+        
+        Args:
+            account_id: UUID of Account
+            update_data: Dict with fields to update
+            {
+                'email': str,
+                'first_name': str,
+                'last_name': str,
+                'is_active': bool,
+                'department_id': UUID or None,
+                'role_id': UUID,
+                'full_name': str,
+                'address': str,
+                'birthday': date,
+                'metadata': dict,
+            }
+        
+        Returns:
+            Updated UserProfile object with all associated data
+        
+        Raises:
+            ValidationError: If validation fails
+            BusinessLogicError: For business logic errors
+        """
+        try:
+            # STEP 1: Validate account exists
+            account = self.repository.get_by_id(account_id)
+            if not account:
+                raise ValidationError(f"Account {account_id} not found")
+            
+            logger.info(f"Starting admin update for account: {account_id}")
+            
+            changed_fields = []
+            
+            # STEP 2a: Update Account fields via repository
+            account_data_to_update = {}
+            if 'email' in update_data and update_data['email']:
+                account_data_to_update['email'] = update_data['email']
+                changed_fields.append('email')
+            
+            if 'first_name' in update_data and update_data['first_name']:
+                account_data_to_update['first_name'] = update_data['first_name']
+                changed_fields.append('first_name')
+            
+            if 'last_name' in update_data and update_data['last_name']:
+                account_data_to_update['last_name'] = update_data['last_name']
+                changed_fields.append('last_name')
+            
+            if 'is_active' in update_data:
+                account_data_to_update['is_active'] = update_data['is_active']
+                changed_fields.append('is_active')
+            
+            # Save account changes via repository
+            if account_data_to_update:
+                self.repository.update_account(account_id, **account_data_to_update)
+                logger.info(f"Account updated for {account_id}. Fields: {list(account_data_to_update.keys())}")
+            
+            # STEP 2b: Get/create user profile via repository
+            profile = self.profile_repository.get_profile_by_account_id(account_id)
+            if not profile:
+                from apps.users.models import UserProfile
+                profile = UserProfile.objects.create(account_id=account_id)
+                logger.info(f"Created new UserProfile for account {account_id}")
+            
+            # STEP 2c: Update profile fields and department via profile_repository
+            profile_data_to_update = {}
+
+            # Keep full_name synced with account names unless explicitly provided
+            if 'full_name' in update_data or 'first_name' in update_data or 'last_name' in update_data:
+                new_first_name = account_data_to_update.get('first_name', account.first_name)
+                new_last_name = account_data_to_update.get('last_name', account.last_name)
+                explicit_full_name = update_data.get('full_name')
+                profile_data_to_update['full_name'] = (
+                    explicit_full_name.strip()
+                    if isinstance(explicit_full_name, str) and explicit_full_name.strip()
+                    else f"{new_first_name} {new_last_name}".strip()
+                )
+                changed_fields.append('full_name')
+            
+            # Profile fields
+            profile_allowed_fields = ['address', 'birthday', 'metadata']
+            for field in profile_allowed_fields:
+                if field in update_data and update_data[field] is not None:
+                    profile_data_to_update[field] = update_data[field]
+                    changed_fields.append(field)
+            
+            # Department field
+            if 'department_id' in update_data:
+                dept_id = update_data['department_id']
+                if dept_id:
+                    # Validate department exists via repository
+                    department = self.department_repository.get_by_id(dept_id)
+                    if not department:
+                        raise ValidationError(f"Department {dept_id} not found")
+                    profile_data_to_update['department_id'] = dept_id
+                else:
+                    profile_data_to_update['department_id'] = None
+                changed_fields.append('department_id')
+            
+            # Save profile changes via repository
+            if profile_data_to_update:
+                for field, value in profile_data_to_update.items():
+                    setattr(profile, field, value)
+                profile.save(update_fields=list(profile_data_to_update.keys()) + ['updated_at'])
+                logger.info(f"Profile updated for {account_id}. Fields: {list(profile_data_to_update.keys())}")
+            
+            # STEP 2d: Update role via user_repository if provided
+            if 'role_id' in update_data:
+                role_id = update_data['role_id']
+                if role_id:
+                    try:
+                        # Validate role exists via repository
+                        role = self.role_repository.get_by_id(role_id)
+                        if not role:
+                            raise ValidationError(f"Role {role_id} not found")
+                        
+                        # Get old roles via user_repository
+                        old_roles = self.repository.get_all_account_roles(account_id)
+                        
+                        # Remove old roles via user_repository
+                        for old_role in old_roles:
+                            self.repository.delete_account_role(account_id, old_role.role_id)
+                        
+                        # Add new role via user_repository
+                        self.repository.create_account_role(
+                            account_id, 
+                            role_id, 
+                            notes='Updated by admin'
+                        )
+                        changed_fields.append('role_id')
+                        logger.info(f"Role updated for {account_id}. New role: {role_id}")
+                    except ValidationError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error updating role for {account_id}: {str(e)}")
+                        raise BusinessLogicError(f"Failed to update role: {str(e)}")
+            
+            logger.info(f"✅ Admin update completed for account {account_id}. Changed fields: {changed_fields}")
+            
+            # Return updated profile
+            return profile
+        
+        except (ValidationError, BusinessLogicError):
+            raise
+        except Exception as e:
+            logger.error(f"Error in update_user_by_admin for {account_id}: {str(e)}", exc_info=True)
+            raise BusinessLogicError(f"Failed to update user: {str(e)}")
     
     @transaction.atomic
     def upload_avatar(self, user_id, avatar_file) -> str:

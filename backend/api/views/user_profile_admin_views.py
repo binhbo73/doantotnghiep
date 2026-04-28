@@ -26,6 +26,7 @@ from api.serializers.base import ResponseBuilder
 from api.serializers.user_profile_serializers import (
     UserProfileReadSerializer,
     UserProfileWriteSerializer,
+    AdminUserProfileUpdateSerializer,
     EnhancedUserProfileReadSerializer,
 )
 from services.user_service import UserService
@@ -249,25 +250,55 @@ class UserProfileAdminDetailView(APIView):
     
     @transaction.atomic
     def patch(self, request, user_id):
-        """Update user profile"""
+        """
+        Update user profile with admin capabilities.
+        ✅ CORRECT FLOW: View → Service → Repository → ORM → DB
+        
+        Supports updating:
+        - email: Update account email
+        - first_name: Update account first name
+        - last_name: Update account last name
+        - department_id: Change department
+        - role_id: Change role
+        - is_active: Activate/deactivate account
+        - full_name: Update profile full name
+        - address: Update profile address
+        - birthday: Update profile birthday
+        """
         try:
-            # SERIALIZER LAYER: Validate request data
-            serializer = UserProfileWriteSerializer(data=request.data, partial=True)
+            # Resolve current profile/account first so serializer can validate against the real account
+            current_profile = self.user_service.get_user_profile(user_id)
+            current_account_id = str(current_profile.account_id)
+            current_email = current_profile.account.email
+
+            # SERIALIZER LAYER: Validate request data with admin serializer
+            serializer = AdminUserProfileUpdateSerializer(
+                data=request.data,
+                partial=True,
+                context={
+                    'user_id': user_id,
+                    'account_id': current_account_id,
+                    'current_email': current_email,
+                }
+            )
             
             if not serializer.is_valid():
+                logger.warning(f"Validation errors for user {user_id}: {serializer.errors}")
                 return Response(
                     ResponseBuilder.error(
                         message="Validation failed",
-                        errors=serializer.errors
+                        data=serializer.errors
                     ),
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
             validated_data = serializer.validated_data
+            logger.info(f"Validated data for update: {validated_data}")
             
-            # SERVICE LAYER: Update profile through service
-            updated_profile = self.user_service.update_user_profile(
-                user_id,
+            # SERVICE LAYER: Use service method to handle update (not direct ORM)
+            # ✅ Service handles: account, profile, department, role through repositories
+            updated_profile = self.user_service.update_user_by_admin(
+                current_account_id,
                 validated_data
             )
             
@@ -279,14 +310,14 @@ class UserProfileAdminDetailView(APIView):
                     account=request.user,
                     action='UPDATE_USER_PROFILE',
                     resource_id=str(updated_profile.id),
-                    query_text=f"Admin updated user profile {user_id}. Fields: {', '.join(changed_fields)}",
+                    query_text=f"Admin updated user {user_id}. Fields: {', '.join(changed_fields)}",
                     request=request
                 )
             except Exception as e:
                 logger.error(f"Failed to log user profile update: {str(e)}")
             
             # Return updated profile
-            response_serializer = UserProfileReadSerializer(updated_profile)
+            response_serializer = EnhancedUserProfileReadSerializer(updated_profile)
             return Response(
                 ResponseBuilder.updated(
                     data=response_serializer.data,
@@ -297,6 +328,12 @@ class UserProfileAdminDetailView(APIView):
         
         except ValidationError as e:
             logger.warning(f"Validation error updating user {user_id}: {str(e)}")
+            return Response(
+                ResponseBuilder.error(message=str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except BusinessLogicError as e:
+            logger.warning(f"Business logic error updating user {user_id}: {str(e)}")
             return Response(
                 ResponseBuilder.error(message=str(e)),
                 status=status.HTTP_400_BAD_REQUEST

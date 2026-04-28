@@ -71,7 +71,6 @@ export interface CreateUserPayload {
     last_name: string
     department_id: string
     role_id: string
-    password?: string
 }
 
 /**
@@ -81,6 +80,7 @@ export interface UpdateUserPayload {
     email?: string
     first_name?: string
     last_name?: string
+    full_name?: string
     department_id?: string
     role_id?: string
     is_active?: boolean
@@ -169,14 +169,13 @@ export async function createUser(payload: CreateUserPayload): Promise<User> {
     try {
         console.log('📤 Creating user:', payload.email)
 
-        const response = await api.post<UserResponse>('/users', {
+        const response = await api.post<UserResponse>('/accounts/create', {
             username: payload.username,
             email: payload.email,
             first_name: payload.first_name,
             last_name: payload.last_name,
             department_id: payload.department_id,
             role_id: payload.role_id,
-            password: payload.password,
         })
 
         if (!response.success) {
@@ -194,13 +193,13 @@ export async function createUser(payload: CreateUserPayload): Promise<User> {
 
 /**
  * Update user details
- * PUT /api/v1/users/{id}
+ * PATCH /api/v1/users/{id}
  */
 export async function updateUser(userId: string, payload: UpdateUserPayload): Promise<User> {
     try {
         console.log('📤 Updating user:', userId)
 
-        const response = await api.put<UserResponse>(`/users/${userId}`, payload)
+        const response = await api.patch<UserResponse>(`/users/${userId}`, payload)
 
         if (!response.success) {
             throw new Error(response.message || 'Failed to update user')
@@ -217,14 +216,14 @@ export async function updateUser(userId: string, payload: UpdateUserPayload): Pr
 
 /**
  * Delete user
- * DELETE /api/v1/users/{id}
+ * DELETE /api/v1/accounts/{id}
  */
-export async function deleteUser(userId: string): Promise<void> {
+export async function deleteUser(accountId: string): Promise<void> {
     try {
-        console.log('📤 Deleting user:', userId)
+        console.log('📤 Deleting user account:', accountId)
 
         const response = await api.delete<{ success: boolean; message?: string }>(
-            `/users/${userId}`
+            `/accounts/${accountId}`
         )
 
         if (!response.success) {
@@ -248,7 +247,11 @@ export async function updateUsersStatus(
     isActive: boolean
 ): Promise<{ updated_count: number }> {
     try {
-        const response = await api.patch<{ success: boolean; data: { updated_count: number } }>(
+        const response = await api.patch<{
+            success: boolean
+            message?: string
+            data: { updated_count: number }
+        }>(
             '/users/bulk/status',
             {
                 user_ids: userIds,
@@ -276,6 +279,7 @@ export async function resetUserPassword(userId: string): Promise<{ temporary_pas
     try {
         const response = await api.post<{
             success: boolean
+            message?: string
             data: { temporary_password: string }
         }>(`/users/${userId}/reset-password`, {})
 

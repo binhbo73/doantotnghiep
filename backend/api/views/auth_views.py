@@ -378,9 +378,14 @@ class UserProfileView(APIView):
             # ⚠️ GHI AUDIT LOG
             try:
                 from apps.operations.models import AuditLog
-                action_desc = f"Account {user.username} deleted by admin {request.user.username}" if user_id else f"User {user.username} self-deleted their account"
+                is_admin_delete = account_id is not None
+                action_desc = (
+                    f"Account {user.username} deleted by admin {request.user.username}"
+                    if is_admin_delete
+                    else f"User {user.username} self-deleted their account"
+                )
                 AuditLog.log_action(
-                    account=request.user if user_id else user,
+                    account=request.user if is_admin_delete else user,
                     action='DEACTIVATE_ACCOUNT',
                     resource_id=str(user.id),
                     query_text=action_desc,

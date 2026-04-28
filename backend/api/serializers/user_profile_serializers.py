@@ -267,6 +267,97 @@ class UserProfileWriteSerializer(serializers.ModelSerializer):
         return instance
 
 
+class AdminUserProfileUpdateSerializer(serializers.Serializer):
+    """
+    Write serializer for Admin User Profile Update.
+    Used for: PATCH /api/v1/users/{user_id}/ (admin endpoint)
+    
+    Allows admin to update user's complete profile:
+    - email (Account username)
+    - first_name (Account first_name)
+    - last_name (Account last_name)
+    - department_id (UserProfile department)
+    - role_id (via Account roles)
+    - is_active (Account is_active status)
+    
+    This is different from UserProfileWriteSerializer which is for users updating their own profile.
+    """
+    email = serializers.EmailField(required=False, allow_blank=False)
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=False)
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=False)
+    full_name = serializers.CharField(max_length=100, required=False, allow_blank=False)
+    department_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    role_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    is_active = serializers.BooleanField(required=False)
+    
+    def validate_email(self, value):
+        """Validate email is unique"""
+        if not value:
+            return value
+        from django.contrib.auth import get_user_model
+        Account = get_user_model()
+        # Use account_id/current_email passed from the view (route user_id is profile id)
+        account_id = self.context.get('account_id') if self.context else None
+        current_email = self.context.get('current_email') if self.context else None
+
+        # If the email is unchanged for the current account, allow it.
+        if current_email and current_email == value:
+            return value
+
+        if account_id:
+            if Account.objects.filter(email=value).exclude(id=account_id).exists():
+                raise serializers.ValidationError("Email này đã được sử dụng")
+        else:
+            if Account.objects.filter(email=value).exists():
+                raise serializers.ValidationError("Email này đã được sử dụng")
+        return value
+    
+    def validate_first_name(self, value):
+        """Validate first_name"""
+        if not value:
+            return value
+        if not value.strip():
+            raise serializers.ValidationError("Tên không được để trống")
+        return value.strip()
+    
+    def validate_last_name(self, value):
+        """Validate last_name"""
+        if not value:
+            return value
+        if not value.strip():
+            raise serializers.ValidationError("Họ không được để trống")
+        return value.strip()
+
+    def validate_full_name(self, value):
+        """Validate full_name"""
+        if not value:
+            return value
+        if not value.strip():
+            raise serializers.ValidationError("Họ và tên không được để trống")
+        return value.strip()
+    
+    def validate_department_id(self, value):
+        """Validate and convert department_id to UUID"""
+        if not value:
+            return None
+        from uuid import UUID
+        try:
+            return str(UUID(str(value)))
+        except (ValueError, TypeError):
+            raise serializers.ValidationError("department_id phải là UUID hợp lệ")
+    
+    def validate_role_id(self, value):
+        """Validate and convert role_id to UUID"""
+        if not value or value == '':
+            return None
+        from uuid import UUID
+        try:
+            return str(UUID(str(value)))
+        except (ValueError, TypeError):
+            raise serializers.ValidationError("role_id phải là UUID hợp lệ")
+    
+
+
 class UserProfileAvatarSerializer(serializers.Serializer):
     """
     Serializer for avatar upload endpoint.

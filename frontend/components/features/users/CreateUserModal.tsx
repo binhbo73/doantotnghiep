@@ -26,7 +26,6 @@ export interface CreateUserFormData {
     last_name: string
     department_id: string
     role_id: string
-    password?: string
 }
 
 export function CreateUserModal({
@@ -43,7 +42,6 @@ export function CreateUserModal({
         last_name: '',
         department_id: '',
         role_id: '',
-        password: '',
     })
     const [error, setError] = useState('')
     const [success, setSuccess] = useState('')
@@ -83,8 +81,8 @@ export function CreateUserModal({
                 email: editingUser.email,
                 first_name: editingUser.first_name,
                 last_name: editingUser.last_name,
-                department_id: editingUser.department_id || '',
-                role_id: editingUser.roles && editingUser.roles.length > 0 ? editingUser.roles[0].id : '',
+                department_id: editingUser.department_id ? String(editingUser.department_id) : '',
+                role_id: editingUser.roles && editingUser.roles.length > 0 ? String(editingUser.roles[0].id) : '',
             })
         } else {
             setFormData({
@@ -94,12 +92,26 @@ export function CreateUserModal({
                 last_name: '',
                 department_id: '',
                 role_id: '',
-                password: '',
             })
         }
         setError('')
         setSuccess('')
     }, [editingUser, isOpen])
+
+    // Update department_id when departments load, in case it wasn't available initially
+    useEffect(() => {
+        if (editingUser && departments.length > 0 && !formData.department_id && editingUser.department_name) {
+            const matchedDept = departments.find(
+                (dept) => dept.name === editingUser.department_name
+            )
+            if (matchedDept) {
+                setFormData((prev) => ({
+                    ...prev,
+                    department_id: String(matchedDept.id),
+                }))
+            }
+        }
+    }, [departments, editingUser, formData.department_id])
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -109,11 +121,6 @@ export function CreateUserModal({
         try {
             if (!formData.username || !formData.email || !formData.first_name) {
                 setError('Vui lòng điền tất cả các trường bắt buộc')
-                return
-            }
-
-            if (!editingUser && !formData.password) {
-                setError('Vui lòng nhập mật khẩu cho người dùng mới')
                 return
             }
 
@@ -145,11 +152,12 @@ export function CreateUserModal({
             {/* Dialog */}
             <div className="fixed inset-0 flex items-center justify-center z-50 p-4 overflow-y-auto">
                 <div
-                    className="bg-white rounded-xl shadow-2xl w-full max-w-sm my-8"
+                    className="bg-white rounded-xl shadow-2xl w-full max-w-2xl my-8"
                     style={{
                         backgroundColor: '#ffffff',
                         borderRadius: '12px',
                         boxShadow: '0 20px 60px rgba(0, 0, 0, 0.15)',
+                        maxWidth: 'min(42rem, calc(100vw - 2rem))',
                     }}
                 >
                     {/* Header */}
@@ -217,7 +225,7 @@ export function CreateUserModal({
                         )}
 
                         {/* Username & Email Row */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             <div className="space-y-2">
                                 <label
                                     className="text-sm font-semibold"
@@ -267,7 +275,7 @@ export function CreateUserModal({
                         </div>
 
                         {/* First Name & Last Name Row */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             <div className="space-y-2">
                                 <label
                                     className="text-sm font-semibold"
@@ -319,7 +327,7 @@ export function CreateUserModal({
                         </div>
 
                         {/* Department & Role Row */}
-                        <div className="grid grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             <div className="space-y-2">
                                 <label
                                     className="text-sm font-semibold"
@@ -381,9 +389,6 @@ export function CreateUserModal({
                                 </select>
                             </div>
                         </div>
-
-                        {/* Password - Only show for new users */}
-
 
                         {/* Warning Message */}
                         {!editingUser && (

@@ -55,7 +55,7 @@ export default function UserDetailPage() {
 
         try {
             setIsDeleting(true)
-            await deleteUser(userId)
+            await deleteUser(user.account_id)
             router.push('/dashboard/users')
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to delete user'
@@ -76,10 +76,15 @@ export default function UserDetailPage() {
                 email: data.email,
                 first_name: data.first_name,
                 last_name: data.last_name,
+                full_name: `${data.first_name} ${data.last_name}`.trim(),
                 department_id: data.department_id,
                 role_id: data.role_id,
             }
-            await updateUser(userId, updatePayload)
+            // Filter out empty values
+            const filteredPayload = Object.fromEntries(
+                Object.entries(updatePayload).filter(([_, value]) => value !== '' && value !== null)
+            ) as UpdateUserPayload
+            await updateUser(userId, filteredPayload)
             setIsEditModalOpen(false)
             // Refresh user data
             const updatedUser = await getUserById(userId)
