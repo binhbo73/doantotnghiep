@@ -2,7 +2,9 @@
 
 import React, { useState, useMemo } from 'react'
 import { PermissionGroup } from './PermissionGroup'
+import { CreatePermissionDialog } from './dialogs'
 import { usePermissions } from '@/hooks/usePermissions'
+import { createPermission } from '@/services/iam'
 import { IamPermission } from '@/types/api'
 
 interface PermissionMatrixProps {
@@ -31,12 +33,13 @@ const RESOURCE_GROUP_MAP: Record<string, { name: string; icon: string }> = {
 }
 
 export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
-    const { permissions, loading: permissionsLoading, error: permissionsError, useFallback: permissionsUseFallback } = usePermissions({
+    const { permissions, loading: permissionsLoading, error: permissionsError, useFallback: permissionsUseFallback, refetch } = usePermissions({
         page: 1,
         page_size: 100,
     })
 
     const [checkedPermissions, setCheckedPermissions] = useState<Set<string>>(new Set())
+    const [isCreatePermissionDialogOpen, setIsCreatePermissionDialogOpen] = useState(false)
 
     // Group permissions by resource
     const permissionGroups = useMemo<PermissionGroupData[]>(() => {
@@ -81,6 +84,30 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
         return selectedRoleId || 'Admin'
     }
 
+    const handleCreatePermission = async (data: {
+        code: string
+        name: string
+        resource: string
+        action: string
+        description: string
+    }) => {
+        try {
+            await createPermission({
+                code: data.code.trim().toLowerCase(),
+                name: data.name.trim(),
+                resource: data.resource.trim(),
+                action: data.action.trim(),
+                description: data.description.trim(),
+            })
+
+            setIsCreatePermissionDialogOpen(false)
+            await refetch()
+        } catch (error) {
+            console.error('Failed to create permission:', error)
+            throw error
+        }
+    }
+
     if (permissionsLoading) {
         return <div style={{ color: '#727785' }}>Đang tải quyền hạn...</div>
     }
@@ -92,16 +119,7 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
     return (
         <div>
             {/* Status Message */}
-            <div className="mb-3 p-3 rounded-lg flex items-center justify-between" style={{ backgroundColor: '#f0f3ff' }}>
-                <p className="text-xs" style={{ color: '#0058be' }}>
-                    <span className="font-medium">Đang chỉnh sửa quyền hạn cho vai trò:</span> {getRoleName()}
-                </p>
-                {permissionsUseFallback && (
-                    <span className="text-xs px-2 py-1 rounded" style={{ color: '#f57c00', backgroundColor: '#fff3e0' }}>
-                        Demo Data
-                    </span>
-                )}
-            </div>
+           
 
             {/* Permission Groups */}
             {permissionGroups.length === 0 ? (
@@ -109,7 +127,7 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
                     Không có quyền hạn nào
                 </div>
             ) : (
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
                     {permissionGroups.map((group) => (
                         <PermissionGroup
                             key={group.id}
@@ -121,9 +139,11 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
             )}
 
             {/* Additional Actions */}
-            <div className="flex flex-col sm:flex-row gap-2 mt-4">
+            <div className="flex flex-col sm:flex-row gap-1.5 mt-3">
                 <button
-                    className="px-4 py-2 rounded-lg font-medium text-sm transition flex items-center gap-2"
+                    type="button"
+                    onClick={() => setIsCreatePermissionDialogOpen(true)}
+                    className="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center gap-1.5"
                     style={{
                         backgroundColor: '#ffffff',
                         color: '#0058be',
@@ -133,7 +153,7 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
                     <span>🔐</span> Tạo quyền hạn mới
                 </button>
                 <button
-                    className="px-4 py-2 rounded-lg font-medium text-sm transition flex items-center gap-2"
+                    className="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center gap-1.5"
                     style={{
                         backgroundColor: '#ffffff',
                         color: '#0058be',
@@ -144,16 +164,24 @@ export function PermissionMatrix({ selectedRoleId }: PermissionMatrixProps) {
                 </button>
             </div>
 
+            <CreatePermissionDialog
+                isOpen={isCreatePermissionDialogOpen}
+                onClose={() => setIsCreatePermissionDialogOpen(false)}
+                onSubmit={handleCreatePermission}
+            />
+
             {/* Bottom Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-2 mt-3 pt-3 border-t" style={{ borderColor: '#dce2f3' }}>
+            <div className="flex flex-col sm:flex-row gap-1.5 mt-2 pt-2 border-t" style={{ borderColor: '#dce2f3' }}>
                 <button
-                    className="px-4 py-2 rounded-lg font-medium text-sm text-white transition flex items-center gap-2"
+                    type="button"
+                    className="px-3 py-1.5 rounded-lg font-medium text-xs text-white transition flex items-center gap-1.5"
                     style={{ backgroundColor: '#0058be' }}
                 >
                     <span>💾</span> Lưu thay đổi
                 </button>
                 <button
-                    className="px-4 py-2 rounded-lg font-medium text-sm transition flex items-center gap-2"
+                    type="button"
+                    className="px-3 py-1.5 rounded-lg font-medium text-xs transition flex items-center gap-1.5"
                     style={{
                         backgroundColor: '#f0f3ff',
                         color: '#0058be',

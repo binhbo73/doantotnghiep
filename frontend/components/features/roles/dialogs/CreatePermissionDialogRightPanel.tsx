@@ -6,18 +6,25 @@ import { X } from 'lucide-react'
 interface CreatePermissionDialogRightPanelProps {
     onClose: () => void
     onSubmit?: (data: {
+        code: string
         name: string
         description: string
-        category: string
+        resource: string
+        action: string
     }) => void
 }
 
-const PERMISSION_CATEGORIES = [
+const PERMISSION_RESOURCES = [
     { value: 'users', label: '👤 Người dùng' },
     { value: 'documents', label: '📄 Tài liệu' },
-    { value: 'ai_chat', label: '💬 AI/Chat' },
+    { value: 'chat', label: '💬 AI/Chat' },
     { value: 'system', label: '⚙️ Hệ thống' },
     { value: 'audit', label: '📊 Kiểm toán' },
+    { value: 'folders', label: '📁 Thư mục' },
+    { value: 'roles', label: '👑 Vai trò' },
+    { value: 'permissions', label: '🔐 Quyền hạn' },
+    { value: 'embeddings', label: '🧠 Embeddings' },
+    { value: 'rag', label: '🔍 RAG' },
 ]
 
 export function CreatePermissionDialogRightPanel({
@@ -25,14 +32,23 @@ export function CreatePermissionDialogRightPanel({
     onSubmit,
 }: CreatePermissionDialogRightPanelProps) {
     const [formData, setFormData] = useState({
+        code: '',
         name: '',
         description: '',
-        category: 'users',
+        resource: 'documents',
+        action: 'approve',
     })
+    const [isSubmitting, setIsSubmitting] = useState(false)
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
-        onSubmit?.(formData)
+
+        try {
+            setIsSubmitting(true)
+            await onSubmit?.(formData)
+        } finally {
+            setIsSubmitting(false)
+        }
     }
 
     return (
@@ -45,7 +61,26 @@ export function CreatePermissionDialogRightPanel({
                 <X size={24} style={{ color: '#151c27' }} />
             </button>
 
-            <form onSubmit={handleSubmit} className="flex flex-col gap-6 h-full overflow-y-auto pr-2">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-5 h-full overflow-y-auto pr-2">
+                {/* Permission Code */}
+                <div>
+                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                        Mã quyền hạn
+                    </label>
+                    <input
+                        type="text"
+                        value={formData.code}
+                        onChange={(e) => setFormData({ ...formData, code: e.target.value.toLowerCase() })}
+                        placeholder="document_approve"
+                        className="w-full px-4 py-3 rounded-lg border text-sm"
+                        style={{
+                            borderColor: '#dce2f3',
+                            color: '#151c27',
+                        }}
+                        required
+                    />
+                </div>
+
                 {/* Permission Name */}
                 <div>
                     <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
@@ -68,23 +103,42 @@ export function CreatePermissionDialogRightPanel({
                 {/* Category */}
                 <div>
                     <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
-                        Danh mục
+                        Resource
                     </label>
                     <select
-                        value={formData.category}
-                        onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                        value={formData.resource}
+                        onChange={(e) => setFormData({ ...formData, resource: e.target.value })}
                         className="w-full px-4 py-3 rounded-lg border text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
                         }}
                     >
-                        {PERMISSION_CATEGORIES.map((cat) => (
+                        {PERMISSION_RESOURCES.map((cat) => (
                             <option key={cat.value} value={cat.value}>
                                 {cat.label}
                             </option>
                         ))}
                     </select>
+                </div>
+
+                {/* Action */}
+                <div>
+                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                        Action
+                    </label>
+                    <input
+                        type="text"
+                        value={formData.action}
+                        onChange={(e) => setFormData({ ...formData, action: e.target.value.toLowerCase() })}
+                        placeholder="approve"
+                        className="w-full px-4 py-3 rounded-lg border text-sm"
+                        style={{
+                            borderColor: '#dce2f3',
+                            color: '#151c27',
+                        }}
+                        required
+                    />
                 </div>
 
                 {/* Description */}
@@ -125,10 +179,11 @@ export function CreatePermissionDialogRightPanel({
                     </button>
                     <button
                         type="submit"
-                        className="flex-1 px-6 py-3 rounded-lg font-medium text-white transition"
+                        disabled={isSubmitting}
+                        className="flex-1 px-6 py-3 rounded-lg font-medium text-white transition disabled:opacity-60"
                         style={{ backgroundColor: '#b75b00' }}
                     >
-                        Tạo quyền hạn
+                        {isSubmitting ? 'Đang tạo...' : 'Tạo quyền hạn'}
                     </button>
                 </div>
             </form>

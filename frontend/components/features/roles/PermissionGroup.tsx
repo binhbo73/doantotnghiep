@@ -20,16 +20,16 @@ interface PermissionGroupProps {
 export function PermissionGroup({ group, onToggle }: PermissionGroupProps) {
     return (
         <div
-            className="p-4 rounded-lg border flex flex-col h-full"
+            className="p-3 rounded-lg border flex flex-col h-full"
             style={{
                 backgroundColor: '#ffffff',
                 borderColor: '#dce2f3',
-                minHeight: '300px',
+                minHeight: '240px',
             }}
         >
             {/* Group Header */}
-            <h3 className="font-bold text-sm mb-4 flex items-center gap-2 pb-3 border-b" style={{ color: '#151c27', borderColor: '#e0e4f0' }}>
-                <span className="text-xl">{group.icon}</span>
+            <h3 className="font-bold text-xs mb-2 flex items-center gap-1.5 pb-2 border-b" style={{ color: '#151c27', borderColor: '#e0e4f0' }}>
+                <span className="text-lg">{group.icon}</span>
                 <span className="flex-1">{group.name}</span>
             </h3>
 
@@ -38,9 +38,9 @@ export function PermissionGroup({ group, onToggle }: PermissionGroupProps) {
                 {group.permissions.map((permission) => (
                     <label
                         key={permission.id}
-                        className="flex items-start gap-3 p-3 rounded cursor-pointer transition border border-transparent hover:border-blue-100 hover:bg-blue-50"
+                        className="flex items-start gap-2 p-2 rounded cursor-pointer transition border border-transparent hover:border-blue-100 hover:bg-blue-50"
                         style={{
-                            minHeight: '60px',
+                            minHeight: '45px',
                             backgroundColor: permission.checked ? '#f0f7ff' : 'transparent',
                         }}
                     >
@@ -55,7 +55,7 @@ export function PermissionGroup({ group, onToggle }: PermissionGroupProps) {
                         />
                         <div className="flex-1 min-w-0">
                             <span
-                                className="text-xs block font-medium"
+                                className="text-xs block font-medium line-clamp-1 break-words"
                                 style={{
                                     color: permission.checked ? '#0058be' : '#151c27',
                                 }}
@@ -64,7 +64,7 @@ export function PermissionGroup({ group, onToggle }: PermissionGroupProps) {
                             </span>
                             {permission.description && (
                                 <span
-                                    className="text-xs block mt-0.5"
+                                    className="text-xs block mt-0.5 line-clamp-2 break-words"
                                     style={{ color: '#727785' }}
                                 >
                                     {permission.description}

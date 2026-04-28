@@ -45,8 +45,10 @@ export function useUpdateRole(): UseUpdateRoleReturn {
             if (payload.description !== undefined) {
                 updatePayload.description = payload.description
             }
+            if ('permission_ids' in payload) {
+                updatePayload.permission_ids = Array.from(new Set(payload.permission_ids ?? []))
+            }
 
-            // First update role basic info
             const response = await api.put<any>(
                 `/iam/roles/${roleId}`,
                 updatePayload
@@ -57,40 +59,6 @@ export function useUpdateRole(): UseUpdateRoleReturn {
 
             if (!roleData || !roleData.id) {
                 throw new Error('Không nhận được dữ liệu vai trò từ server')
-            }
-
-            // Then update permissions if provided
-            if (payload.permission_ids && payload.permission_ids.length > 0) {
-                // First remove all existing permissions
-                try {
-                    // Get current permissions to delete them
-                    const permResponse = await api.get<any>(`/iam/roles/${roleId}/permissions`)
-                    const currentPermissions = Array.isArray(permResponse) ? permResponse : (permResponse?.data || [])
-
-                    // Delete each permission
-                    for (const perm of currentPermissions) {
-                        try {
-                            await api.delete<any>(`/iam/roles/${roleId}/permissions/${perm.id}`)
-                        } catch (e) {
-                            // Continue if delete fails (might already be deleted)
-                            console.warn('Warning: Failed to delete permission:', perm.id, e)
-                        }
-                    }
-                } catch (e) {
-                    // Continue if fetching current permissions fails
-                    console.warn('Warning: Failed to fetch current permissions:', e)
-                }
-
-                // Then add new permissions
-                for (const permissionId of payload.permission_ids) {
-                    try {
-                        await api.post<any>(`/iam/roles/${roleId}/permissions`, {
-                            permission_id: permissionId,
-                        })
-                    } catch (e) {
-                        console.error('Failed to add permission:', permissionId, e)
-                    }
-                }
             }
 
             return roleData as UpdateRoleResponse

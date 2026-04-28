@@ -115,19 +115,19 @@ export function RoleManagementPage() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f9f9ff' }}>
       {/* Header Section */}
-      <div className="px-4 lg:px-6 py-4 border-b" style={{ borderColor: '#dce2f3', backgroundColor: '#ffffff' }}>
+      <div className="px-3 lg:px-4 py-2 border-b" style={{ borderColor: '#dce2f3', backgroundColor: '#ffffff' }}>
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <h1 className="text-2xl font-bold mb-1" style={{ color: '#151c27' }}>
+            <h1 className="text-lg font-bold mb-0.5" style={{ color: '#151c27' }}>
               Cấu hình Quyền hạn Hệ thống
             </h1>
-            <p className="text-sm" style={{ color: '#727785' }}>
+            <p className="text-xs" style={{ color: '#727785' }}>
               Xây dựng kiến trúc bảo mật và phân tầng truy cập cho doanh nghiệp của bạn.
             </p>
           </div>
           <button
             onClick={() => setIsCreateDialogOpen(true)}
-            className="px-4 py-2 rounded-lg font-medium text-sm text-white transition whitespace-nowrap ml-4 flex items-center gap-2"
+            className="px-3 py-1.5 rounded-lg font-medium text-xs text-white transition whitespace-nowrap ml-4 flex items-center gap-1"
             style={{ backgroundColor: '#b75b00' }}
           >
             <span>➕</span> Tạo vai trò mới
@@ -136,13 +136,13 @@ export function RoleManagementPage() {
       </div>
 
       {/* Main Content */}
-      <div className="px-4 lg:px-6 py-4 space-y-4">
+      <div className="px-3 lg:px-4 py-2 space-y-2">
         {/* Current Roles Section */}
         <div>
-          <h2 className="text-lg font-bold mb-3 flex items-center gap-2" style={{ color: '#151c27' }}>
+          <h2 className="text-base font-bold mb-2 flex items-center gap-1.5" style={{ color: '#151c27' }}>
             <span>Vai trò hiện tại ({roles.length})</span>
             {rolesUseFallback && (
-              <span className="text-xs px-2 py-1 rounded" style={{ color: '#f57c00', backgroundColor: '#fff3e0' }}>
+              <span className="text-xs px-1.5 py-0.5 rounded" style={{ color: '#f57c00', backgroundColor: '#fff3e0' }}>
                 Demo Data
               </span>
             )}
@@ -168,7 +168,7 @@ export function RoleManagementPage() {
 
         {/* Permission Matrix Section */}
         <div>
-          <h2 className="text-lg font-bold mb-3" style={{ color: '#151c27' }}>
+          <h2 className="text-base font-bold mb-2" style={{ color: '#151c27' }}>
             Danh mục Quyền hạn Hệ thống
           </h2>
           <PermissionMatrix selectedRoleId={selectedRoleId} />

@@ -8,10 +8,12 @@ interface CreatePermissionDialogProps {
     isOpen: boolean
     onClose: () => void
     onSubmit?: (data: {
+        code: string
         name: string
         description: string
-        category: string
-    }) => void
+        resource: string
+        action: string
+    }) => void | Promise<void>
 }
 
 export function CreatePermissionDialog({

@@ -37,11 +37,11 @@ export function RoleCarousel({
                 className="overflow-x-auto scroll-smooth"
                 style={{ scrollBehavior: 'smooth' }}
             >
-                <div className="flex gap-3 pb-2">
+                <div className="flex gap-2 pb-2">
                     {roles.map((role) => (
                         <div
                             key={role.id}
-                            className="flex-shrink-0 w-64 cursor-pointer"
+                            className="flex-shrink-0 w-56 cursor-pointer"
                             onClick={() => onSelectRole(role.id)}
                         >
                             <RoleCard

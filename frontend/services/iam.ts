@@ -162,6 +162,7 @@ export async function fetchPermissionDetail(permissionId: string) {
 
 export async function createPermission(data: {
     code: string
+    name: string
     resource: string
     action: string
     description?: string
