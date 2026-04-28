@@ -71,6 +71,13 @@ from api.views.chat_views import (
     MessageDetailView,
     MessageFeedbackView,
 )
+from api.views.audit_views import (
+    AuditLogListView,
+    AuditLogDetailView,
+    RecentActivityView,
+    AuditLogStatisticsView,
+    AuditLogExportView,
+)
 
 # UUID regex pattern for URL routing
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -310,5 +317,29 @@ urlpatterns = [
         'get': 'retrieve',
         'delete': 'destroy'
     }), name="chat_message_feedback"),
+    
+    # ============================================================
+    # AUDIT LOG ENDPOINTS (Phase 6 - Compliance & Activity Tracking)
+    # Audit logs for compliance, security audit, and activity tracking
+    # ============================================================
+    # Special routes MUST come BEFORE {id} pattern to be matched first
+    # GET /api/v1/audit-logs/recent-activity - Get recent activities (for dashboard)
+    re_path(r"^audit-logs/recent-activity/?$", RecentActivityView.as_view(), name="audit_logs_recent_activity"),
+    
+    # GET /api/v1/audit-logs/statistics - Get audit statistics
+    re_path(r"^audit-logs/statistics/?$", AuditLogStatisticsView.as_view(), name="audit_logs_statistics"),
+    
+    # GET /api/v1/audit-logs/export - Export audit logs as CSV/JSON
+    re_path(r"^audit-logs/export/?$", AuditLogExportView.as_view(), name="audit_logs_export"),
+    
+    # GET /api/v1/audit-logs - List audit logs (with filtering)
+    re_path(r"^audit-logs/?$", AuditLogListView.as_view({
+        'get': 'list'
+    }), name="audit_logs_list"),
+    
+    # GET /api/v1/audit-logs/{id} - Get audit log details
+    re_path(rf"^audit-logs/(?P<id>{UUID_PATTERN})/?$", AuditLogDetailView.as_view({
+        'get': 'retrieve'
+    }), name="audit_logs_detail"),
 ]
 

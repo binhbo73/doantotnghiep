@@ -93,36 +93,7 @@ export default function DashboardPage() {
         },
     ]
 
-    // Recent activities
-    const recentActivities = [
-        {
-            id: 'activity1',
-            title: 'Lê Thị Mai đã cập nhật "Tài liệu Marketing Q3"',
-            description: 'Được chia sẻ bởi Team Marketing',
-            time: 'Hôm nay',
-            avatarChar: 'L',
-            avatarBgColor: '#0058be',
-            category: 'Marketing',
-        },
-        {
-            id: 'activity2',
-            title: 'Hệ thống đã phát hiện "12 yêu cầu truy cập mới"',
-            description: 'Cần được phê duyệt bởi quản trị viên',
-            time: '3 giờ trước',
-            avatarChar: 'H',
-            avatarBgColor: '#10b981',
-            category: 'System',
-        },
-        {
-            id: 'activity3',
-            title: 'Trần Anh Quân đã gáp nhật "Dự án: Tối ưu UX/UI"',
-            description: 'Được cập nhật bởi Product Team',
-            time: '5 giờ trước',
-            avatarChar: 'T',
-            avatarBgColor: '#924700',
-            category: 'Product',
-        },
-    ]
+    // Recent activities: removed hardcoded demo data so component fetches real audit logs
 
     const handleExport = () => {
         console.log('Export report')
@@ -286,10 +257,7 @@ export default function DashboardPage() {
                             border: '1px solid #dce2f3',
                         }}
                     >
-                        <RecentActivityCard
-                            activities={recentActivities}
-                            onViewAll={handleViewAllActivities}
-                        />
+                        <RecentActivityCard onViewAll={handleViewAllActivities} />
                     </div>
                 </section>
 
