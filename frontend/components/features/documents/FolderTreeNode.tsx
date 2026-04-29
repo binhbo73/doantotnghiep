@@ -12,6 +12,7 @@ interface FolderTreeNodeProps {
     onToggleFolder: (folderId: string) => void
     onSelectDocument: (doc: FolderDocumentResponse, folder: FolderResponse) => void
     searchQuery?: string
+    departmentMap?: Record<string, string>
 }
 
 // ─── Helper: Match search query ────────────────────────────
@@ -40,6 +41,20 @@ function getFolderIcon(name: string, isExpanded: boolean): { icon: string; color
     }
 }
 
+function toSafeCount(primary: number | undefined, fallback: number | undefined): number {
+    const primaryCount = Number(primary)
+    if (Number.isFinite(primaryCount) && primaryCount > 0) {
+        return primaryCount
+    }
+
+    const fallbackCount = Number(fallback)
+    if (Number.isFinite(fallbackCount) && fallbackCount > 0) {
+        return fallbackCount
+    }
+
+    return 0
+}
+
 export function FolderTreeNodeComponent({
     node,
     depth,
@@ -47,6 +62,7 @@ export function FolderTreeNodeComponent({
     onToggleFolder,
     onSelectDocument,
     searchQuery = '',
+    departmentMap = {},
 }: FolderTreeNodeProps) {
     const { folder, children, documents, isExpanded, isLoadingDocs, hasLoadedDocs } = node
     const folderIcon = getFolderIcon(folder.name, isExpanded)
@@ -72,6 +88,8 @@ export function FolderTreeNodeComponent({
 
     const hasContent = children.length > 0 || (hasLoadedDocs && documents.length > 0)
     const docCount = documents.length
+    const subfolderCount = toSafeCount(children.length, folder.subfolder_count)
+    const documentCount = toSafeCount(docCount, folder.document_count)
 
     return (
         <div className="relative">
@@ -84,8 +102,8 @@ export function FolderTreeNodeComponent({
             <div
                 onClick={() => onToggleFolder(folder.id)}
                 className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 select-none ${isExpanded
-                        ? 'bg-[#fef5ed] border border-[#f97316]/20'
-                        : 'hover:bg-white hover:shadow-sm border border-transparent'
+                    ? 'bg-[#fef5ed] border border-[#f97316]/20'
+                    : 'hover:bg-white hover:shadow-sm border border-transparent'
                     }`}
             >
                 {/* Expand/Collapse Chevron */}
@@ -110,23 +128,32 @@ export function FolderTreeNodeComponent({
                             {folder.description}
                         </p>
                     )}
+                    {/* Department badge */}
+                    {folder.department_id && departmentMap[folder.department_id] && (
+                        <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 text-[10px] rounded text-slate-500 border border-slate-100">
+                                <span className="material-symbols-outlined text-[12px]">apartment</span>
+                                <span className="truncate max-w-[140px]">{departmentMap[folder.department_id]}</span>
+                            </span>
+                        </div>
+                    )}
                 </div>
 
                 {/* Counts Badges */}
                 <div className="flex items-center gap-1.5 ml-auto">
                     {/* Sub-folder Count */}
-                    {(children.length || folder.subfolder_count) > 0 && (
+                    {subfolderCount > 0 && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-50 rounded-md text-[10px] font-bold text-blue-600 border border-blue-100">
                             <span className="material-symbols-outlined text-[10px]">folder_zip</span>
-                            {children.length || folder.subfolder_count}
+                            {subfolderCount}
                         </span>
                     )}
 
                     {/* Document Count */}
-                    {(docCount || folder.document_count) > 0 && (
+                    {documentCount > 0 && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-slate-100 rounded-md text-[10px] font-medium text-slate-500 border border-slate-200">
                             <span className="material-symbols-outlined text-[10px]">description</span>
-                            {docCount || folder.document_count}
+                            {documentCount}
                         </span>
                     )}
                 </div>
@@ -156,6 +183,7 @@ export function FolderTreeNodeComponent({
                                 onToggleFolder={onToggleFolder}
                                 onSelectDocument={onSelectDocument}
                                 searchQuery={searchQuery}
+                                departmentMap={departmentMap}
                             />
                         ))}
                     </div>
@@ -171,6 +199,8 @@ export function FolderTreeNodeComponent({
                                         document={doc}
                                         isSelected={selectedDocId === doc.id}
                                         onSelect={() => onSelectDocument(doc, folder)}
+                                        folderName={folder.name}
+                                        departmentName={departmentMap[doc.department || doc.department_id || '']}
                                     />
                                 </div>
                             ))}

@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
-import { getFileIcon, formatFileSize, getStatusConfig } from './DocumentRow'
+import { getFileIcon, formatFileSize } from './DocumentRow'
 
 interface DocumentSidebarProps {
     document: FolderDocumentResponse | null
@@ -39,13 +39,12 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     }
 
     const fileIcon = getFileIcon(document.file_type)
-    const statusConfig = getStatusConfig(document.status)
     const displayName = document.original_name || document.filename
 
     return (
-        <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl overflow-hidden">
+        <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl overflow-hidden flex flex-col max-h-[85vh]">
             {/* Preview Header */}
-            <div className="relative h-44 bg-gradient-to-br from-[#f97316]/10 via-[#fff7ed] to-[#fef3c7] flex items-center justify-center">
+            <div className="relative h-44 bg-gradient-to-br from-[#f97316]/10 via-[#fff7ed] to-[#fef3c7] flex items-center justify-center flex-shrink-0">
                 {/* Close button */}
                 <button
                     onClick={onClose}
@@ -63,7 +62,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
             </div>
 
             {/* Content */}
-            <div className="p-5 space-y-5">
+            <div className="p-5 space-y-5 overflow-y-auto flex-1">
                 {/* File Name & Type */}
                 <div>
                     <h3 className="text-sm font-bold text-slate-900 leading-snug mb-1">{displayName}</h3>
@@ -77,15 +76,6 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                     <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Chi tiết tài liệu</h4>
 
                     <div className="grid grid-cols-2 gap-3">
-                        {/* Status */}
-                        <div className="space-y-1">
-                            <span className="text-[10px] font-medium text-slate-400">Trạng thái</span>
-                            <div className={`flex items-center gap-1 text-xs font-semibold ${statusConfig.color}`}>
-                                <span className="material-symbols-outlined text-xs">{statusConfig.icon}</span>
-                                {statusConfig.label}
-                            </div>
-                        </div>
-
                         {/* File Type */}
                         <div className="space-y-1">
                             <span className="text-[10px] font-medium text-slate-400">Định dạng</span>
@@ -127,13 +117,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                     <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">AI Processing</h4>
                     <div className="p-3 bg-gradient-to-r from-violet-50 to-indigo-50 rounded-xl border border-violet-100">
                         <p className="text-[11px] text-violet-700 leading-relaxed">
-                            {document.status === 'completed'
-                                ? 'Tài liệu đã được AI phân tích và trích xuất tri thức. Có thể sử dụng cho RAG và tìm kiếm ngữ nghĩa.'
-                                : document.status === 'processing'
-                                ? 'AI đang phân tích và trích xuất dữ liệu từ tài liệu...'
-                                : document.status === 'failed'
-                                ? 'Không thể xử lý tài liệu. Vui lòng thử tải lại.'
-                                : 'Tài liệu đang chờ được AI xử lý và phân tích.'}
+                            Tài liệu đang sẵn sàng cho các tác vụ tìm kiếm và khai thác tri thức trong hệ thống.
                         </p>
                     </div>
                 </div>

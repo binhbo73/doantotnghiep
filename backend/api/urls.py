@@ -47,6 +47,7 @@ from api.views.folder_views import (
     FolderListCreateView,
     FolderDetailView,
     FolderMoveView,
+    FolderPermissionsListView,
     FolderPermissionsView,
     FolderPermissionDetailView
 )
@@ -57,6 +58,7 @@ from api.views.document_views import (
     DocumentUpdateView,
     DocumentDeleteView,
     DocumentDownloadView,
+    DocumentPermissionsListView,
     DocumentPermissionsView,
     DocumentPermissionDetailView,
     DocumentStatusView,
@@ -219,6 +221,9 @@ urlpatterns = [
     # GET /api/v1/folders/{folder_id}/documents - Get documents in folder (paginated)
     # Hybrid Approach: List documents in specific folder
     re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/documents/?$", FolderDocumentsView.as_view(), name="folder_documents"),
+
+    # GET /api/v1/folders/permissions - Get all manageable folders with their ACL entries
+    re_path(r"^folders/permissions/?$", FolderPermissionsListView.as_view(), name="folder_permissions_overview"),
     
     # Folder permissions endpoints
     re_path(rf"^folders/(?P<folder_id>{UUID_PATTERN})/permissions/?$", 
@@ -236,6 +241,9 @@ urlpatterns = [
     # 2. POST /api/v1/documents/upload - Upload file + AsyncTask submission
     re_path(r"^documents/?$", DocumentListView.as_view(), name="document_list"),
     re_path(r"^documents/upload/?$", DocumentUploadView.as_view(), name="document_upload"),
+
+    # GET /api/v1/documents/permissions - Get all manageable documents with their ACL entries
+    re_path(r"^documents/permissions/?$", DocumentPermissionsListView.as_view(), name="document_permissions_overview"),
     
     # 3. GET /api/v1/documents/{doc_id} - Get document detail
     # 4. PUT /api/v1/documents/{doc_id} - Update document metadata

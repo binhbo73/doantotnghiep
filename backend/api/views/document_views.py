@@ -49,6 +49,7 @@ from api.serializers.document_serializers import (
     DocumentCreateSerializer,
     DocumentChunkSerializer,
     DocumentUploadSerializer,
+    DocumentPermissionListSerializer,
 )
 from api.serializers.folder_serializers import FolderPermissionSerializer
 
@@ -653,6 +654,64 @@ class DocumentDownloadView(APIView):
 # ============================================================
 # 7. Document Permissions (GET|POST)
 # ============================================================
+
+
+class DocumentPermissionsListView(APIView):
+    """
+    API Endpoint: GET /api/v1/documents/permissions
+
+    Return a paginated list of documents with their ACL entries.
+    """
+
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request):
+        try:
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 20))
+            search = request.query_params.get('search')
+
+            if page < 1 or page_size < 1 or page_size > 100:
+                return Response(
+                    ResponseBuilder.error(
+                        "Invalid pagination (page >= 1, 1 <= page_size <= 100)",
+                        status_code=400
+                    ),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            service = DocumentService()
+            result = service.list_document_permissions(
+                user_id=request.user.id,
+                page=page,
+                page_size=page_size,
+                search=search,
+            )
+
+            serialized_items = DocumentPermissionListSerializer(result['items'], many=True).data
+
+            return Response(
+                ResponseBuilder.paginated(
+                    items=serialized_items,
+                    page=page,
+                    page_size=page_size,
+                    total_items=result['pagination']['total_items'],
+                    message="Document permissions retrieved",
+                ),
+                status=status.HTTP_200_OK,
+            )
+
+        except NotFoundError as e:
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            logger.error(f"Error retrieving document permissions list: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve document permissions", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 class DocumentPermissionsView(APIView):
     """

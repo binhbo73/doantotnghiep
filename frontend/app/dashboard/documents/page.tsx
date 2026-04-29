@@ -1,15 +1,53 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import {
     DocumentHeader,
     FolderTree,
     OtherDocuments,
     DocumentSidebar,
 } from '@/components/features/documents'
+import { DocumentsPermissionsWorkspace } from '@/components/features/documents/DocumentsPermissionsWorkspace'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 
+type DocumentsPageTab = 'browse' | 'permissions'
+
+function PageTabButton({
+    active,
+    label,
+    icon,
+    description,
+    onClick,
+}: {
+    active: boolean
+    label: string
+    icon: string
+    description: string
+    onClick: () => void
+}) {
+    return (
+        <button
+            onClick={onClick}
+            className={`flex-1 rounded-2xl px-3.5 py-2.5 text-left transition-all ${active
+                ? 'bg-[#9d4300] text-white shadow-lg shadow-[#9d4300]/20'
+                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+        >
+            <div className="flex items-center gap-2.5">
+                <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${active ? 'bg-white/15' : 'bg-[#fff3e0]'}`}>
+                    <span className={`material-symbols-outlined text-base ${active ? 'text-white' : 'text-[#9d4300]'}`}>{icon}</span>
+                </div>
+                <div className="min-w-0">
+                    <p className="text-[13px] font-bold">{label}</p>
+                </div>
+            </div>
+        </button>
+    )
+}
+
 export default function DocumentsPage() {
+    const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
+
     const {
         tree,
         otherDocuments,
@@ -74,28 +112,59 @@ export default function DocumentsPage() {
                     totalDocuments={stats.totalDocuments}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
+                    compact={activeTab === 'permissions'}
                 />
 
-                {/* Main Content: Tree + Sidebar */}
-                <div className="grid grid-cols-12 gap-6">
-                    {/* Folder Tree */}
-                    <FolderTree
+                {/* Page Tabs */}
+                <div className={`mb-4 rounded-[1.5rem] border border-slate-100 bg-white p-1.5 shadow-sm ${activeTab === 'permissions' ? 'mb-3' : 'md:mb-6'}`}>
+                    <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2">
+                        <PageTabButton
+                            active={activeTab === 'browse'}
+                            label="Duyệt tài liệu"
+                            icon="folder_open"
+                            description="Xem cây thư mục và mở tài liệu trong kho"
+                            onClick={() => setActiveTab('browse')}
+                        />
+                        <PageTabButton
+                            active={activeTab === 'permissions'}
+                            label="Phân quyền"
+                            icon="admin_panel_settings"
+                            description="Quản lý folder_permission và document_permission"
+                            onClick={() => setActiveTab('permissions')}
+                        />
+                    </div>
+                </div>
+
+                {activeTab === 'browse' ? (
+                    /* Main Content: Tree + Sidebar */
+                    <div className="grid grid-cols-12 gap-6">
+                        {/* Folder Tree */}
+                        <FolderTree
+                            tree={tree}
+                            otherDocuments={otherDocuments}
+                            selectedDocId={selectedDocument?.id || null}
+                            onToggleFolder={toggleFolder}
+                            onToggleOtherDocuments={toggleOtherDocuments}
+                            onSelectDocument={selectDocument}
+                            searchQuery={searchQuery}
+                        />
+
+                        {/* Document Detail Sidebar */}
+                        <DocumentSidebar
+                            document={selectedDocument}
+                            folder={selectedFolder}
+                            onClose={clearSelection}
+                        />
+                    </div>
+                ) : (
+                    <DocumentsPermissionsWorkspace
                         tree={tree}
                         otherDocuments={otherDocuments}
-                        selectedDocId={selectedDocument?.id || null}
-                        onToggleFolder={toggleFolder}
-                        onToggleOtherDocuments={toggleOtherDocuments}
+                        selectedDocument={selectedDocument}
+                        selectedFolder={selectedFolder}
                         onSelectDocument={selectDocument}
-                        searchQuery={searchQuery}
                     />
-
-                    {/* Document Detail Sidebar */}
-                    <DocumentSidebar
-                        document={selectedDocument}
-                        folder={selectedFolder}
-                        onClose={clearSelection}
-                    />
-                </div>
+                )}
             </main>
 
             {/* Floating Upload Button */}

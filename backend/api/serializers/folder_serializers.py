@@ -425,6 +425,18 @@ class FolderPermissionSerializer(serializers.Serializer):
         return None
 
 
+class FolderPermissionListItemSerializer(serializers.Serializer):
+    """Read-only serializer for a single folder permission row in list views."""
+
+    id = serializers.UUIDField()
+    subject_type = serializers.CharField()
+    subject_id = serializers.CharField()
+    subject_name = serializers.CharField(allow_null=True, required=False)
+    permission = serializers.CharField()
+    is_active = serializers.BooleanField()
+    created_at = serializers.DateTimeField(allow_null=True, required=False)
+
+
 class FolderPermissionListSerializer(serializers.Serializer):
     """
     Serializer for listing all permissions for a folder.
@@ -451,4 +463,4 @@ class FolderPermissionListSerializer(serializers.Serializer):
     folder_id = serializers.UUIDField()
     folder_name = serializers.CharField()
     access_scope = serializers.CharField()
-    permissions = FolderPermissionSerializer(many=True, read_only=True)
+    permissions = FolderPermissionListItemSerializer(many=True, read_only=True)

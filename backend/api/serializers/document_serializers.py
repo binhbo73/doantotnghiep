@@ -108,6 +108,29 @@ class DocumentUploadSerializer(serializers.Serializer):
         return [t.strip() for t in value.split(',') if t.strip()]
 
 
+class DocumentPermissionListItemSerializer(serializers.Serializer):
+    """Read-only serializer for a single document permission row in list views."""
+
+    id = serializers.UUIDField()
+    subject_type = serializers.CharField()
+    subject_id = serializers.CharField()
+    subject_name = serializers.CharField(allow_null=True, required=False)
+    permission = serializers.CharField()
+    permission_precedence = serializers.CharField(required=False)
+    is_active = serializers.BooleanField()
+    created_at = serializers.DateTimeField(allow_null=True, required=False)
+
+
+class DocumentPermissionListSerializer(serializers.Serializer):
+    """Serializer for document permission overview rows."""
+
+    document_id = serializers.UUIDField()
+    document_name = serializers.CharField()
+    access_scope = serializers.CharField()
+    permissions = DocumentPermissionListItemSerializer(many=True, read_only=True)
+    total_permissions = serializers.IntegerField()
+
+
 class DocumentCreateSerializer(serializers.ModelSerializer):
     """Serializer cho cập nhật metadata document (không có file)"""
     tags = serializers.ListField(

@@ -5,6 +5,8 @@ import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { FolderTreeNodeComponent } from './FolderTreeNode'
 import { OtherDocuments } from './OtherDocuments'
+import { useDepartmentOptions } from '@/hooks/useDepartmentOptions'
+import { useMemo } from 'react'
 
 interface FolderTreeProps {
     tree: FolderTreeNode[]
@@ -25,10 +27,30 @@ export function FolderTree({
     onSelectDocument,
     searchQuery = '',
 }: FolderTreeProps) {
+    // Load department list to show readable department names
+    const { data: departments } = useDepartmentOptions()
+
+    const departmentMap = useMemo(() => {
+        const map: Record<string, string> = {}
+        if (!departments) return map
+
+        const recurse = (items: any[]) => {
+            items.forEach((d) => {
+                if (!d) return
+                map[d.id] = d.name
+                if (Array.isArray(d.sub_departments) && d.sub_departments.length > 0) {
+                    recurse(d.sub_departments)
+                }
+            })
+        }
+
+        recurse(departments as any[])
+        return map
+    }, [departments])
     return (
-        <div className="col-span-12 lg:col-span-7 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl overflow-hidden">
+        <div className="col-span-12 lg:col-span-7 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl overflow-hidden flex flex-col max-h-[85vh]">
             {/* Header */}
-            <div className="flex justify-between items-center px-5 py-3.5 border-b border-slate-100">
+            <div className="flex justify-between items-center px-5 py-3.5 border-b border-slate-100 flex-shrink-0">
                 <h2 className="text-sm font-bold flex items-center gap-2 text-slate-800">
                     <span className="material-symbols-outlined text-[#9d4300] text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>
                         account_tree
@@ -47,7 +69,7 @@ export function FolderTree({
             </div>
 
             {/* Tree Content */}
-            <div className="p-4 space-y-1.5 max-h-[calc(100vh-280px)] overflow-y-auto scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
+            <div className="p-4 space-y-1.5 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
                 {tree.length > 0 || otherDocuments.departmentDocs.length > 0 || otherDocuments.personalDocs.length > 0 || otherDocuments.companyDocs.length > 0 ? (
                     <>
                         {/* Folder Tree */}
@@ -62,6 +84,7 @@ export function FolderTree({
                                         onToggleFolder={onToggleFolder}
                                         onSelectDocument={onSelectDocument}
                                         searchQuery={searchQuery}
+                                        departmentMap={departmentMap}
                                     />
                                 ))}
                             </div>
@@ -72,8 +95,9 @@ export function FolderTree({
                             otherDocuments={otherDocuments}
                             selectedDocId={selectedDocId}
                             onToggle={onToggleOtherDocuments}
-                            onSelectDocument={(doc) => onSelectDocument(doc)}
+                            onSelectDocument={(doc, folder) => onSelectDocument(doc, folder as any)}
                             searchQuery={searchQuery}
+                            departmentMap={departmentMap}
                         />
                     </>
                 ) : (

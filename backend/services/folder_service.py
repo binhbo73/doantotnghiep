@@ -889,6 +889,114 @@ class FolderService(BaseService):
         except Exception as e:
             logger.error(f"Error getting folder permissions: {str(e)}")
             raise BusinessLogicError(f"Failed to get permissions: {str(e)}")
+
+    def list_folder_permissions(
+        self,
+        user_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        search: str = None,
+    ) -> Dict[str, Any]:
+        """
+        Get a paginated list of folders with their active permissions.
+
+        Only folders the current user can manage are included.
+        """
+        try:
+            Account = apps.get_model('users', 'Account')
+            user = self.Account.objects.filter(id=user_id).first()
+            if not user:
+                raise NotFoundError(f"User {user_id} not found")
+
+            accessible_folders = self.repository.get_accessible_folders(
+                user_id=user_id,
+                user_department_id=user.department_id if hasattr(user, 'department_id') else None,
+                is_admin=getattr(user, 'is_superuser', False),
+            )
+
+            managed_folders = []
+            for folder in accessible_folders:
+                if str(folder.created_by_id) == str(user_id) or self.check_folder_permission(folder.id, user_id, 'write'):
+                    if search and search.strip():
+                        if search.lower() not in (folder.name or '').lower():
+                            continue
+                    managed_folders.append(folder)
+
+            # Filter managed folders to only those that have active permission rows
+            FolderPermission = apps.get_model('documents', 'FolderPermission')
+            Role = apps.get_model('users', 'Role')
+
+            managed_with_perms = []
+            for folder in managed_folders:
+                perm_exists = FolderPermission.objects.filter(
+                    folder_id=folder.id,
+                    is_deleted=False,
+                    is_active=True,
+                ).exists()
+                if perm_exists:
+                    if search and search.strip():
+                        if search.lower() not in (folder.name or '').lower():
+                            continue
+                    managed_with_perms.append(folder)
+
+            total_items = len(managed_with_perms)
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            page_folders = managed_with_perms[start_index:end_index]
+
+            items = []
+            for folder in page_folders:
+                permissions = FolderPermission.objects.filter(
+                    folder_id=folder.id,
+                    is_deleted=False,
+                    is_active=True,
+                ).order_by('created_at')
+
+                permission_rows = []
+                for perm in permissions:
+                    subject_name = None
+                    if perm.subject_type == 'account':
+                        account = Account.objects.filter(id=perm.subject_id).first()
+                        subject_name = account.username if account else 'Unknown'
+                    elif perm.subject_type == 'role':
+                        role = Role.objects.filter(id=perm.subject_id).first()
+                        subject_name = role.name if role else 'Unknown'
+
+                    permission_rows.append({
+                        'id': str(perm.id),
+                        'subject_type': perm.subject_type,
+                        'subject_id': perm.subject_id,
+                        'subject_name': subject_name,
+                        'permission': perm.permission,
+                        'is_active': perm.is_active,
+                        'created_at': perm.created_at.isoformat() if perm.created_at else None,
+                    })
+
+                items.append({
+                    'folder_id': str(folder.id),
+                    'folder_name': folder.name,
+                    'access_scope': folder.access_scope,
+                    'permissions': permission_rows,
+                    'total_permissions': len(permission_rows),
+                })
+
+            return {
+                'items': items,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_items': total_items,
+                    'total_pages': (total_items + page_size - 1) // page_size,
+                    'has_next': end_index < total_items,
+                    'has_prev': page > 1,
+                },
+            }
+
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error(f"Error listing folder permissions: {str(e)}")
+            raise BusinessLogicError(f"Failed to list folder permissions: {str(e)}")
     
     @transaction.atomic
     def revoke_permission_by_subject(

@@ -31,6 +31,7 @@ export interface FolderResponse {
 export interface FolderDocumentResponse {
     id: string
     original_name: string
+    filename?: string
     file_type: string
     file_size: number
     status: 'pending' | 'processing' | 'completed' | 'failed'

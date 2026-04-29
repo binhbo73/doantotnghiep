@@ -11,6 +11,7 @@ interface OtherDocumentsProps {
     onToggle: () => void
     onSelectDocument: (doc: FolderDocumentResponse, folder?: FolderResponse) => void
     searchQuery?: string
+    departmentMap?: Record<string, string>
 }
 
 interface CategoryProps {
@@ -21,6 +22,7 @@ interface CategoryProps {
     selectedDocId: string | null
     onSelectDocument: (doc: FolderDocumentResponse) => void
     searchQuery?: string
+    departmentMap?: Record<string, string>
 }
 
 // Category sub-component
@@ -32,6 +34,8 @@ function DocumentCategory({
     selectedDocId,
     onSelectDocument,
     searchQuery = '',
+    // departmentMap not used here directly; DocumentRow will receive departmentName via parent
+    departmentMap = {},
 }: CategoryProps) {
     // Filter documents based on search
     const filtered = documents.filter((doc) =>
@@ -58,6 +62,7 @@ function DocumentCategory({
                         isSelected={selectedDocId === doc.id}
                         onSelect={() => onSelectDocument(doc)}
                         depth={2}
+                        departmentName={departmentMap[doc.department || doc.department_id || '']}
                     />
                 ))}
             </div>
@@ -71,6 +76,7 @@ export function OtherDocuments({
     onToggle,
     onSelectDocument,
     searchQuery = '',
+    departmentMap = {},
 }: OtherDocumentsProps) {
     const totalOtherDocs =
         otherDocuments.departmentDocs.length +
@@ -117,6 +123,7 @@ export function OtherDocuments({
                             selectedDocId={selectedDocId}
                             onSelectDocument={onSelectDocument}
                             searchQuery={searchQuery}
+                            departmentMap={departmentMap}
                         />
                     )}
 
@@ -130,6 +137,7 @@ export function OtherDocuments({
                             selectedDocId={selectedDocId}
                             onSelectDocument={onSelectDocument}
                             searchQuery={searchQuery}
+                            departmentMap={departmentMap}
                         />
                     )}
 
@@ -143,6 +151,7 @@ export function OtherDocuments({
                             selectedDocId={selectedDocId}
                             onSelectDocument={onSelectDocument}
                             searchQuery={searchQuery}
+                            departmentMap={departmentMap}
                         />
                     )}
                 </div>

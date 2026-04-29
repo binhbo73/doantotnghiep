@@ -882,6 +882,110 @@ class DocumentService(BaseService):
                 raise
             logger.error(f"Error getting permissions: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to get permissions for document {doc_id}")
+
+    def list_document_permissions(
+        self,
+        user_id: int,
+        page: int = 1,
+        page_size: int = 20,
+        search: str = None,
+    ) -> Dict[str, Any]:
+        """
+        Get a paginated list of documents with their active permissions.
+
+        Only documents the current user can manage are included.
+        """
+        from django.apps import apps
+
+        try:
+            Account = apps.get_model('users', 'Account')
+            accessible_documents = self.document_repo.get_accessible_documents(user_id)
+
+            managed_documents = []
+            for document in accessible_documents:
+                if not self.document_repo.check_user_can_write(str(document.id), user_id):
+                    continue
+
+                if search and search.strip():
+                    if search.lower() not in (document.original_name or '').lower():
+                        continue
+
+                managed_documents.append(document)
+
+            # Only include documents that have active permission rows
+            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+            Role = apps.get_model('users', 'Role')
+
+            managed_with_perms = []
+            for document in managed_documents:
+                perm_exists = DocumentPermission.objects.filter(
+                    document_id=document.id,
+                    is_deleted=False,
+                    is_active=True,
+                ).exists()
+                if perm_exists:
+                    if search and search.strip():
+                        if search.lower() not in (document.original_name or '').lower():
+                            continue
+                    managed_with_perms.append(document)
+
+            total_items = len(managed_with_perms)
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            page_documents = managed_with_perms[start_index:end_index]
+
+            items = []
+            for document in page_documents:
+                permissions = DocumentPermission.objects.filter(
+                    document_id=document.id,
+                    is_deleted=False,
+                    is_active=True,
+                ).order_by('created_at')
+
+                permission_rows = []
+                for perm in permissions:
+                    subject_name = None
+                    if perm.subject_type == 'account':
+                        account = Account.objects.filter(id=perm.subject_id).first()
+                        subject_name = account.username if account else 'Unknown'
+                    elif perm.subject_type == 'role':
+                        role = Role.objects.filter(id=perm.subject_id).first()
+                        subject_name = role.name if role else 'Unknown'
+
+                    permission_rows.append({
+                        'id': str(perm.id),
+                        'subject_type': perm.subject_type,
+                        'subject_id': perm.subject_id,
+                        'subject_name': subject_name,
+                        'permission': perm.permission,
+                        'permission_precedence': perm.permission_precedence,
+                        'is_active': perm.is_active,
+                        'created_at': perm.created_at.isoformat() if perm.created_at else None,
+                    })
+
+                items.append({
+                    'document_id': str(document.id),
+                    'document_name': document.original_name,
+                    'access_scope': document.access_scope,
+                    'permissions': permission_rows,
+                    'total_permissions': len(permission_rows),
+                })
+
+            return {
+                'items': items,
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_items': total_items,
+                    'total_pages': (total_items + page_size - 1) // page_size,
+                    'has_next': end_index < total_items,
+                    'has_prev': page > 1,
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Error listing document permissions: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to list permissions for documents")
     
     def grant_document_permission(
         self,
