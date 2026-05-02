@@ -133,7 +133,7 @@ export default function HomePage() {
                     <div className="flex flex-col md:flex-row gap-12 justify-between items-center relative">
                         <div className="hidden md:block absolute top-1/2 left-0 w-full h-[1px] bg-[#e0c0b1]/30 -z-10"></div>
                         {[
-                            { icon: '📤', title: 'Tải tài liệu', desc: 'Hỗ trợ PDF, Docx, Wiki, và cơ sở dữ liệu SQL.' },
+                            { icon: '📤', title: 'Tải tài liệu', desc: 'Hỗ trợ PDF, Docx, Excel, Wiki, và cơ sở dữ liệu SQL.' },
                             { icon: '🧠', title: 'AI xử lý', desc: 'Tự động phân loại, tóm tắt và nhúng vào không gian vector.' },
                             { icon: '💬', title: 'Tra cứu & Trò chuyện', desc: 'Tìm kiếm câu trả lời ngay lập tức dựa trên dữ liệu thật.' }
                         ].map((step, idx) => (

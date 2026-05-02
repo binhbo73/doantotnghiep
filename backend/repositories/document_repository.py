@@ -171,15 +171,23 @@ class DocumentRepository(BaseRepository):
             can_read = repo.check_user_can_read(doc_id, user_id)
         """
         try:
-            from apps.users.models import Account
+            from apps.users.models import Account, UserProfile
             doc = self.get_by_id(doc_id)
             user = Account.objects.get(pk=user_id)
+            user_department_id = None
+            try:
+                user_profile = UserProfile.objects.get(account_id=user_id)
+                user_department_id = user_profile.department_id
+            except UserProfile.DoesNotExist:
+                user_department_id = None
             
             # Check access scope
             if doc.access_scope == 'personal':
                 return doc.uploader_id == user_id
             elif doc.access_scope == 'department':
-                return doc.department_id == user.department_id
+                if user_department_id is None:
+                    return True
+                return doc.department_id == user_department_id
             else:  # company
                 return True
         except Exception as e:

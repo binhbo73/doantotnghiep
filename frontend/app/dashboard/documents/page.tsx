@@ -6,6 +6,7 @@ import {
     FolderTree,
     OtherDocuments,
     DocumentSidebar,
+    UploadDocumentModal,
 } from '@/components/features/documents'
 import { DocumentsPermissionsWorkspace } from '@/components/features/documents/DocumentsPermissionsWorkspace'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
@@ -47,6 +48,7 @@ function PageTabButton({
 
 export default function DocumentsPage() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
+    const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
 
     const {
         tree,
@@ -61,6 +63,7 @@ export default function DocumentsPage() {
         toggleOtherDocuments,
         selectDocument,
         clearSelection,
+        refetch,
         getStats,
     } = useDocumentStore()
 
@@ -169,6 +172,7 @@ export default function DocumentsPage() {
 
             {/* Floating Upload Button */}
             <button
+                onClick={() => setIsUploadModalOpen(true)}
                 className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
             >
                 <span className="material-symbols-outlined text-3xl">upload_file</span>
@@ -176,6 +180,15 @@ export default function DocumentsPage() {
                     Tải lên Tài liệu
                 </span>
             </button>
+
+            {/* Upload Modal */}
+            <UploadDocumentModal
+                isOpen={isUploadModalOpen}
+                onClose={() => setIsUploadModalOpen(false)}
+                onSuccess={() => {
+                    void refetch()
+                }}
+            />
         </div>
     )
 }

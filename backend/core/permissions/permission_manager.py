@@ -144,8 +144,16 @@ class PermissionManager:
                 logger.debug(f"User {user_id} is uploader of document {document_id}, granting {action}")
                 return True
             
+            # Load the user's department from the profile relation. Department lives
+            # on UserProfile, not on Account.
+            user_department = None
+            try:
+                user_department = user.user_profile.department if hasattr(user, 'user_profile') else None
+            except Exception:
+                user_department = None
+
             # Check permission hierarchy
-            return self._check_document_permission_hierarchy(user, document, action)
+            return self._check_document_permission_hierarchy(user, user_department, document, action)
             
         except Exception as e:
             logger.error(f"Error checking document access: {str(e)}", exc_info=True)
@@ -251,23 +259,28 @@ class PermissionManager:
             
             # Get user
             try:
-                user = Account.objects.select_related('department').get(
+                user = Account.objects.select_related('user_profile__department').get(
                     pk=user_id, is_deleted=False
                 )
             except Account.DoesNotExist:
                 logger.warning(f"User {user_id} not found for folder access check")
                 return False
+
+            try:
+                user_department = user.user_profile.department if hasattr(user, 'user_profile') else None
+            except Exception:
+                user_department = None
             
             # Department check: can access own or sub-departments
-            if not self._check_department_hierarchy(user.department, folder.department):
+            if not self._check_department_hierarchy(user_department, folder.department):
                 logger.info(
-                    f"User {user_id} (dept {user.department_id}) cannot access "
+                    f"User {user_id} (dept {getattr(user_department, 'id', None)}) cannot access "
                     f"folder {folder_id} (dept {folder.department_id})"
                 )
                 return False
             
             # Check folder inheritance
-            access_scope = self._check_folder_inheritance(user, folder)
+            access_scope = self._check_folder_inheritance(user, user_department, folder)
             return access_scope in [AccessScope.READ, AccessScope.WRITE, AccessScope.ADMIN]
             
         except Exception as e:
@@ -333,6 +346,7 @@ class PermissionManager:
     def _check_document_permission_hierarchy(
         self, 
         user: 'Account', 
+        user_department: Optional['Department'],
         document: 'Document', 
         action: str
     ) -> bool:
@@ -360,8 +374,27 @@ class PermissionManager:
             if deny_perm:
                 logger.info(f"User {user.id} has DENY permission on document {document.id}")
                 return False
+
+            # LEVEL 2: Document access scope can grant read access directly.
+            # This preserves the existing read model used by the document repository
+            # while still allowing explicit DENY to override it.
+            if action == 'read':
+                if document.access_scope == 'company':
+                    logger.debug(f"User {user.id} granted read on company-scoped document {document.id}")
+                    return True
+
+                if document.access_scope == 'department' and self._check_department_hierarchy(
+                    user_department,
+                    document.department,
+                ):
+                    logger.debug(f"User {user.id} granted read on department-scoped document {document.id}")
+                    return True
+
+                if document.access_scope == 'personal' and document.uploader_id == user.id:
+                    logger.debug(f"User {user.id} granted read on personal document {document.id}")
+                    return True
             
-            # LEVEL 2: Check explicit ALLOW on document via Repository
+            # LEVEL 3: Check explicit ALLOW on document via Repository
             allow_perm = self.perm_mgr_repo.get_document_allow_permission(document.id, user.id)
             if allow_perm:
                 # Check if permission level allows action
@@ -369,7 +402,7 @@ class PermissionManager:
                     logger.debug(f"User {user.id} has explicit permission on document {document.id}")
                     return True
             
-            # LEVEL 3: Check role-based RBAC
+            # LEVEL 4: Check role-based RBAC
             user_roles = self.perm_mgr_repo.get_user_role_ids(user.id)
             if user_roles:
                 # Check if user's role has required permission
@@ -377,9 +410,9 @@ class PermissionManager:
                     logger.debug(f"User {user.id} has role-based permission via RBAC")
                     return True
             
-            # LEVEL 4: Inherit from folder
+            # LEVEL 5: Inherit from folder
             if document.folder:
-                folder_access = self._check_folder_inheritance(user, document.folder)
+                folder_access = self._check_folder_inheritance(user, user_department, document.folder)
                 if folder_access in [AccessScope.WRITE, AccessScope.ADMIN]:
                     # WRITE/ADMIN on folder → can do all on document
                     logger.debug(f"User {user.id} has folder-level permission on parent folder")
@@ -388,7 +421,7 @@ class PermissionManager:
                     # READ on folder → only can read documents inside
                     return True
             
-            # LEVEL 5: Default = DENY
+            # LEVEL 6: Default = DENY
             logger.info(f"User {user.id} denied access ({action}) to document {document.id}: no permission found")
             return False
             
@@ -399,6 +432,7 @@ class PermissionManager:
     def _check_folder_inheritance(
         self, 
         user: 'Account', 
+        user_dept: Optional['Department'],
         folder: 'Folder'
     ) -> str:
         """
@@ -419,39 +453,77 @@ class PermissionManager:
             AccessScope: READ, WRITE, ADMIN, DENY, or NONE (default)
         """
         try:
-            user_role_ids = self.perm_mgr_repo.get_user_role_ids(user.id)
-            
-            if not user_role_ids:
-                logger.debug(f"User {user.id} has no roles")
-                return AccessScope.NONE
-            
+            user_role_ids = [str(role_id) for role_id in self.perm_mgr_repo.get_user_role_ids(user.id)]
+
             # Check current folder
             current_folder = folder
             iterations = 0
             max_iterations = 10  # Prevent infinite recursion
-            
+
             while current_folder and iterations < max_iterations:
                 iterations += 1
-                
-                # Check for explicit permission on this folder via Repository
-                perm = self.perm_mgr_repo.get_folder_permission_for_role(
-                    current_folder.id, user_role_ids
+
+                # Check direct account permission first
+                account_perm = self.perm_mgr_repo.get_folder_permission_for_subject(
+                    current_folder.id,
+                    'account',
+                    str(user.id),
                 )
-                
-                if perm:
-                    logger.debug(f"Folder {current_folder.id} has permission scope {perm.access_scope}")
-                    return perm.access_scope
-                
+                if account_perm:
+                    logger.debug(
+                        f"Folder {current_folder.id} has account permission {account_perm.permission} for user {user.id}"
+                    )
+                    return self._permission_to_scope(account_perm.permission)
+
+                # Then check any role permission on this folder
+                if user_role_ids:
+                    role_perms = self.perm_mgr_repo.get_folder_permissions_for_subject_ids(
+                        current_folder.id,
+                        'role',
+                        user_role_ids,
+                    )
+                    if role_perms.exists():
+                        strongest_perm = self._pick_strongest_folder_permission(role_perms)
+                        if strongest_perm:
+                            logger.debug(
+                                f"Folder {current_folder.id} has role permission {strongest_perm.permission} for user {user.id}"
+                            )
+                            return self._permission_to_scope(strongest_perm.permission)
+
                 # Move to parent folder
                 current_folder = current_folder.parent if hasattr(current_folder, 'parent') else None
-            
+
             # No permission found in hierarchy
             logger.debug(f"User {user.id} has no permission in folder hierarchy at {folder.id}")
             return AccessScope.NONE
-            
+
         except Exception as e:
             logger.error(f"Error checking folder inheritance: {str(e)}", exc_info=True)
             return AccessScope.NONE
+
+    def _permission_to_scope(self, permission: str) -> str:
+        """Map FolderPermission levels to AccessScope values."""
+        if permission == 'delete':
+            return AccessScope.ADMIN
+        if permission == 'write':
+            return AccessScope.WRITE
+        if permission == 'read':
+            return AccessScope.READ
+        return AccessScope.NONE
+
+    def _pick_strongest_folder_permission(self, permissions):
+        """Pick the strongest permission from a FolderPermission queryset."""
+        priority = {'read': 1, 'write': 2, 'delete': 3}
+        best_permission = None
+        best_rank = 0
+
+        for permission in permissions:
+            rank = priority.get(permission.permission, 0)
+            if rank > best_rank:
+                best_rank = rank
+                best_permission = permission
+
+        return best_permission
     
     def _check_department_hierarchy(
         self, 

@@ -306,6 +306,8 @@ class DocumentChunker:
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             'application/msword',
             'text/markdown',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+            'application/vnd.ms-excel',  # .xls
         ):
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_DOC', 240)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_DOC', 48)

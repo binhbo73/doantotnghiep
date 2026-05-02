@@ -68,6 +68,8 @@ class DocumentUploadService:
         'application/msword',
         'text/plain',
         'text/markdown',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+        'application/vnd.ms-excel',  # .xls
     }
     UPLOAD_ROOT = 'uploads'
 
@@ -175,12 +177,25 @@ class DocumentUploadService:
                 f"File '{file.name}' ({size_mb:.1f}MB) vượt giới hạn {self.MAX_FILE_SIZE_MB}MB"
             )
 
-        # Detect MIME type
+        # Detect MIME type from upload or filename extension
         mime = file.content_type or ''
-        if not mime:
+        if not mime or mime == 'application/octet-stream':
             import mimetypes
-            mime, _ = mimetypes.guess_type(file.name)
-            mime = mime or 'application/octet-stream'
+            guessed_mime, _ = mimetypes.guess_type(file.name)
+            mime = guessed_mime or mime or 'application/octet-stream'
+
+        if mime not in self.ALLOWED_MIME_TYPES:
+            _, ext = os.path.splitext(file.name.lower())
+            extension_map = {
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.xls': 'application/vnd.ms-excel',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.doc': 'application/msword',
+                '.txt': 'text/plain',
+                '.md': 'text/markdown',
+                '.pdf': 'application/pdf',
+            }
+            mime = extension_map.get(ext, mime)
 
         if mime not in self.ALLOWED_MIME_TYPES:
             raise ValidationError(
@@ -192,6 +207,35 @@ class DocumentUploadService:
         content = file.read()
         file.seek(0)
         return content, mime
+
+    def _normalize_file_type(self, file_name: str, mime_type: str) -> str:
+        """Normalize file type to extension-based labels for UI and metadata."""
+        ext = os.path.splitext(file_name)[1].lower()
+        if ext == '.md':
+            return 'markdown'
+        if ext == '.txt':
+            return 'txt'
+        if ext == '.docx':
+            return 'docx'
+        if ext == '.doc':
+            return 'doc'
+        if ext == '.pdf':
+            return 'pdf'
+        if ext == '.xlsx':
+            return 'xlsx'
+        if ext == '.xls':
+            return 'xls'
+
+        mime_map = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'application/msword': 'doc',
+            'text/plain': 'txt',
+            'text/markdown': 'markdown',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.ms-excel': 'xls',
+        }
+        return mime_map.get(mime_type, ext.lstrip('.') or 'bin')
 
     # =========================================================================
     # STEP 2 – Resolve scope
@@ -300,11 +344,13 @@ class DocumentUploadService:
         import os as _os
         ext = _os.path.splitext(file.name)[1].lstrip('.').lower() or 'bin'
 
+        normalized_type = self._normalize_file_type(file.name, file_mime)
+
         document = self.document_repo.create(
             original_name=file.name,
             filename=hashed_name,
             storage_path=storage_path,
-            file_type=file_mime,
+            file_type=normalized_type,
             file_size=len(file_content),
             mime_type=file_mime,
             uploader_id=user_id,
@@ -340,11 +386,15 @@ class DocumentUploadService:
 
     def _process_document(self, document, storage_path: str):
         """
-        Pipeline hoàn chỉnh:
+        Pipeline hoàn chỉnh (OPTIMIZED):
           Parse text → Chunk + Embed (via DocumentChunker)
         Cập nhật document.status = 'completed' | 'failed'.
+        
+        OPTIMIZATION: Measure time, handle DOCX fast-path
         """
+        import time
         doc_id = str(document.id)
+        start_time = time.time()
 
         # Đánh dấu đang xử lý
         self._update_status(document, 'processing')
@@ -352,10 +402,20 @@ class DocumentUploadService:
         try:
             # ── 5a. Parse text ────────────────────────────────────────────────
             from services.document.parser import DocumentParser
-            parser = DocumentParser()
+            parser = DocumentParser(use_cache=True)  # Enable Redis cache
+            
+            parse_start = time.time()
             try:
-                # Pass the mime type stored in DB because storage_path might lack extension
-                text, parse_meta = parser.parse_file(storage_path, file_type=document.file_type)
+                # Pass the MIME type stored in DB because storage_path might lack extension
+                text, parse_meta = parser.parse_file(storage_path, file_type=document.mime_type)
+                parse_time = time.time() - parse_start
+                
+                # Log cache status + timing
+                from_cache = parse_meta.get('from_cache', False)
+                logger.info(
+                    f"[Upload] Parsed {doc_id} ({document.file_type}): "
+                    f"{parse_time:.2f}s {'(CACHED)' if from_cache else ''}"
+                )
             except DocumentProcessingError as e:
                 logger.error(f"[Upload] Parse failed for {doc_id}: {e}")
                 self._update_status(document, 'failed', error=str(e))
@@ -386,6 +446,7 @@ class DocumentUploadService:
             document.save(update_fields=['chunking_strategy'])
             
             # chunk_and_embed handles: chunking, embedding, DB saving, Qdrant saving, and linking
+            chunk_start = time.time()
             try:
                 with transaction.atomic():
                     processed_chunks = chunker.chunk_and_embed(
@@ -400,6 +461,7 @@ class DocumentUploadService:
                             'source_name': document.original_name,
                         },
                     )
+                chunk_time = time.time() - chunk_start
             except Exception as e:
                 logger.error(f"[Upload] Chunk & Embed failed for {doc_id}: {e}")
                 self._update_status(document, 'failed', error=f"Processing error: {str(e)}")
@@ -409,16 +471,24 @@ class DocumentUploadService:
             if processed_chunks:
                 document.status = 'completed'
                 document.chunking_strategy = chunker.strategy_name
+                total_time = time.time() - start_time
+                
                 document.metadata.update({
                     'chunk_count': len(processed_chunks),
                     'word_count': parse_meta.get('word_count', 0),
                     'page_count': parse_meta.get('pages', 0),
                     'processed_at': timezone.now().isoformat(),
+                    'processing_metrics': {
+                        'parse_time_sec': round(parse_time, 2),
+                        'chunk_embed_time_sec': round(chunk_time, 2),
+                        'total_time_sec': round(total_time, 2),
+                    }
                 })
                 document.save(update_fields=['status', 'metadata'])
                 logger.info(
-                    f"[Upload] Document {doc_id} processed successfully: "
-                    f"{len(processed_chunks)} chunks embedded"
+                    f"[Upload] Document {doc_id} completed: "
+                    f"{len(processed_chunks)} chunks, "
+                    f"Parse: {parse_time:.2f}s, Embed: {chunk_time:.2f}s, Total: {total_time:.2f}s"
                 )
             else:
                 self._update_status(document, 'failed', error='Không tạo được chunk hoặc embedding nào')
@@ -427,9 +497,6 @@ class DocumentUploadService:
             logger.error(f"[Upload] Unexpected error processing {doc_id}: {e}", exc_info=True)
             self._update_status(document, 'failed', error=str(e))
 
-        except Exception as e:
-            logger.error(f"[Upload] Unexpected error processing {doc_id}: {e}", exc_info=True)
-            self._update_status(document, 'failed', error=str(e))
 
     # =========================================================================
     # HELPERS

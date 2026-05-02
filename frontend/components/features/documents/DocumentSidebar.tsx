@@ -1,8 +1,12 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { getFileIcon, formatFileSize } from './DocumentRow'
+import { PreviewModal } from './PreviewModal'
+import { api } from '@/services/api/client'
+import { ApiError } from '@/services/api/errors'
+import { toast } from 'sonner'
 
 interface DocumentSidebarProps {
     document: FolderDocumentResponse | null
@@ -23,7 +27,36 @@ function formatDate(dateStr: string): string {
     }
 }
 
+function normalizeFileType(fileType: string): string {
+    return fileType.toLowerCase().trim()
+}
+
+function isBackendPreviewFile(fileType: string): boolean {
+    const normalized = normalizeFileType(fileType)
+
+    return [
+        'doc',
+        'docx',
+        '.doc',
+        '.docx',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'txt',
+        '.txt',
+        'text/plain',
+        'text',
+        'md',
+        '.md',
+        'markdown',
+        'text/markdown',
+    ].includes(normalized)
+}
+
 export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarProps) {
+    const [isDownloading, setIsDownloading] = useState(false)
+    const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+    const [previewUrl, setPreviewUrl] = useState<string>('')
+
     if (!document) {
         return (
             <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl p-6 flex flex-col items-center justify-center min-h-[400px]">
@@ -39,7 +72,64 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     }
 
     const fileIcon = getFileIcon(document.file_type)
-    const displayName = document.original_name || document.filename
+    const displayName = document.original_name || document.filename || 'Tài liệu'
+
+    const handleDownload = async (mode: 'download' | 'preview') => {
+        if (!document) return
+
+        setIsDownloading(true)
+        const toastId = toast.loading(mode === 'download' ? 'Đang chuẩn bị tải xuống...' : 'Đang chuẩn bị xem trước...')
+
+        try {
+            const filename = document.original_name || document.filename || 'document'
+            const endpoint = `/documents/${document.id}/download`
+
+            if (mode === 'download') {
+                // Download: save to disk
+                await api.download(endpoint, filename)
+                toast.success('Đã tải xuống thành công', { id: toastId })
+            } else {
+                const fileType = document.file_type || ''
+                const isBackendPreview = isBackendPreviewFile(fileType)
+
+                if (isBackendPreview) {
+                    const previewEndpoint = `/documents/${document.id}/preview`
+                    setPreviewUrl(previewEndpoint)
+                    setIsPreviewOpen(true)
+                    toast.success('Đã mở bản xem trước', { id: toastId })
+                } else {
+                    // Preview: show in modal for other supported types
+                    const blob = await api.download(endpoint)
+                    if (!blob || blob.size === 0) {
+                        throw new Error('File rỗng hoặc không hợp lệ')
+                    }
+
+                    // Avoid opening the preview modal for non-file responses.
+                    const blobType = blob.type?.toLowerCase() || ''
+                    const looksLikeErrorResponse = blobType.includes('application/json') || blobType.includes('text/html')
+                    if (looksLikeErrorResponse) {
+                        throw new Error('Phản hồi tải xuống không hợp lệ')
+                    }
+
+                    const url = URL.createObjectURL(blob)
+                    setPreviewUrl(url)
+                    setIsPreviewOpen(true)
+                    toast.success('Đã mở bản xem trước', { id: toastId })
+                }
+            }
+        } catch (error) {
+            console.error('Download/Preview failed:', error)
+
+            if (error instanceof ApiError && error.statusCode === 403) {
+                toast.error('Bạn không có quyền xem tài liệu này', { id: toastId })
+                return
+            }
+
+            toast.error(mode === 'download' ? 'Tải xuống thất bại' : 'Không thể xem trước tài liệu', { id: toastId })
+        } finally {
+            setIsDownloading(false)
+        }
+    }
 
     return (
         <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl overflow-hidden flex flex-col max-h-[85vh]">
@@ -122,20 +212,65 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                     </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex gap-2 pt-2">
-                    <button className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#9d4300] text-white rounded-xl text-xs font-bold hover:bg-[#b75b00] transition-colors shadow-sm hover:shadow-md">
-                        <span className="material-symbols-outlined text-sm">download</span>
-                        Tải về tệp tin
-                    </button>
-                    <button className="px-3 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs font-medium hover:bg-slate-50 transition-colors" title="Chia sẻ">
-                        <span className="material-symbols-outlined text-sm">share</span>
-                    </button>
-                    <button className="px-3 py-2.5 border border-red-200 text-red-500 rounded-xl text-xs font-medium hover:bg-red-50 transition-colors" title="Xóa">
-                        <span className="material-symbols-outlined text-sm">delete</span>
-                    </button>
+                {/* Primary Actions */}
+                <div className="space-y-3 pt-2">
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => handleDownload('download')}
+                            disabled={isDownloading}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#9d4300] text-white rounded-xl text-xs font-bold hover:bg-[#b75b00] transition-colors shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Tải file gốc về máy"
+                        >
+                            <span className="material-symbols-outlined text-sm">download</span>
+                            Tải xuống
+                        </button>
+
+                        <button
+                            onClick={() => handleDownload('preview')}
+                            disabled={isDownloading}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold hover:bg-slate-900 transition-colors shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Xem nội dung tài liệu trực tiếp"
+                        >
+                            <span className="material-symbols-outlined text-sm">visibility</span>
+                            Xem trước
+                        </button>
+                    </div>
+
+                    {/* Secondary Actions */}
+                    <div className="flex gap-2 pt-1">
+                        <button
+                            className="flex-[2] flex items-center justify-center gap-1.5 px-4 py-2.5 border border-slate-200 text-slate-700 bg-white rounded-xl text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
+                            title="Sửa file ở máy tính sau đó tải lên bản mới"
+                        >
+                            <span className="material-symbols-outlined text-sm text-[#9d4300]">update</span>
+                            Cập nhật phiên bản mới
+                        </button>
+
+                        <button
+                            className="px-3 py-2.5 border border-red-100 text-red-500 bg-red-50 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors"
+                            title="Xóa tài liệu này"
+                        >
+                            <span className="material-symbols-outlined text-sm">delete</span>
+                        </button>
+                    </div>
                 </div>
             </div>
+
+            {/* Preview Modal */}
+            <PreviewModal
+                isOpen={isPreviewOpen}
+                onClose={() => {
+                    setIsPreviewOpen(false)
+                    // Clean up object URL
+                    if (previewUrl.startsWith('blob:')) {
+                        URL.revokeObjectURL(previewUrl)
+                    }
+                    setPreviewUrl('')
+                }}
+                fileUrl={previewUrl}
+                fileName={displayName}
+                fileType={document.file_type}
+            />
         </div>
     )
 }

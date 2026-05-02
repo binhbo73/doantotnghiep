@@ -60,7 +60,8 @@ export async function uploadDocument(
         accessScope?: 'personal' | 'department' | 'company'
         language?: string
         tags?: string[]
-        metadata?: Record<string, unknown>
+        departmentId?: string
+        description?: string
         onProgress?: (progress: number) => void
     }
 ): Promise<Document> {
@@ -71,6 +72,7 @@ export async function uploadDocument(
         })
 
         const document = await uploadService.uploadFile(file, {
+            ...options,
             onProgress: (progress) => {
                 options?.onProgress?.(progress.percentage)
             },

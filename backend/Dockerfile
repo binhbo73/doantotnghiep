@@ -17,6 +17,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    libreoffice-writer \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages từ builder

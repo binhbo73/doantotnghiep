@@ -32,9 +32,13 @@ openai>=1.0.0                        # Gọi llama.cpp qua API chuẩn OpenAI
 # ============================================================
 # DOCUMENT PROCESSING (RAG Pipeline)
 # ============================================================
-docling>=1.0.0                       # Trích xuất text từ PDF/DOCX
+docling>=1.0.0                       # Trích xuất text từ PDF (quality cao)
 flashrank>=0.2.0                     # Re-ranking kết quả RAG
 langgraph>=0.0.10                    # Workflow AI (RAG orchestration)
+python-docx>=0.8.11                  # Parse DOCX nhanh (5-10x so với docling)
+python-pptx>=0.6.21                  # Parse PPTX/PPT
+openpyxl>=3.1.0                      # Parse Excel .xlsx (fast)
+xlrd>=2.0.1                         # Parse legacy Excel .xls
 
 # ============================================================
 # UTILITIES

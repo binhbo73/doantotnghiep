@@ -19,6 +19,11 @@ interface UploadOptions {
     onError?: (error: Error) => void
     maxRetries?: number
     timeout?: number
+    folderId?: string
+    departmentId?: string
+    accessScope?: string
+    description?: string
+    tags?: string[]
 }
 
 /**
@@ -30,6 +35,11 @@ export async function uploadFile(
 ): Promise<Document> {
     const formData = new FormData()
     formData.append('file', file)
+    if (options?.folderId) formData.append('folder_id', options.folderId)
+    if (options?.departmentId) formData.append('department_id', options.departmentId)
+    if (options?.accessScope) formData.append('access_scope', options.accessScope)
+    if (options?.description) formData.append('description', options.description)
+    if (options?.tags && options.tags.length > 0) formData.append('tags', options.tags.join(','))
 
     // Use XMLHttpRequest for progress tracking (fetch doesn't support upload progress)
     return new Promise((resolve, reject) => {
@@ -88,15 +98,16 @@ export async function uploadFile(
         // Set timeout
         xhr.timeout = options?.timeout || 120000 // 2 minutes
 
-        // Set auth header
+        // Open first, then set headers, then send
+        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+        xhr.open('POST', `${baseUrl}/documents/upload`)
+
+        // Set auth header after open() to avoid INVALID_STATE_ERR
         const token = localStorage.getItem('auth_token')
         if (token) {
             xhr.setRequestHeader('Authorization', `Bearer ${token}`)
         }
 
-        // Open and send
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
-        xhr.open('POST', `${baseUrl}/documents/upload`)
         xhr.send(formData)
     })
 }

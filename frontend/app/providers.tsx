@@ -10,6 +10,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { queryClient } from '@/lib/queryClient'
 import { AuthProvider } from '@/context/index'
 import { ErrorBoundary } from '@/components/error/ErrorBoundary'
+import { Toaster } from 'sonner'
 import { env } from '@/config/environment'
 
 export function Providers({ children }: { children: React.ReactNode }) {
@@ -18,6 +19,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             <QueryClientProvider client={queryClient}>
                 <AuthProvider>
                     {children}
+                    <Toaster position="top-right" expand={true} richColors closeButton />
                 </AuthProvider>
 
                 {/* React Query DevTools - only in development */}

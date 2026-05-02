@@ -29,8 +29,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from django.http import FileResponse
 from django.db import transaction
 import logging
+import io
 
 from core.permissions.drf_permissions import IsAuthenticatedUser
 from core.utils.response_builder import ResponseBuilder
@@ -40,6 +42,7 @@ from core.exceptions import (
     BusinessLogicError,
     PermissionDeniedError,
     FileSizeExceededError,
+    DocumentProcessingError,
 )
 from services.document_service import DocumentService
 from services.document_upload_service import DocumentUploadService
@@ -622,14 +625,14 @@ class DocumentDownloadView(APIView):
             
             logger.info(f"User {request.user.id} downloaded document {doc_id}")
             
-            # Return file response
-            response = Response(
-                file_data['content'],
-                status=status.HTTP_200_OK
+            # Return file response using FileResponse to avoid JSON encoding binary data
+            file_stream = io.BytesIO(file_data['content'])
+            response = FileResponse(
+                file_stream,
+                as_attachment=True,
+                filename=file_data['filename'],
+                content_type=file_data.get('mime_type', 'application/octet-stream')
             )
-            response['Content-Type'] = file_data.get('mime_type', 'application/octet-stream')
-            response['Content-Disposition'] = f'attachment; filename="{file_data["filename"]}"'
-            
             return response
         
         except NotFoundError as e:
@@ -647,6 +650,60 @@ class DocumentDownloadView(APIView):
             logger.error(f"Error downloading document: {e}", exc_info=True)
             return Response(
                 ResponseBuilder.error("Failed to download document", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================
+# 6b. Document Preview (GET)
+# ============================================================
+
+class DocumentPreviewView(APIView):
+    """
+    API Endpoint: GET /api/v1/documents/{doc_id}/preview
+
+    Return HTML preview for supported document types.
+    """
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request, doc_id):
+        try:
+            service = DocumentService()
+            html = service.get_document_preview_html(
+                doc_id=doc_id,
+                user_id=request.user.id,
+            )
+
+            return Response(
+                ResponseBuilder.success(
+                    data={'html': html},
+                    message='Preview HTML generated successfully',
+                    status_code=200
+                ),
+                status=status.HTTP_200_OK
+            )
+
+        except NotFoundError as e:
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except PermissionDeniedError as e:
+            logger.warning(f"Permission denied for user {request.user.id}: {str(e)}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=403),
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except DocumentProcessingError as e:
+            logger.error(f"Error generating preview: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error(str(e), status_code=422),
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except Exception as e:
+            logger.error(f"Error generating document preview: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to generate document preview", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

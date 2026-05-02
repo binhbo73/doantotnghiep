@@ -22,12 +22,10 @@ from typing import List, Optional, Set
 from django.db.models import Q, QuerySet
 from django.apps import apps
 from core.constants import AccessScope
-from .base_repository import BaseRepository
-
 logger = logging.getLogger(__name__)
 
 
-class PermissionManagerRepository(BaseRepository):
+class PermissionManagerRepository:
     """
     Repository for PermissionManager ORM operations
     
@@ -108,7 +106,7 @@ class PermissionManagerRepository(BaseRepository):
         """Get account by ID"""
         try:
             Account = apps.get_model('users', 'Account')
-            return Account.objects.select_related('department').get(
+            return Account.objects.select_related('user_profile__department').get(
                 pk=account_id, is_deleted=False
             )
         except Account.DoesNotExist:
@@ -218,19 +216,41 @@ class PermissionManagerRepository(BaseRepository):
             FolderPermission = apps.get_model('documents', 'FolderPermission')
             return FolderPermission.objects.none()
     
-    def get_folder_permission_for_role(self, folder_id: int, role_id):
-        """Get permission for specific role on folder"""
+    def get_folder_permission_for_subject(self, folder_id: int, subject_type: str, subject_id: str):
+        """Get permission for a specific subject on folder."""
         try:
             FolderPermission = apps.get_model('documents', 'FolderPermission')
-            
+
             return FolderPermission.objects.filter(
                 folder_id=folder_id,
-                role_id=role_id,
-                is_deleted=False
+                subject_type=subject_type,
+                subject_id=str(subject_id),
+                is_active=True,
+                is_deleted=False,
             ).first()
         except Exception as e:
-            logger.error(f"Error getting folder permission for role: {str(e)}")
+            logger.error(f"Error getting folder permission for subject: {str(e)}")
             return None
+
+    def get_folder_permissions_for_subject_ids(self, folder_id: int, subject_type: str, subject_ids: List[str]) -> QuerySet:
+        """Get all active permissions for a folder for a set of subject IDs."""
+        try:
+            if not subject_ids:
+                FolderPermission = apps.get_model('documents', 'FolderPermission')
+                return FolderPermission.objects.none()
+
+            FolderPermission = apps.get_model('documents', 'FolderPermission')
+            return FolderPermission.objects.filter(
+                folder_id=folder_id,
+                subject_type=subject_type,
+                subject_id__in=[str(subject_id) for subject_id in subject_ids],
+                is_active=True,
+                is_deleted=False,
+            )
+        except Exception as e:
+            logger.error(f"Error getting folder permissions for subjects: {str(e)}")
+            FolderPermission = apps.get_model('documents', 'FolderPermission')
+            return FolderPermission.objects.none()
     
     # Role Methods
     

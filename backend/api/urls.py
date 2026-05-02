@@ -58,6 +58,7 @@ from api.views.document_views import (
     DocumentUpdateView,
     DocumentDeleteView,
     DocumentDownloadView,
+    DocumentPreviewView,
     DocumentPermissionsListView,
     DocumentPermissionsView,
     DocumentPermissionDetailView,
@@ -254,6 +255,8 @@ urlpatterns = [
     
     # 6. GET /api/v1/documents/{doc_id}/download - Download original file
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/download/?$", DocumentDownloadView.as_view(), name="document_download"),
+    # 6b. GET /api/v1/documents/{doc_id}/preview - Get HTML preview for DOCX
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/preview/?$", DocumentPreviewView.as_view(), name="document_preview"),
     
     # 7. GET|POST /api/v1/documents/{doc_id}/permissions - List/Grant document ACL
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/permissions/?$", DocumentPermissionsView.as_view(), name="document_permissions"),

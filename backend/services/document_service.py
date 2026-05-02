@@ -19,6 +19,10 @@ Uses:
 """
 
 import logging
+import os
+import base64
+import subprocess
+import tempfile
 from typing import List, Optional, Tuple, Dict, Any
 from django.apps import apps
 from django.db import transaction
@@ -62,6 +66,7 @@ class DocumentService(BaseService):
     """
     
     repository_class = DocumentRepository
+    PREVIEW_CACHE_VERSION = 'v2'
     
     # Configuration
     MAX_FILE_SIZE_MB = 100  # Max 100MB
@@ -70,6 +75,8 @@ class DocumentService(BaseService):
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # .docx
         'text/plain',
         'text/markdown',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
+        'application/vnd.ms-excel',  # .xls
     }
     
     def __init__(self):
@@ -77,6 +84,32 @@ class DocumentService(BaseService):
         super().__init__()
         self.document_repo = self.repository
         self.permission_repo = PermissionRepository()
+
+    @staticmethod
+    def _normalize_file_type(file_name: str, mime_type: str) -> str:
+        """Normalize file type label from filename or MIME type."""
+        import os
+
+        ext = os.path.splitext(file_name)[1].lower()
+        if ext == '.md':
+            return 'markdown'
+        if ext == '.txt':
+            return 'txt'
+        if ext == '.docx':
+            return 'docx'
+        if ext == '.doc':
+            return 'doc'
+        if ext == '.pdf':
+            return 'pdf'
+
+        mime_map = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'application/msword': 'doc',
+            'text/plain': 'txt',
+            'text/markdown': 'markdown',
+        }
+        return mime_map.get(mime_type, ext.lstrip('.') or 'bin')
         
         # ✅ CORRECT: Add UserRepository to avoid ORM calls
         from repositories.user_repository import UserRepository
@@ -139,20 +172,20 @@ class DocumentService(BaseService):
                     f"File size {file_size_mb:.1f}MB exceeds limit {self.MAX_FILE_SIZE_MB}MB"
                 )
             
-            # Validate file type - with fallback to extension-based detection
-            file_type = file.content_type or ''
-            
-            # If content_type is empty, try to guess from extension
-            if not file_type:
+            # Detect MIME type and normalized file type label
+            mime_type = file.content_type or ''
+            if not mime_type:
                 import mimetypes
                 guessed_type, _ = mimetypes.guess_type(file.name)
-                file_type = guessed_type or 'application/octet-stream'
-            
-            if file_type not in self.ALLOWED_FILE_TYPES:
+                mime_type = guessed_type or 'application/octet-stream'
+
+            if mime_type not in self.ALLOWED_FILE_TYPES:
                 raise ValidationError(
-                    f"File type '{file_type}' not supported. "
+                    f"File type '{mime_type}' not supported. "
                     f"Allowed: {', '.join(self.ALLOWED_FILE_TYPES)}"
                 )
+
+            normalized_file_type = self._normalize_file_type(file.name, mime_type)
             
             # Set defaults
             if department_id is None:
@@ -180,7 +213,8 @@ class DocumentService(BaseService):
                     original_name=file.name,
                     filename=hashed_name,
                     storage_path=storage_path,
-                    file_type=file_type,
+                    file_type=normalized_file_type,
+                    mime_type=mime_type,
                     file_size=file.size,
                     uploader_id=user_id,
                     department_id=department_id,
@@ -244,8 +278,10 @@ class DocumentService(BaseService):
             # Get document
             document = self.document_repo.get_by_id(document_id)
             
-            # Check permission
-            if not self.document_repo.check_user_can_read(document_id, user_id):
+            # ✅ FIXED: Use PermissionManager for comprehensive permission checking
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+            if not perm_manager.check_document_access(user_id, document_id, action='read'):
                 raise ValidationError(
                     f"User {user_id} does not have access to document {document_id}"
                 )
@@ -538,8 +574,10 @@ class DocumentService(BaseService):
             PermissionDeniedError: If user lacks access
         """
         try:
-            # Check permission
-            if not self.document_repo.check_user_can_read(document_id, user_id):
+            # ✅ FIXED: Use PermissionManager for comprehensive permission checking
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+            if not perm_manager.check_document_access(user_id, document_id, action='read'):
                 raise ValidationError(f"Access denied to document {document_id}")
             
             # Get document with chunks
@@ -815,8 +853,12 @@ class DocumentService(BaseService):
             PermissionDeniedError: If user lacks read permission
         """
         try:
-            # Check read permission
-            if not self.document_repo.check_user_can_read(doc_id, user_id):
+            # ✅ FIXED: Use PermissionManager for comprehensive permission checking
+            # This checks: explicit DENY, explicit ALLOW, role-based, folder inheritance
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+            
+            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
                 raise PermissionDeniedError(f"No read permission on document {doc_id}")
             
             document = self.document_repo.get_by_id(doc_id)
@@ -831,10 +873,17 @@ class DocumentService(BaseService):
             else:
                 raise NotFoundError(f"Document file not found at {document.storage_path}")
             
+            # Fall back to guessed MIME type for existing documents if necessary.
+            mime_type = document.mime_type
+            if not mime_type:
+                import mimetypes
+                mime_type, _ = mimetypes.guess_type(document.original_name)
+                mime_type = mime_type or 'application/octet-stream'
+
             return {
                 'content': file_content,
                 'filename': document.original_name,
-                'mime_type': document.file_type or 'application/octet-stream',
+                'mime_type': mime_type,
             }
         
         except Exception as e:
@@ -842,7 +891,249 @@ class DocumentService(BaseService):
                 raise
             logger.error(f"Error downloading document: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to download document {doc_id}")
+
+    def get_document_preview_html(
+        self,
+        doc_id: str,
+        user_id: int
+    ) -> str:
+        """
+        Get HTML preview for DOCX, TXT, or Markdown document.
+
+        Returns cached HTML if available, otherwise converts the file on demand.
+        """
+        try:
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
+                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+
+            document = self.document_repo.get_by_id(doc_id)
+            if not document or not document.storage_path:
+                raise NotFoundError(f"Document file {doc_id} not found")
+
+            file_type = self._normalize_file_type(
+                document.original_name or document.filename or '',
+                document.mime_type or document.file_type or ''
+            )
+            if file_type not in {'doc', 'docx', 'txt', 'markdown'}:
+                raise DocumentProcessingError('Preview HTML is only supported for DOCX, TXT, or Markdown files')
+
+            preview_path = self._get_preview_cache_path(document)
+            if os.path.exists(preview_path):
+                with open(preview_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+
+            if file_type == 'doc':
+                html = self._convert_doc_to_html(document.storage_path)
+            elif file_type == 'docx':
+                html = self._convert_docx_to_html(document.storage_path)
+            else:
+                html = self._convert_text_to_html(document.storage_path, file_type)
+
+            os.makedirs(os.path.dirname(preview_path), exist_ok=True)
+            with open(preview_path, 'w', encoding='utf-8') as f:
+                f.write(html)
+
+            return html
+
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError, DocumentProcessingError)):
+                raise
+            logger.error(f"Error generating preview HTML: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to generate preview for document {doc_id}")
+
+    def _get_preview_cache_path(self, document) -> str:
+        storage_path = os.path.abspath(document.storage_path)
+        preview_folder = os.path.normpath(
+            os.path.join(
+                os.path.dirname(os.path.dirname(storage_path)),
+                'previews',
+                self.PREVIEW_CACHE_VERSION,
+            )
+        )
+        return os.path.join(preview_folder, f"{document.id}.html")
+
+    def _convert_docx_to_html(self, storage_path: str) -> str:
+        try:
+            from docx import Document
+            from docx.table import Table
+            from docx.text.paragraph import Paragraph
+
+            doc = Document(storage_path)
+            html_parts = [
+                '<div class="docx-preview bg-white rounded-lg p-6 text-slate-900" '
+                'style="line-height:1.7;font-size:14px;">'
+            ]
+
+            for block in doc.element.body.iterchildren():
+                if block.tag.endswith('}p'):
+                    paragraph = Paragraph(block, doc)
+                    paragraph_html = self._convert_docx_paragraph_to_html(paragraph, doc)
+                    if paragraph_html:
+                        html_parts.append(paragraph_html)
+                elif block.tag.endswith('}tbl'):
+                    table = Table(block, doc)
+                    html_parts.append(self._convert_docx_table_to_html(table, doc))
+
+            html_parts.append('</div>')
+            return '\n'.join(html_parts)
+
+        except ImportError:
+            raise DocumentProcessingError('python-docx library not installed. Install: pip install python-docx')
+        except Exception as e:
+            logger.error(f"DOCX preview generation error: {e}", exc_info=True)
+            raise DocumentProcessingError(f"Failed to generate DOCX preview: {str(e)}")
+
+    def _convert_doc_to_html(self, storage_path: str) -> str:
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                command = [
+                    'soffice',
+                    '--headless',
+                    '--convert-to', 'docx',
+                    '--outdir', temp_dir,
+                    storage_path,
+                ]
+                result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+                if result.returncode != 0:
+                    raise DocumentProcessingError(
+                        f"Failed to convert DOC to DOCX: {result.stderr.strip() or result.stdout.strip()}"
+                    )
+
+                base_name = os.path.splitext(os.path.basename(storage_path))[0]
+                converted_path = os.path.join(temp_dir, f"{base_name}.docx")
+                if not os.path.exists(converted_path):
+                    candidates = [
+                        os.path.join(temp_dir, name)
+                        for name in os.listdir(temp_dir)
+                        if name.lower().endswith('.docx')
+                    ]
+                    if not candidates:
+                        raise DocumentProcessingError('DOC conversion completed but no DOCX output was found')
+                    converted_path = candidates[0]
+
+                return self._convert_docx_to_html(converted_path)
+
+        except DocumentProcessingError:
+            raise
+        except FileNotFoundError:
+            raise DocumentProcessingError('LibreOffice is not installed in the backend container. Install libreoffice-writer to preview .doc files.')
+        except Exception as e:
+            logger.error(f"DOC preview generation error: {e}", exc_info=True)
+            raise DocumentProcessingError(f"Failed to generate DOC preview: {str(e)}")
+
+    def _convert_docx_paragraph_to_html(self, paragraph, document) -> str:
+        parts = []
+        text_buffer = []
+
+        for run in paragraph.runs:
+            if run.text:
+                text_buffer.append(self._escape_html(run.text))
+
+            for drawing in run._element.iter():
+                if not drawing.tag.endswith('}blip'):
+                    continue
+
+                rel_id = drawing.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                if not rel_id:
+                    continue
+
+                image_part = document.part.related_parts.get(rel_id)
+                if not image_part or not getattr(image_part, 'blob', None):
+                    continue
+
+                content_type = getattr(image_part, 'content_type', 'image/png') or 'image/png'
+                image_data = base64.b64encode(image_part.blob).decode('ascii')
+                parts.append(
+                    f'<img src="data:{content_type};base64,{image_data}" '
+                    'alt="Embedded image" '
+                    'style="max-width:100%;height:auto;display:block;margin:1rem 0;" />'
+                )
+
+        text_content = ''.join(text_buffer).strip()
+        style_name = paragraph.style.name.lower() if paragraph.style is not None else ''
+        tag = 'p'
+        if 'title' in style_name:
+            tag = 'h1'
+        elif 'subtitle' in style_name:
+            tag = 'h2'
+        elif 'heading 1' in style_name:
+            tag = 'h2'
+        elif 'heading 2' in style_name:
+            tag = 'h3'
+        elif 'heading 3' in style_name:
+            tag = 'h4'
+
+        if text_content:
+            parts.insert(0, f'<{tag}>{text_content}</{tag}>')
+
+        if not parts:
+            return ''
+
+        return ''.join(parts)
+
+    def _convert_docx_table_to_html(self, table, document) -> str:
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        html_parts = ['<table style="width:100%;border-collapse:collapse;margin:1rem 0;">']
+
+        for row in table.rows:
+            html_parts.append('<tr>')
+            for cell in row.cells:
+                cell_html = []
+                for block in cell._tc.iterchildren():
+                    if block.tag.endswith('}p'):
+                        paragraph = Paragraph(block, cell)
+                        paragraph_html = self._convert_docx_paragraph_to_html(paragraph, document)
+                        if paragraph_html:
+                            cell_html.append(paragraph_html)
+                    elif block.tag.endswith('}tbl'):
+                        nested_table = Table(block, cell)
+                        cell_html.append(self._convert_docx_table_to_html(nested_table, document))
+
+                html_parts.append(
+                    '<td style="border:1px solid #d1d5db;padding:0.55rem;vertical-align:top;">'
+                    + ''.join(cell_html)
+                    + '</td>'
+                )
+            html_parts.append('</tr>')
+
+        html_parts.append('</table>')
+        return ''.join(html_parts)
     
+    def _convert_text_to_html(self, storage_path: str, file_type: str) -> str:
+        try:
+            with open(storage_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            escaped_content = self._escape_html(content)
+            title = 'Markdown' if file_type == 'markdown' else 'Text'
+
+            return (
+                '<div class="docx-preview bg-white rounded-lg p-6 text-slate-900" '
+                'style="line-height:1.7;font-size:14px;">'
+                f'<div class="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">'
+                f'Xem trước {title} hiển thị nội dung gốc để đảm bảo tốc độ và độ chính xác.'
+                '</div>'
+                f'<pre class="whitespace-pre-wrap break-words font-mono text-sm leading-7">{escaped_content}</pre>'
+                '</div>'
+            )
+        except Exception as e:
+            logger.error(f"Text preview generation error: {e}", exc_info=True)
+            raise DocumentProcessingError(f"Failed to generate text preview: {str(e)}")
+    
+
+    def _escape_html(self, text: str) -> str:
+        return (
+            text.replace('&', '&amp;')
+                .replace('<', '&lt;')
+                .replace('>', '&gt;')
+                .replace('"', '&quot;')
+                .replace("'", '&#39;')
+        )
+
     def get_document_permissions(
         self,
         doc_id: str,
@@ -1146,8 +1437,12 @@ class DocumentService(BaseService):
         from django.apps import apps
         
         try:
-            # Check read permission
-            if not self.document_repo.check_user_can_read(doc_id, user_id):
+            # ✅ FIXED: Use PermissionManager for comprehensive permission checking
+            # This checks: explicit DENY, explicit ALLOW, role-based, folder inheritance
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+            
+            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
                 raise PermissionDeniedError(f"No read permission on document {doc_id}")
             
             document = self.document_repo.get_by_id(doc_id)
