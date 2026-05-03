@@ -314,24 +314,38 @@ class FolderService(BaseService):
             if access_scope not in valid_scopes:
                 raise ValidationError(f"invalid access_scope. Must be one of {valid_scopes}")
             
-            # Get user's department as default
-            try:
-                user_profile = self.UserProfile.objects.get(account_id=user_id)
-                if not department_id:
-                    department_id = user_profile.department_id
-            except self.UserProfile.DoesNotExist:
-                pass
-            
-            # Validate parent if provided
+            # Resolve scope based on parent (similar to document upload logic)
             parent = None
             if parent_id:
                 parent = self.repository.get_by_id(parent_id)
                 if not parent:
                     raise NotFoundError(f"Parent folder {parent_id} not found")
                 
-                # Inherit parent's department if not specified
-                if not department_id and parent.department_id:
-                    department_id = parent.department_id
+                # CASE A: Parent has department → inherit parent's scope + department
+                if parent.department_id:
+                    access_scope = parent.access_scope
+                    if not department_id:
+                        department_id = parent.department_id
+                else:
+                    # CASE B: Parent is company-wide (no dept) → force company scope
+                    access_scope = 'company'
+                    department_id = None
+            else:
+                # No parent folder
+                # CASE C/D: Apply access_scope logic
+                if access_scope == 'department':
+                    # CASE C: Department scope requires department_id
+                    if not department_id:
+                        # Try to get user's department as fallback
+                        try:
+                            user_profile = self.UserProfile.objects.get(account_id=user_id)
+                            department_id = user_profile.department_id
+                        except self.UserProfile.DoesNotExist:
+                            pass
+                        
+                        if not department_id:
+                            raise ValidationError("Department folder must have department_id")
+                # CASE D: Company or personal scope - keep department_id as provided (optional)
             
             # Create folder
             folder = self.Folder(

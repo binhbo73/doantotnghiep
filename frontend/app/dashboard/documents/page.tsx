@@ -7,6 +7,7 @@ import {
     OtherDocuments,
     DocumentSidebar,
     UploadDocumentModal,
+    CreateFolderModal,
 } from '@/components/features/documents'
 import { DocumentsPermissionsWorkspace } from '@/components/features/documents/DocumentsPermissionsWorkspace'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
@@ -49,6 +50,7 @@ function PageTabButton({
 export default function DocumentsPage() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
+    const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
 
     const {
         tree,
@@ -115,6 +117,7 @@ export default function DocumentsPage() {
                     totalDocuments={stats.totalDocuments}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
+                    onCreateFolder={() => setIsCreateFolderModalOpen(true)}
                     compact={activeTab === 'permissions'}
                 />
 
@@ -185,6 +188,15 @@ export default function DocumentsPage() {
             <UploadDocumentModal
                 isOpen={isUploadModalOpen}
                 onClose={() => setIsUploadModalOpen(false)}
+                onSuccess={() => {
+                    void refetch()
+                }}
+            />
+
+            {/* Create Folder Modal */}
+            <CreateFolderModal
+                isOpen={isCreateFolderModalOpen}
+                onClose={() => setIsCreateFolderModalOpen(false)}
                 onSuccess={() => {
                     void refetch()
                 }}

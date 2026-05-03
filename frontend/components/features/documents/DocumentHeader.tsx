@@ -9,6 +9,7 @@ interface DocumentHeaderProps {
     totalDocuments: number
     searchQuery: string
     onSearchChange: (query: string) => void
+    onCreateFolder?: () => void
     compact?: boolean
 }
 
@@ -19,6 +20,7 @@ export function DocumentHeader({
     totalDocuments,
     searchQuery,
     onSearchChange,
+    onCreateFolder,
     compact = false,
 }: DocumentHeaderProps) {
     return (
@@ -34,6 +36,15 @@ export function DocumentHeader({
                         <p className={`${compact ? 'text-xs max-w-2xl' : 'text-sm max-w-xl'} text-[#584237]`}>{subtitle}</p>
                     )}
                 </div>
+                {onCreateFolder && !compact && (
+                    <button
+                        onClick={onCreateFolder}
+                        className="px-4 py-2 bg-[#9d4300] text-white rounded-xl text-sm font-semibold hover:bg-[#b75b00] transition-colors flex items-center gap-2 shadow-sm hover:shadow-md"
+                    >
+                        <span className="material-symbols-outlined text-base">create_new_folder</span>
+                        Tạo Thư Mục
+                    </button>
+                )}
             </div>
 
             {/* Stats + Search Row */}
