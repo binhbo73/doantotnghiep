@@ -6,8 +6,11 @@ import { Plus, MessageCircle, Zap, LogOut, HelpCircle } from 'lucide-react'
 interface Conversation {
     id: string
     title: string
-    createdAt: string
-    updatedAt: string
+    // backend returns snake_case; frontend may use camelCase — accept both
+    createdAt?: string
+    updatedAt?: string
+    created_at?: string
+    updated_at?: string
 }
 
 interface ChatSidebarProps {
@@ -32,6 +35,11 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
         week: Conversation[]
         older: Conversation[]
     }>({ today: [], week: [], older: [] })
+
+    const { formatRelativeTime } = require('@/lib/time') as typeof import('@/lib/time')
+    const formatConversationTime = (timestamp?: string) => {
+        return formatRelativeTime(timestamp || '')
+    }
 
     useEffect(() => {
         if (conversations.length === 0) return
@@ -83,7 +91,10 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                             title={conv.title}
                         >
                             <MessageCircle size={16} className="shrink-0" />
-                            <span className="truncate">{conv.title}</span>
+                            <span className="flex-1 min-w-0 truncate">{conv.title}</span>
+                            <span className="shrink-0 text-[10px] text-slate-400 font-medium">
+                                {formatConversationTime(conv.updatedAt || conv.updated_at)}
+                            </span>
                         </button>
                     ))}
                 </div>

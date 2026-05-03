@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
+import { formatRelativeTime, formatAbsoluteShort } from '@/lib/time'
 import { Zap, Star, Copy, Share2, Loader } from 'lucide-react'
 import { KnowledgeCard } from './KnowledgeCard'
 import { useFeedback } from '@/hooks/useFeedback'
@@ -47,6 +48,12 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
     const [currentRating, setCurrentRating] = useState<string | null>(null)
     const [hoveredStar, setHoveredStar] = useState<{ [messageId: string]: number }>({})
 
+    const formatMessageTime = (timestamp?: Date) => {
+        return formatRelativeTime(timestamp)
+    }
+
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
     const handleFeedback = async (messageId: string, rating: string, forceSubmit: boolean = false) => {
         // For star rating, we might want to show comment box immediately after rating
         if (!showCommentBox && !forceSubmit) {
@@ -62,7 +69,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
             } else {
                 await submitFeedback(messageId, rating, comment)
             }
-            
+
             // Success!
             setShowCommentBox(null)
             setCurrentRating(null)
@@ -105,8 +112,15 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
 
                     <div className={`flex-1 ${message.role === 'user' ? 'max-w-lg' : 'max-w-5xl'}`}>
                         {message.role === 'user' ? (
-                            <div className="bg-primary-container text-on-primary-container p-4 rounded-2xl rounded-tr-none shadow-sm text-sm font-medium leading-relaxed">
-                                {message.content}
+                            <div className="space-y-2">
+                                <div className="bg-primary-container text-on-primary-container p-4 rounded-2xl rounded-tr-none shadow-sm text-sm font-medium leading-relaxed">
+                                    {message.content}
+                                </div>
+                                {message.timestamp && (
+                                    <p className="px-1 text-[11px] text-slate-400 text-right" title={formatAbsoluteShort(message.timestamp)}>
+                                        {formatMessageTime(message.timestamp)}
+                                    </p>
+                                )}
                             </div>
                         ) : (
                             <div className="glass-nugget p-6 rounded-2xl shadow-sm space-y-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-sm border border-outline-variant/10 dark:border-slate-700/20">
@@ -128,6 +142,12 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                     )}
                                 </div>
 
+                                {message.timestamp && !message.isLoading && (
+                                    <p className="text-[11px] text-slate-400" title={formatAbsoluteShort(message.timestamp)}>
+                                        {formatMessageTime(message.timestamp)}
+                                    </p>
+                                )}
+
                                 {message.citations && message.citations.length > 0 && (
                                     <KnowledgeCard
                                         citations={message.citations}
@@ -143,23 +163,28 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                                     {[1, 2, 3, 4, 5].map((star) => {
                                                         const isSelected = (parseInt(userFeedback.get(message.id) || '0')) >= star || (parseInt(currentRating || '0')) >= star;
                                                         const isHovered = (hoveredStar[message.id] || 0) >= star;
-                                                        
+
                                                         return (
                                                             <button
                                                                 key={star}
                                                                 onMouseEnter={() => setHoveredStar(prev => ({ ...prev, [message.id]: star }))}
                                                                 onMouseLeave={() => setHoveredStar(prev => ({ ...prev, [message.id]: 0 }))}
-                                                                onClick={() => handleFeedback(message.id, star.toString())}
-                                                                disabled={feedbackLoading.get(message.id) || false}
+                                                                onClick={() => {
+                                                                    if (!uuidRegex.test(message.id)) {
+                                                                        toast({ title: 'Chờ lưu', description: 'Tin nhắn chưa được lưu trên máy chủ. Vui lòng đợi rồi thử lại.', type: 'info' })
+                                                                        return
+                                                                    }
+                                                                    handleFeedback(message.id, star.toString())
+                                                                }}
+                                                                disabled={feedbackLoading.get(message.id) || !uuidRegex.test(message.id)}
                                                                 className="p-1 transition-all transform hover:scale-110 active:scale-95 disabled:opacity-50"
                                                             >
                                                                 <Star
                                                                     size={18}
-                                                                    className={`${
-                                                                        isHovered || isSelected
-                                                                            ? 'text-amber-400 fill-amber-400'
-                                                                            : 'text-slate-300 dark:text-slate-600 hover:text-amber-200'
-                                                                    } transition-colors duration-200`}
+                                                                    className={`${isHovered || isSelected
+                                                                        ? 'text-amber-400 fill-amber-400'
+                                                                        : 'text-slate-300 dark:text-slate-600 hover:text-amber-200'
+                                                                        } transition-colors duration-200`}
                                                                 />
                                                             </button>
                                                         )
@@ -224,10 +249,14 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                                     </button>
                                                     <button
                                                         onClick={() => {
+                                                            if (!uuidRegex.test(message.id)) {
+                                                                toast({ title: 'Chờ lưu', description: 'Tin nhắn chưa được lưu trên máy chủ. Vui lòng đợi rồi thử lại.', type: 'info' })
+                                                                return
+                                                            }
                                                             const rating = currentRating || userFeedback.get(message.id) || '5'
                                                             handleFeedback(message.id, rating, true)
                                                         }}
-                                                        disabled={feedbackLoading.get(message.id)}
+                                                        disabled={feedbackLoading.get(message.id) || !uuidRegex.test(message.id)}
                                                         className="px-4 py-1.5 text-xs font-semibold bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors shadow-sm shadow-amber-200 dark:shadow-none disabled:opacity-50"
                                                     >
                                                         {feedbackLoading.get(message.id) ? 'Đang gửi...' : 'Gửi đánh giá'}

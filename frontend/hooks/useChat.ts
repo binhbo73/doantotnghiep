@@ -148,7 +148,10 @@ export const useChat = (options: UseChatOptions = {}) => {
                 })
 
                 // 5. Cập nhật danh sách hội thoại nếu cần
-                fetchConversations()
+                await fetchConversations()
+                if (convId) {
+                    await fetchMessages(convId)
+                }
 
             } catch (error) {
                 showError('Lỗi kết nối máy chủ. Vui lòng thử lại.')
@@ -157,11 +160,18 @@ export const useChat = (options: UseChatOptions = {}) => {
                 setIsLoading(false)
             }
         },
-        [currentConversationId, createConversation, fetchConversations, showError]
+        [currentConversationId, createConversation, fetchConversations, fetchMessages, showError]
     )
 
     // Provide feedback
     const sendFeedback = useCallback(async (messageId: string, rating: string, comment?: string) => {
+        // Prevent sending feedback for optimistic temporary messages (e.g., bot-123..., user-123...)
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(messageId)) {
+            showError('Tin nhắn chưa được lưu trên máy chủ. Vui lòng đợi vài giây rồi thử lại.')
+            return
+        }
+
         try {
             setFeedbackLoading((prev) => new Map(prev).set(messageId, true))
             await ChatService.sendFeedback(messageId, rating, comment)

@@ -266,6 +266,14 @@ export class ChatService {
      * Provide feedback on a message
      */
     static async sendFeedback(messageId: string, rating: string, comment?: string) {
+        // Prevent sending feedback for temporary optimistic IDs
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        if (!uuidRegex.test(messageId)) {
+            const err = new Error(`Message ${messageId} is not a valid server ID`)
+            console.error(err)
+            throw err
+        }
+
         try {
             const response = await apiClient.post(
                 `${API_ENDPOINTS.CHAT.MESSAGES}/${messageId}/feedback/`,
