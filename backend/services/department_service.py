@@ -242,8 +242,14 @@ class DepartmentService(BaseService):
             logger.info(f"Department created: {dept.id} (name={name}, parent={parent_id})")
             
             # ========== STEP 5: AUDIT LOG ==========
-            # TODO: Fix audit logging - needs proper account object/parameters
-            pass
+            self.audit_log_action(
+                action='CREATE',
+                user_id=requested_by_user_id,
+                resource_id=str(dept.id),
+                resource_type='Department',
+                query_text=f"Created department: {name}",
+                details={'name': name, 'parent_id': parent_id, 'manager_id': manager_id}
+            )
             
             return dept
         
@@ -325,8 +331,14 @@ class DepartmentService(BaseService):
             logger.info(f"Department updated: {dept_id} with updates: {updates}")
             
             # ========== STEP 4: AUDIT LOG ==========
-            # TODO: Fix audit logging - needs proper account object/parameters
-            pass
+            self.audit_log_action(
+                action='UPDATE',
+                user_id=requested_by_user_id,
+                resource_id=str(dept_id),
+                resource_type='Department',
+                query_text=f"Updated department: {dept.name}",
+                details={'updates': updates}
+            )
             
             return dept
         
@@ -404,8 +416,14 @@ class DepartmentService(BaseService):
             logger.info(f"Department soft-deleted: {dept_id} (name={dept.name})")
             
             # ========== STEP 5: AUDIT LOG ==========
-            # TODO: Fix audit logging - needs proper account object/parameters
-            pass
+            self.audit_log_action(
+                action='DELETE',
+                user_id=requested_by_user_id,
+                resource_id=str(dept_id),
+                resource_type='Department',
+                query_text=f"Deleted department: {dept.name}",
+                details={'users_affected': users_in_dept, 'sub_departments': sub_depts}
+            )
         
         except (NotFoundError, ConflictError, BusinessLogicError, ValidationError):
             raise

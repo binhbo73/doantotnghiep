@@ -286,7 +286,6 @@ class DocumentService(BaseService):
                     f"User {user_id} does not have access to document {document_id}"
                 )
             
-            self.log_action('GET_DOCUMENT', document_id, user_id=user_id)
             return document
             
         except Exception as e:
@@ -328,12 +327,6 @@ class DocumentService(BaseService):
             end_idx = start_idx + page_size
             
             paginated = accessible[start_idx:end_idx]
-            
-            self.log_action(
-                'SEARCH_DOCUMENTS',
-                details=f"Query: '{query}' ({len(paginated)} results)",
-                user_id=user_id
-            )
             
             # Create simple page object
             class SimplePage:
@@ -410,12 +403,6 @@ class DocumentService(BaseService):
             
             # Calculate pagination info
             total_pages = (total + page_size - 1) // page_size
-            
-            self.log_action(
-                'LIST_DOCUMENTS',
-                details=f"Total: {total}, Page: {page}, Search: {search}",
-                user_id=user_id
-            )
             
             return {
                 'documents': list(documents),
@@ -582,13 +569,6 @@ class DocumentService(BaseService):
             
             # Get document with chunks
             document = self.document_repo.get_document_with_chunks(document_id)
-            
-            self.log_action(
-                'GET_CHUNKS',
-                document_id,
-                details=f'Retrieved {len(document.chunks.all())} chunks',
-                user_id=user_id
-            )
             
             return list(document.chunks.all())
             

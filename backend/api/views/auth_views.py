@@ -246,20 +246,6 @@ class UserProfileView(APIView):
                 # Get current user
                 user = request.user
             
-            # ✅ FIXED: Add audit log for GET operation
-            try:
-                from apps.operations.models import AuditLog
-                action_desc = f"Admin {request.user.username} viewed account {user.username}" if account_id else f"User {request.user.username} viewed own account"
-                AuditLog.log_action(
-                    account=request.user,
-                    action='VIEW_ACCOUNT',
-                    resource_id=str(user.id),
-                    query_text=action_desc,
-                    request=request
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log view_account action: {str(e)}")
-            
             serializer = AccountSerializer(user)
             return Response(
                 ResponseBuilder.success(data=serializer.data, message="Thành công"),

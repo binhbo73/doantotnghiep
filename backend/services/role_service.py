@@ -323,6 +323,15 @@ class RoleService(BaseService):
                     self.role_repo.add_permissions(role.id, validated_permissions)
                 
                 logger.info(f"Role created: {role_code}")
+                
+                # Log audit
+                self.audit_log_action(
+                    action='CREATE_ROLE',
+                    user_id=requested_by_user_id,
+                    resource_id=str(role.id),
+                    query_text=f"Created role: {role_code}",
+                    details={'name': role_name, 'permissions_count': len(validated_permissions)}
+                )
             
             # Return role with permissions
             return self.get_role_details(role.id)
@@ -433,6 +442,15 @@ class RoleService(BaseService):
                         self.role_repo.add_permissions(role_id, list(to_add))
                 
                 logger.info(f"Role updated: {role.code}")
+                
+                # Log audit
+                self.audit_log_action(
+                    action='UPDATE_ROLE',
+                    user_id=requested_by_user_id,
+                    resource_id=str(role_id),
+                    query_text=f"Updated role: {role.code}",
+                    details={'updates': updates}
+                )
             
             # Return updated role
             return self.get_role_details(role_id)
@@ -496,8 +514,14 @@ class RoleService(BaseService):
                 if accounts_count > 0:
                     self.role_repo.remove_role_from_all_accounts(role_id)
                 
-
-                
+                # Log audit
+                self.audit_log_action(
+                    action='DELETE_ROLE',
+                    user_id=requested_by_user_id,
+                    resource_id=str(role_id),
+                    query_text=f"Deleted role: {role.code}",
+                    details={'accounts_affected': accounts_count}
+                )
             
             return {'message': f"Role '{role.code}' deleted successfully"}
             
@@ -737,6 +761,15 @@ class RoleService(BaseService):
             # Remove permission
             with transaction.atomic():
                 self.role_repo.remove_permissions(role_id, [permission_id])
+                
+                # Log audit
+                self.audit_log_action(
+                    action='REMOVE_PERMISSION',
+                    user_id=requested_by_user_id,
+                    resource_id=str(role_id),
+                    query_text=f"Removed permission from role: {permission.code}",
+                    details={'permission_code': permission.code, 'permission_id': str(permission_id)}
+                )
             
             # Get updated permission count using the proper relationship
             from apps.users.models import RolePermission

@@ -93,20 +93,6 @@ class UserProfileSelfView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # ✅ FIXED: Add audit log for GET operation
-            try:
-                from apps.operations.models import AuditLog
-                action_desc = f"User {request.user.username} viewed own profile"
-                AuditLog.log_action(
-                    account=request.user,
-                    action='VIEW_OWN_PROFILE',
-                    resource_id=str(profile.id),
-                    query_text=action_desc,
-                    request=request
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log view_own_profile action: {str(e)}")
-            
             serializer = UserProfileReadSerializer(profile)
             return Response(
                 ResponseBuilder.success(

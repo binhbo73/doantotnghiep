@@ -215,20 +215,6 @@ class UserDetailView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # ✅ FIXED: Add audit log for GET operation
-            try:
-                from apps.operations.models import AuditLog
-                action_desc = f"User {request.user.username} viewed account detail {user.username}"
-                AuditLog.log_action(
-                    account=request.user,
-                    action='VIEW_ACCOUNT_DETAIL',
-                    resource_id=str(account_id),
-                    query_text=action_desc,
-                    request=request
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log view_account_detail action: {str(e)}")
-            
             serializer = UserDetailSerializer(user)
             return Response(
                 ResponseBuilder.success(data=serializer.data, message="Account detail retrieved"),
@@ -436,20 +422,6 @@ class UserRolesView(APIView):
                     ResponseBuilder.error(message=str(e)),
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # ✅ FIXED: Add audit log for GET operation
-            try:
-                from apps.operations.models import AuditLog
-                action_desc = f"User {request.user.username} viewed roles for account {account_id}"
-                AuditLog.log_action(
-                    account=request.user,
-                    action='VIEW_ACCOUNT_ROLES',
-                    resource_id=str(account_id),
-                    query_text=action_desc,
-                    request=request
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log view_account_roles action: {str(e)}")
             
             return Response(
                 ResponseBuilder.success(

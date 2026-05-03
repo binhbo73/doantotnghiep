@@ -88,7 +88,6 @@ class UserProfileAdminListView(APIView):
     - total_items: Total user count
     
     Accessible by: Admin/Manager only
-    Audit: Logs action as LIST_USERS
     
     ✅ CORRECT FLOW:
     View → Service (fetch with filters) → Repository (DB queries) → ORM → DB
@@ -122,19 +121,6 @@ class UserProfileAdminListView(APIView):
             # ✅ SERIALIZER LAYER: Use EnhancedUserProfileReadSerializer for detailed user info
             # This returns profile + account data (roles, permissions, status) for each user
             serializer = EnhancedUserProfileReadSerializer(paginated_users, many=True)
-            
-            # Audit log
-            try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
-                    action='LIST_USERS',
-                    resource_id=None,
-                    query_text=f"Listed users. Filters: search={search_query}, dept={department_id}, status={status_filter}",
-                    request=request
-                )
-            except Exception as e:
-                logger.error(f"Failed to log user list: {str(e)}")
             
             # Response
             return Response(
@@ -185,7 +171,6 @@ class UserProfileAdminDetailView(APIView):
     }
     
     Accessible by: Admin/Manager only
-    Audit: Logs action as GET_USER_DETAIL and UPDATE_USER_PROFILE
     
     ✅ CORRECT FLOW:
     View (get user_id) → Service (fetch/update profile) 
@@ -212,19 +197,6 @@ class UserProfileAdminDetailView(APIView):
             # ✅ SERIALIZER LAYER: Use EnhancedUserProfileReadSerializer to include account data
             # This returns BOTH profile info + account info (roles, permissions, status)
             serializer = EnhancedUserProfileReadSerializer(profile)
-            
-            # Audit log
-            try:
-                from apps.operations.models import AuditLog
-                AuditLog.log_action(
-                    account=request.user,
-                    action='GET_USER_DETAIL',
-                    resource_id=str(profile.id),
-                    query_text=f"Viewed user profile: {profile.account.username}",
-                    request=request
-                )
-            except Exception as e:
-                logger.error(f"Failed to log user detail view: {str(e)}")
             
             # Response
             return Response(

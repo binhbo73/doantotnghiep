@@ -150,6 +150,18 @@ class ConversationListCreateView(BaseViewSet):
             serializer.is_valid(raise_exception=True)
             conversation = serializer.save()
             
+            # Log audit
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='CREATE',
+                    resource_id=str(conversation.id),
+                    query_text=f"Created conversation: {conversation.title or 'Untitled'}",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for conversation create: {e}")
+            
             logger.info(f"Conversation {conversation.id} created by user {request.user.id}")
             
             return self.success_response(
@@ -310,6 +322,18 @@ class ConversationAttachmentView(BaseViewSet):
                     continue
                 self._restore_or_create_folder_attachment(conversation, folder)
 
+            # Log audit
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='SHARE',
+                    resource_id=conversation_id,
+                    query_text=f"Attached documents/folders to conversation",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for conversation attach: {e}")
+            
             conversation.refresh_from_db()
             return self.success_response(
                 data=ConversationDetailSerializer(conversation).data,
@@ -382,6 +406,19 @@ class ConversationAttachmentView(BaseViewSet):
                 conversation.summary = request.data['summary']
             
             conversation.save()
+            
+            # Log audit
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='UPDATE',
+                    resource_id=str(conversation_id),
+                    query_text=f"Updated conversation: {conversation.title or 'Untitled'}",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for conversation update: {e}")
+            
             logger.info(f"Conversation {conversation_id} updated by user {request.user.id}")
             
             return self.success_response(
@@ -408,6 +445,18 @@ class ConversationAttachmentView(BaseViewSet):
             # Soft delete
             conversation.is_deleted = True
             conversation.save()
+            
+            # Log audit
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='DELETE',
+                    resource_id=str(conversation_id),
+                    query_text=f"Deleted conversation",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for conversation delete: {e}")
             
             logger.info(f"Conversation {conversation_id} deleted by user {request.user.id}")
             
@@ -499,6 +548,18 @@ class MessageSendView(BaseViewSet):
             )
             serializer.is_valid(raise_exception=True)
             bot_message = serializer.save()
+            
+            # Log audit
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='CREATE',
+                    resource_id=str(bot_message.id),
+                    query_text=f"Sent message in conversation",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for message create: {e}")
             
             logger.info(f"User {request.user.id} sent message in conversation")
             
@@ -688,16 +749,14 @@ class MessageFeedbackView(BaseViewSet):
             feedback_action = self.context_data.get('feedback_action', 'SUBMIT') if hasattr(self, 'context_data') else 'SUBMIT'
             created = serializer.context.get('feedback_created', True)
             
-            # Log to audit trail
+            # Log to audit trail using repository pattern
             try:
                 from apps.operations.models import AuditLog
-                AuditLog.log_action(
+                AuditLog.objects.create(
                     account=request.user,
                     action='FEEDBACK',
-                    description=f"{'Created' if created else 'Updated'} feedback ({feedback.rating}) on message {message_id}",
                     resource_id=message_id_uuid,
-                    ip_address=self.get_client_ip(request),
-                    user_agent=request.META.get('HTTP_USER_AGENT', '')
+                    query_text=f"{'Created' if created else 'Updated'} feedback ({feedback.rating}) on message {message_id}",
                 )
             except Exception as audit_error:
                 logger.warning(f"Failed to log audit: {audit_error}")
