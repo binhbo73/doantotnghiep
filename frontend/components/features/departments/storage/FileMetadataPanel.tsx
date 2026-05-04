@@ -45,11 +45,17 @@ function formatDate(dateString: string): string {
 
 function getFilePreviewColor(fileType: string): string {
     const type = fileType.toLowerCase();
-    if (type === 'pdf') return 'bg-red-100 text-red-600';
-    if (type === 'docx' || type === 'doc') return 'bg-blue-100 text-blue-600';
-    if (type === 'xlsx' || type === 'xls') return 'bg-green-100 text-green-600';
-    if (type === 'zip' || type === 'rar') return 'bg-purple-100 text-purple-600';
-    return 'bg-gray-100 text-gray-600';
+    if (type.includes('pdf')) return 'bg-red-50 text-red-600';
+    if (type.includes('doc') || type.includes('word')) return 'bg-blue-50 text-blue-600';
+    if (type.includes('xls') || type.includes('excel') || type.includes('sheet')) return 'bg-green-50 text-green-600';
+    if (type.includes('ppt') || type.includes('powerpoint') || type.includes('presentation')) return 'bg-orange-50 text-orange-600';
+    if (type.includes('zip') || type.includes('rar') || type.includes('tar') || type.includes('gz')) return 'bg-amber-50 text-amber-600';
+    if (type.includes('png') || type.includes('jpg') || type.includes('jpeg') || type.includes('gif') || type.includes('svg') || type.includes('webp')) return 'bg-purple-50 text-purple-600';
+    if (type.includes('mp4') || type.includes('avi') || type.includes('mov') || type.includes('video')) return 'bg-pink-50 text-pink-600';
+    if (type.includes('txt') || type.includes('text')) return 'bg-slate-100 text-slate-600';
+    if (type.includes('md') || type.includes('markdown')) return 'bg-indigo-50 text-indigo-600';
+    if (type.includes('json') || type.includes('xml') || type.includes('yaml') || type.includes('yml')) return 'bg-teal-50 text-teal-600';
+    return 'bg-slate-100 text-slate-500';
 }
 
 export function FileMetadataPanel({
@@ -92,7 +98,7 @@ export function FileMetadataPanel({
                         </div>
                     </div>
                 ) : (
-                    <div className="rounded-xl p-6 flex items-center justify-center min-h-40 bg-orange-50">
+                    <div className="rounded-xl p-6 flex items-center justify-center min-h-40 bg-slate-50">
                         <div className="text-center">
                             <div className="text-5xl mb-2">📁</div>
                             <p className="text-xs text-gray-600 font-semibold">
@@ -125,7 +131,7 @@ export function FileMetadataPanel({
             <div className="grid grid-cols-2 gap-2">
                 <button
                     onClick={onDownload}
-                    className="flex items-center justify-center gap-2 px-3 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 text-white rounded-lg hover:from-blue-700 hover:to-blue-600 transition-all text-sm font-medium shadow-sm"
+                    className="flex items-center justify-center gap-2 px-3 py-2.5 bg-gradient-to-r from-[#9d4300] to-[#f97316] text-white rounded-lg hover:opacity-90 transition-all text-sm font-medium shadow-sm"
                 >
                     <Download className="w-4 h-4" />
                     <span>Tải về</span>
@@ -197,7 +203,7 @@ export function FileMetadataPanel({
                     </div>
 
                     {/* Status (Documents only) */}
-                    {isDocument && selectedDocument!.status && (
+                    {isDocument && selectedDocument!.status && !['processing', 'pending'].includes(selectedDocument!.status) && (
                         <div className="flex items-center gap-3">
                             <div className="w-4 h-4 rounded-full flex-shrink-0 bg-green-500" />
                             <div className="flex-1">
@@ -205,13 +211,9 @@ export function FileMetadataPanel({
                                 <p className="text-sm text-gray-900 font-medium capitalize">
                                     {selectedDocument!.status === 'completed'
                                         ? 'Hoàn thành'
-                                        : selectedDocument!.status === 'processing'
-                                            ? 'Đang xử lý'
-                                            : selectedDocument!.status === 'pending'
-                                                ? 'Chờ xử lý'
-                                                : selectedDocument!.status === 'failed'
-                                                    ? 'Lỗi'
-                                                    : selectedDocument!.status}
+                                        : selectedDocument!.status === 'failed'
+                                            ? 'Lỗi'
+                                            : selectedDocument!.status}
                                 </p>
                             </div>
                         </div>

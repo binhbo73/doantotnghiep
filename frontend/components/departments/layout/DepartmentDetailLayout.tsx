@@ -51,21 +51,21 @@ export default function DepartmentDetailLayout({
                             <Link
                                 href={`/dashboard/departments/${deptId}`}
                                 className="relative py-2 text-xs font-black transition-colors"
-                                style={{ color: isStorageTabActive ? '#8b9ab6' : '#9d4300' }}
+                                style={{ color: isStorageTabActive ? '#8b9ab6' : '#b45309' }}
                             >
                                 Phòng ban
                                 {!isStorageTabActive && (
-                                    <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#9d4300] rounded-full" />
+                                    <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#f59e0b] rounded-full" />
                                 )}
                             </Link>
                             <Link
                                 href={`/dashboard/departments/${deptId}/storage`}
                                 className="relative py-2 text-xs font-black transition-colors"
-                                style={{ color: isStorageTabActive ? '#9d4300' : '#94a3b8' }}
+                                style={{ color: isStorageTabActive ? '#b45309' : '#94a3b8' }}
                             >
                                 Kho lưu trữ
                                 {isStorageTabActive && (
-                                    <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#9d4300] rounded-full" />
+                                    <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#f59e0b] rounded-full" />
                                 )}
                             </Link>
                         </div>

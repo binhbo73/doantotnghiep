@@ -100,8 +100,8 @@ class PermissionManager:
     
     def check_document_access(
         self, 
-        user_id: int, 
-        document_id: int, 
+        account_id: str, 
+        document_id: str, 
         action: str = 'read'
     ) -> bool:
         """
@@ -115,7 +115,7 @@ class PermissionManager:
         5. Return result
         
         Args:
-            user_id: User ID
+            account_id: Account ID (UUID)
             document_id: Document ID
             action: 'read', 'write', 'delete', 'share'
         
@@ -129,9 +129,9 @@ class PermissionManager:
                 raise DocumentNotFoundError(f"Document {document_id} not found")
             
             # Get user via Repository (ORM call centralized)
-            user = self.perm_mgr_repo.get_account_by_id(user_id)
+            user = self.perm_mgr_repo.get_account_by_id(account_id)
             if not user:
-                logger.warning(f"User {user_id} not found for permission check on document {document_id}")
+                logger.warning(f"Account {account_id} not found for permission check on document {document_id}")
                 return False
             
             # Principle of least privilege: if user is blocked/inactive, deny
@@ -140,8 +140,13 @@ class PermissionManager:
                 return False
             
             # Uploader gets all permissions (implicit)
-            if document.uploader_id == user_id:
-                logger.debug(f"User {user_id} is uploader of document {document_id}, granting {action}")
+            if str(document.uploader_id) == str(account_id):
+                logger.debug(f"Account {account_id} is uploader of document {document_id}, granting {action}")
+                return True
+            
+            # Admin bypass
+            from core.constants import RoleIds
+            if user.is_superuser or user.has_role(RoleIds.ADMIN):
                 return True
             
             # Load the user's department from the profile relation. Department lives
@@ -161,8 +166,8 @@ class PermissionManager:
     
     def check_document_access_strict(
         self, 
-        user_id: int, 
-        document_id: int, 
+        account_id: str, 
+        document_id: str, 
         action: str = 'read'
     ) -> bool:
         """
@@ -172,7 +177,7 @@ class PermissionManager:
             PermissionDeniedError: If user doesn't have permission
             DocumentNotFoundError: If document not found
         """
-        if not self.check_document_access(user_id, document_id, action):
+        if not self.check_document_access(account_id, document_id, action):
             Document = apps.get_model('documents', 'Document')
             try:
                 doc = Document.objects.get(pk=document_id, is_deleted=False)
@@ -183,7 +188,27 @@ class PermissionManager:
                 raise DocumentNotFoundError(f"Document {document_id} not found")
         return True
     
-    def get_accessible_documents(self, user_id: int, action: str = 'read') -> 'QuerySet':
+    def get_effective_level(self, account_id: str, object_id: str, is_folder: bool = False) -> str:
+        """
+        Calculates the highest permission level a user has on a document or folder.
+        Returns: 'admin', 'write', 'read', or 'none'.
+        Used for UI mapping (my_permission field).
+        """
+        from core.constants import ObjectPermissionLevel
+        
+        check_func = self.check_folder_access if is_folder else self.check_document_access
+        
+        # Priority: Admin > Write > Read > None
+        if check_func(account_id, object_id, 'delete'):
+            return ObjectPermissionLevel.DELETE
+        if check_func(account_id, object_id, 'write'):
+            return ObjectPermissionLevel.WRITE
+        if check_func(account_id, object_id, 'read'):
+            return ObjectPermissionLevel.READ
+        
+        return ObjectPermissionLevel.NONE
+    
+    def get_accessible_documents(self, account_id: str, action: str = 'read') -> 'QuerySet':
         """
         Get all documents user can access
         
@@ -202,13 +227,13 @@ class PermissionManager:
             Document = apps.get_model('documents', 'Document')
             
             # Query 1: Documents user uploaded
-            uploaded_query = self.perm_mgr_repo.get_documents_by_uploader(user_id)
+            uploaded_query = self.perm_mgr_repo.get_documents_by_uploader(account_id)
             
             # Query 2: Documents with explicit permission
-            explicit_perms = self.perm_mgr_repo.get_documents_with_explicit_permission(user_id)
+            explicit_perms = self.perm_mgr_repo.get_documents_with_explicit_permission(account_id)
             
             # Query 3: Documents via folder permission
-            accessible_folder_ids = self.perm_mgr_repo.get_accessible_folder_ids(user_id)
+            accessible_folder_ids = self.perm_mgr_repo.get_accessible_folder_ids(account_id)
             folder_docs = self.perm_mgr_repo.get_documents_by_folder_ids(accessible_folder_ids)
             
             # Union all + remove duplicates
@@ -228,8 +253,8 @@ class PermissionManager:
     
     def check_folder_access(
         self, 
-        user_id: int, 
-        folder_id: int, 
+        account_id: str, 
+        folder_id: str, 
         action: str = 'read'
     ) -> bool:
         """
@@ -260,11 +285,16 @@ class PermissionManager:
             # Get user
             try:
                 user = Account.objects.select_related('user_profile__department').get(
-                    pk=user_id, is_deleted=False
+                    pk=account_id, is_deleted=False
                 )
             except Account.DoesNotExist:
-                logger.warning(f"User {user_id} not found for folder access check")
+                logger.warning(f"Account {account_id} not found for folder access check")
                 return False
+
+            # Admin bypass
+            from core.constants import RoleIds
+            if user.is_superuser or user.has_role(RoleIds.ADMIN):
+                return True
 
             try:
                 user_department = user.user_profile.department if hasattr(user, 'user_profile') else None
@@ -274,20 +304,21 @@ class PermissionManager:
             # Department check: can access own or sub-departments
             if not self._check_department_hierarchy(user_department, folder.department):
                 logger.info(
-                    f"User {user_id} (dept {getattr(user_department, 'id', None)}) cannot access "
+                    f"Account {account_id} (dept {getattr(user_department, 'id', None)}) cannot access "
                     f"folder {folder_id} (dept {folder.department_id})"
                 )
                 return False
             
             # Check folder inheritance
+            from core.constants import ObjectPermissionLevel
             access_scope = self._check_folder_inheritance(user, user_department, folder)
-            return access_scope in [AccessScope.READ, AccessScope.WRITE, AccessScope.ADMIN]
+            return access_scope in [ObjectPermissionLevel.READ, ObjectPermissionLevel.WRITE, ObjectPermissionLevel.DELETE]
             
         except Exception as e:
             logger.error(f"Error checking folder access: {str(e)}", exc_info=True)
             return False
     
-    def get_accessible_folders(self, user_id: int) -> 'QuerySet':
+    def get_accessible_folders(self, account_id: str) -> 'QuerySet':
         """
         Get all folders user can access
         
@@ -297,7 +328,7 @@ class PermissionManager:
             QuerySet of accessible folders
         """
         try:
-            return self.perm_mgr_repo.get_accessible_folders(user_id)
+            return self.perm_mgr_repo.get_accessible_folders(account_id)
         except Exception as e:
             logger.error(f"Error getting accessible folders: {str(e)}", exc_info=True)
             Folder = apps.get_model('documents', 'Folder')
@@ -307,34 +338,34 @@ class PermissionManager:
     # PUBLIC METHODS - Role/Permission Checks
     # ============================================================================
     
-    def check_user_has_role(self, user_id, role_id) -> bool:
+    def check_user_has_role(self, account_id, role_id) -> bool:
         """Check if user has specific role (role_id is now UUID)"""
         try:
-            return self.permission_repo.check_user_has_role(user_id, role_id)
+            return self.permission_repo.check_user_has_role(account_id, role_id)
         except Exception as e:
             logger.error(f"Error checking user role: {str(e)}")
             return False
     
-    def check_user_has_permission(self, user_id: int, permission_code: str) -> bool:
+    def check_user_has_permission(self, account_id: str, permission_code: str) -> bool:
         """Check if user has specific permission (via role)"""
         try:
-            return self.permission_repo.check_user_has_permission(user_id, permission_code)
+            return self.permission_repo.check_user_has_permission(account_id, permission_code)
         except Exception as e:
             logger.error(f"Error checking user permission: {str(e)}")
             return False
     
-    def check_user_has_any_permission(self, user_id: int, permission_codes: List[str]) -> bool:
+    def check_user_has_any_permission(self, account_id: str, permission_codes: List[str]) -> bool:
         """Check if user has ANY of the permissions in list"""
         try:
-            return self.permission_repo.check_user_has_any_permission(user_id, permission_codes)
+            return self.permission_repo.check_user_has_any_permission(account_id, permission_codes)
         except Exception as e:
             logger.error(f"Error checking user -any- permission: {str(e)}")
             return False
     
-    def check_user_has_all_permissions(self, user_id: int, permission_codes: List[str]) -> bool:
+    def check_user_has_all_permissions(self, account_id: str, permission_codes: List[str]) -> bool:
         """Check if user has ALL permissions in list"""
         try:
-            return self.permission_repo.check_user_has_all_permissions(user_id, permission_codes)
+            return self.permission_repo.check_user_has_all_permissions(account_id, permission_codes)
         except Exception as e:
             logger.error(f"Error checking user -all- permissions: {str(e)}")
             return False
@@ -398,7 +429,7 @@ class PermissionManager:
             allow_perm = self.perm_mgr_repo.get_document_allow_permission(document.id, user.id)
             if allow_perm:
                 # Check if permission level allows action
-                if self._scope_allows_action(allow_perm.access_scope, action):
+                if self._scope_allows_action(allow_perm.permission, action):
                     logger.debug(f"User {user.id} has explicit permission on document {document.id}")
                     return True
             
@@ -494,22 +525,25 @@ class PermissionManager:
                 current_folder = current_folder.parent if hasattr(current_folder, 'parent') else None
 
             # No permission found in hierarchy
+            from core.constants import ObjectPermissionLevel
             logger.debug(f"User {user.id} has no permission in folder hierarchy at {folder.id}")
-            return AccessScope.NONE
+            return ObjectPermissionLevel.NONE
 
         except Exception as e:
+            from core.constants import ObjectPermissionLevel
             logger.error(f"Error checking folder inheritance: {str(e)}", exc_info=True)
-            return AccessScope.NONE
+            return ObjectPermissionLevel.NONE
 
     def _permission_to_scope(self, permission: str) -> str:
-        """Map FolderPermission levels to AccessScope values."""
+        """Map FolderPermission levels to ObjectPermissionLevel values."""
+        from core.constants import ObjectPermissionLevel
         if permission == 'delete':
-            return AccessScope.ADMIN
+            return ObjectPermissionLevel.DELETE
         if permission == 'write':
-            return AccessScope.WRITE
+            return ObjectPermissionLevel.WRITE
         if permission == 'read':
-            return AccessScope.READ
-        return AccessScope.NONE
+            return ObjectPermissionLevel.READ
+        return ObjectPermissionLevel.NONE
 
     def _pick_strongest_folder_permission(self, permissions):
         """Pick the strongest permission from a FolderPermission queryset."""
@@ -592,26 +626,27 @@ class PermissionManager:
         """Get user role IDs as list (role IDs are now UUIDs)"""
         return list(self._get_user_roles(user_id))
     
-    def _scope_allows_action(self, scope: str, action: str) -> bool:
+    def _scope_allows_action(self, perm_level: str, action: str) -> bool:
         """
-        Check if access scope allows action
+        Check if permission level allows action
         
-        Scope hierarchy:
-        - ADMIN: all actions
-        - WRITE: read + write (no delete/share)
+        Level hierarchy:
+        - DELETE: all actions
+        - WRITE: read + write
         - READ: read only
-        - DENY: no actions
-        - NONE: no actions
+        - DENY/NONE: no actions
         """
-        scope_hierarchy = {
-            AccessScope.ADMIN: ['read', 'write', 'delete', 'share'],
-            AccessScope.WRITE: ['read', 'write'],
-            AccessScope.READ: ['read'],
-            AccessScope.DENY: [],
-            AccessScope.NONE: [],
+        from core.constants import ObjectPermissionLevel
+        
+        level_hierarchy = {
+            ObjectPermissionLevel.DELETE: ['read', 'write', 'delete', 'share'],
+            ObjectPermissionLevel.WRITE: ['read', 'write'],
+            ObjectPermissionLevel.READ: ['read'],
+            ObjectPermissionLevel.DENY: [],
+            ObjectPermissionLevel.NONE: [],
         }
         
-        allowed_actions = scope_hierarchy.get(scope, [])
+        allowed_actions = level_hierarchy.get(perm_level, [])
         return action in allowed_actions
 
 

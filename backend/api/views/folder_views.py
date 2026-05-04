@@ -96,7 +96,7 @@ class FolderListCreateView(APIView):
             
             # Get folder tree
             folder_tree = service.get_folder_tree(
-                user_id=str(request.user.id),
+                account_id=str(request.user.id),
                 include_deleted=False
             )
             
@@ -176,7 +176,7 @@ class FolderListCreateView(APIView):
             )
             
             # Serialize response
-            response_serializer = FolderDetailSerializer(folder)
+            response_serializer = FolderDetailSerializer(folder, context={'request': request})
             
             logger.info(f"Folder created by {request.user.id}: {folder.name}")
             
@@ -262,7 +262,7 @@ class FolderDetailView(APIView):
             # TODO: Check user has read permission on folder
             # For now: assume all authenticated users can view
             
-            serializer = FolderDetailSerializer(folder)
+            serializer = FolderDetailSerializer(folder, context={'request': request})
             
             logger.info(f"User {request.user.id} retrieved folder {folder_id}")
             
@@ -323,7 +323,7 @@ class FolderDetailView(APIView):
             )
             
             # Serialize response
-            response_serializer = FolderDetailSerializer(folder)
+            response_serializer = FolderDetailSerializer(folder, context={'request': request})
             
             logger.info(f"Folder updated by {request.user.id}: {folder_id}")
             
@@ -475,7 +475,7 @@ class FolderMoveView(APIView):
             )
             
             # Serialize response
-            response_serializer = FolderDetailSerializer(folder)
+            response_serializer = FolderDetailSerializer(folder, context={'request': request})
             
             logger.info(f"Folder moved by {request.user.id}: {folder_id}")
             

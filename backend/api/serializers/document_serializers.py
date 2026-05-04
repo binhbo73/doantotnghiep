@@ -19,15 +19,33 @@ class FolderSerializer(SoftDeleteModelSerializer):
     uploader_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
     child_count = serializers.IntegerField(source='subfolders.count', read_only=True)
     document_count = serializers.IntegerField(source='documents.count', read_only=True)
+    my_permission = serializers.SerializerMethodField()
 
     class Meta:
         model = Folder
         fields = [
             'id', 'name', 'parent', 'created_by', 'uploader_name',
             'department', 'access_scope', 'description',
-            'child_count', 'document_count', 'created_at', 'updated_at', 'is_deleted'
+            'child_count', 'document_count', 'my_permission', 'created_at', 'updated_at', 'is_deleted'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_my_permission(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 'none'
+        
+        from core.permissions.permission_manager import get_permission_manager
+        # For folders, we reuse the inheritance logic
+        pm = get_permission_manager()
+        # Helper to convert scope to level
+        if pm.check_folder_access(request.user.id, obj.id, 'delete'):
+            return 'admin'
+        if pm.check_folder_access(request.user.id, obj.id, 'write'):
+            return 'write'
+        if pm.check_folder_access(request.user.id, obj.id, 'read'):
+            return 'read'
+        return 'none'
 
 
 class DocumentSerializer(SoftDeleteModelSerializer):
@@ -37,6 +55,7 @@ class DocumentSerializer(SoftDeleteModelSerializer):
     department_name = serializers.CharField(source='department.name', read_only=True, allow_null=True)
     tags_list = TagSerializer(source='tags', many=True, read_only=True)
     chunk_count = serializers.SerializerMethodField()
+    my_permission = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -46,7 +65,7 @@ class DocumentSerializer(SoftDeleteModelSerializer):
             'department', 'department_name',
             'folder', 'folder_name',
             'status', 'access_scope',
-            'tags_list', 'chunk_count', 'metadata',
+            'tags_list', 'chunk_count', 'my_permission', 'metadata',
             'created_at', 'updated_at', 'is_deleted'
         ]
         read_only_fields = [
@@ -55,6 +74,14 @@ class DocumentSerializer(SoftDeleteModelSerializer):
 
     def get_chunk_count(self, obj):
         return obj.chunks.filter(is_deleted=False).count()
+
+    def get_my_permission(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 'none'
+        
+        from core.permissions.permission_manager import get_permission_manager
+        return get_permission_manager().get_effective_level(request.user.id, obj.id)
 
 
 class DocumentChunkSerializer(serializers.ModelSerializer):

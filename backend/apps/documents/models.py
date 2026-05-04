@@ -287,8 +287,8 @@ class DocumentPermission(BaseModel):
     permission = models.CharField(
         max_length=50,
         default='read',
-        choices=[('read', 'Read'), ('write', 'Write'), ('delete', 'Delete')],
-        help_text="Permission level (read, write, delete)"
+        choices=[('read', 'Read'), ('write', 'Write'), ('admin', 'Admin')],
+        help_text="Permission level (read, write, admin)"
     )
     permission_precedence = models.CharField(
         max_length=50,
@@ -312,6 +312,20 @@ class DocumentPermission(BaseModel):
 
     def __str__(self):
         return f"{self.document.original_name} → {self.subject_type}:{self.subject_id}"
+
+    @property
+    def resolved_subject(self):
+        """Resolves the CharField subject_id to an actual Account or Role instance."""
+        try:
+            if self.subject_type == 'role':
+                from apps.users.models import Role
+                return Role.objects.get(pk=self.subject_id)
+            elif self.subject_type == 'account':
+                from apps.users.models import Account
+                return Account.objects.get(pk=self.subject_id)
+        except Exception:
+            return None
+        return None
 
 
 class FolderPermission(BaseModel):
@@ -338,8 +352,8 @@ class FolderPermission(BaseModel):
     permission = models.CharField(
         max_length=50,
         default='read',
-        choices=[('read', 'Read'), ('write', 'Write'), ('delete', 'Delete')],
-        help_text="Permission level (read, write, delete)"
+        choices=[('read', 'Read'), ('write', 'Write'), ('admin', 'Admin')],
+        help_text="Permission level (read, write, admin)"
     )
     is_active = models.BooleanField(default=True, help_text="Is this permission active?")
 
@@ -356,6 +370,20 @@ class FolderPermission(BaseModel):
 
     def __str__(self):
         return f"{self.folder.name} → {self.subject_type}:{self.subject_id}"
+
+    @property
+    def resolved_subject(self):
+        """Resolves the CharField subject_id to an actual Account or Role instance."""
+        try:
+            if self.subject_type == 'role':
+                from apps.users.models import Role
+                return Role.objects.get(pk=self.subject_id)
+            elif self.subject_type == 'account':
+                from apps.users.models import Account
+                return Account.objects.get(pk=self.subject_id)
+        except Exception:
+            return None
+        return None
 
 
 class DocumentEmbedding(BaseModel):

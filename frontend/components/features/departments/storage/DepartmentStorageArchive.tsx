@@ -56,7 +56,7 @@ export function DepartmentStorageArchive({
                     <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-500 mb-3">
                         <span>Phòng ban</span>
                         <span className="text-gray-300">›</span>
-                        <span className="text-blue-600">Kho lưu trữ</span>
+                        <span className="text-amber-600">Kho lưu trữ</span>
                     </div>
                     <div>
                         <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -96,7 +96,7 @@ export function DepartmentStorageArchive({
                 <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-gray-500 mb-3">
                     <span>Phòng ban</span>
                     <span className="text-gray-300">›</span>
-                    <span className="text-blue-600">Kho lưu trữ</span>
+                    <span className="text-amber-600">Kho lưu trữ</span>
                 </div>
                 <div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
@@ -121,7 +121,7 @@ export function DepartmentStorageArchive({
                             placeholder="Tìm kiếm thư mục hoặc tệp..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                            className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm"
                         />
                     </div>
 
@@ -130,7 +130,7 @@ export function DepartmentStorageArchive({
                         {loading ? (
                             <div className="flex items-center justify-center h-96">
                                 <div className="text-center">
-                                    <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto mb-2" />
+                                    <Loader2 className="w-8 h-8 text-amber-600 animate-spin mx-auto mb-2" />
                                     <p className="text-sm text-gray-500">
                                         Đang tải dữ liệu...
                                     </p>
@@ -151,7 +151,7 @@ export function DepartmentStorageArchive({
                                     <p className="text-gray-500 mb-3">Không có thư mục nào</p>
                                     <button
                                         onClick={refresh}
-                                        className="text-xs text-blue-600 hover:underline"
+                                        className="text-xs text-amber-600 hover:underline"
                                     >
                                         Tải lại dữ liệu
                                     </button>

@@ -152,7 +152,7 @@ ACCOUNT_STATUSES = [
 # ACCESS SCOPE (Folder Permission Inheritance)
 # ============================================================
 class AccessScope:
-    """Folder/Resource access scope levels"""
+    """Folder/Resource access scope levels (Classification)"""
     PERSONAL = "personal"       # Only owner
     DEPARTMENT = "department"   # Department members
     COMPANY = "company"         # All employees
@@ -161,6 +161,22 @@ ACCESS_SCOPES = [
     (AccessScope.PERSONAL, "Personal - Only Owner"),
     (AccessScope.DEPARTMENT, "Department - Department Members"),
     (AccessScope.COMPANY, "Company - All Employees"),
+]
+
+class ObjectPermissionLevel:
+    """Permission levels for specific documents/folders (Action Level)"""
+    READ = "read"
+    WRITE = "write"
+    DELETE = "admin"  # Full control/Admin
+    DENY = "deny"
+    NONE = "none"
+
+OBJECT_PERMISSION_LEVELS = [
+    (ObjectPermissionLevel.READ, "Read Only"),
+    (ObjectPermissionLevel.WRITE, "Read & Write"),
+    (ObjectPermissionLevel.DELETE, "Full Access (Delete/Share)"),
+    (ObjectPermissionLevel.DENY, "Explicit Deny"),
+    (ObjectPermissionLevel.NONE, "No Access"),
 ]
 
 

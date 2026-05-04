@@ -43,31 +43,38 @@ function formatDate(dateString: string): string {
 
 function getFileIcon(fileType: string): React.ReactNode {
     const type = fileType.toLowerCase();
-    if (type === 'zip' || type === 'rar' || type === 'compressed') {
-        return <Archive className="w-4 h-4 text-blue-500" />;
-    }
-    return <FileText className="w-4 h-4 text-orange-500" />;
+    if (type.includes('pdf')) return <FileText className="w-4 h-4 text-red-600" />;
+    if (type.includes('doc') || type.includes('word')) return <FileText className="w-4 h-4 text-blue-600" />;
+    if (type.includes('xls') || type.includes('excel') || type.includes('sheet')) return <FileText className="w-4 h-4 text-green-600" />;
+    if (type.includes('ppt') || type.includes('powerpoint') || type.includes('presentation')) return <FileText className="w-4 h-4 text-orange-600" />;
+    if (type.includes('zip') || type.includes('rar') || type.includes('tar') || type.includes('gz')) return <Archive className="w-4 h-4 text-amber-600" />;
+    if (type.includes('png') || type.includes('jpg') || type.includes('jpeg') || type.includes('gif') || type.includes('svg') || type.includes('webp')) return <FileText className="w-4 h-4 text-purple-600" />;
+    if (type.includes('mp4') || type.includes('avi') || type.includes('mov') || type.includes('video')) return <FileText className="w-4 h-4 text-pink-600" />;
+    if (type.includes('txt') || type.includes('text')) return <FileText className="w-4 h-4 text-slate-600" />;
+    if (type.includes('md') || type.includes('markdown')) return <FileText className="w-4 h-4 text-indigo-600" />;
+    if (type.includes('json') || type.includes('xml') || type.includes('yaml') || type.includes('yml')) return <FileText className="w-4 h-4 text-teal-600" />;
+    return <FileText className="w-4 h-4 text-slate-500" />;
 }
 
 function getStatusBadge(status: string): React.ReactNode {
+    if (status === 'processing' || status === 'pending') {
+        return null;
+    }
+
     const statusMap: Record<string, { label: string; bg: string; text: string }> = {
-        completed: { label: 'Hoàn thành', bg: 'bg-green-100', text: 'text-green-700' },
-        processing: { label: 'Đang xử lý', bg: 'bg-amber-100', text: 'text-amber-700' },
-        pending: { label: 'Chờ xử lý', bg: 'bg-gray-100', text: 'text-gray-700' },
-        failed: { label: 'Lỗi', bg: 'bg-red-100', text: 'text-red-700' },
+        completed: { label: 'Hoàn thành', bg: 'bg-slate-100', text: 'text-slate-700' },
+        failed: { label: 'Lỗi', bg: 'bg-slate-100', text: 'text-slate-700' },
     };
 
     const config = statusMap[status] || statusMap.pending;
     const dotColor: Record<string, string> = {
-        completed: 'bg-green-500',
-        processing: 'bg-amber-500',
-        pending: 'bg-gray-500',
-        failed: 'bg-red-500',
+        completed: 'bg-slate-500',
+        failed: 'bg-slate-500',
     };
 
     return (
         <div className={`flex items-center gap-1 ${config.bg} ${config.text} px-2 py-0.5 rounded-full text-[9px] font-bold uppercase`}>
-            <span className={`w-1.5 h-1.5 ${dotColor[status]} rounded-full`}></span>
+            <span className={`w-1.5 h-1.5 ${dotColor[status] || dotColor.pending} rounded-full`}></span>
             {config.label}
         </div>
     );
@@ -134,8 +141,8 @@ function FolderTreeNodeComponent({
             <div
                 onClick={() => onSelectFolder(folder)}
                 className={`flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-all ${isSelectedFolder
-                        ? 'bg-blue-50 text-blue-700'
-                        : 'hover:bg-gray-100 text-gray-700'
+                    ? 'bg-amber-50 text-amber-700'
+                    : 'hover:bg-amber-50 text-gray-700'
                     }`}
                 style={{ marginLeft }}
             >
@@ -143,7 +150,7 @@ function FolderTreeNodeComponent({
                 {hasChildren ? (
                     <button
                         onClick={handleToggle}
-                        className="p-0.5 hover:bg-gray-200 rounded transition-colors flex-shrink-0"
+                        className="p-0.5 hover:bg-amber-100 rounded transition-colors flex-shrink-0"
                     >
                         {folder.expanded ? (
                             <ChevronDown className="w-4 h-4" />
@@ -157,9 +164,9 @@ function FolderTreeNodeComponent({
 
                 {/* Folder Icon */}
                 {folder.expanded && hasChildren ? (
-                    <FolderOpen className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                    <FolderOpen className="w-4 h-4 text-amber-500 flex-shrink-0" />
                 ) : (
-                    <Folder className="w-4 h-4 text-orange-400 flex-shrink-0" />
+                    <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
                 )}
 
                 {/* Folder Name */}
@@ -178,7 +185,7 @@ function FolderTreeNodeComponent({
                 <div className="relative">
                     {/* Connector Line */}
                     <div
-                        className="absolute left-0 top-0 bottom-0 w-px bg-gray-200"
+                        className="absolute left-0 top-0 bottom-0 w-px bg-amber-100"
                         style={{ left: `${level * 24 + 12}px` }}
                     />
 
@@ -235,7 +242,7 @@ function DocumentItemComponent({
     return (
         <div
             onClick={() => onSelectDocument(document)}
-            className="flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-all hover:bg-orange-50"
+            className="flex items-center gap-2 py-2 px-3 rounded-lg cursor-pointer transition-all hover:bg-amber-50"
             style={{ marginLeft }}
         >
             {/* Spacer for indent */}

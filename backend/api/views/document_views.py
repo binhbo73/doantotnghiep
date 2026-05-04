@@ -144,7 +144,7 @@ class DocumentListView(APIView):
             )
             
             # Serialize response
-            serializer = DocumentSerializer(result['documents'], many=True)
+            serializer = DocumentSerializer(result['documents'], many=True, context={'request': request})
             
             logger.info(f"User {request.user.id} listed {len(result['documents'])} documents")
             
@@ -399,7 +399,7 @@ class DocumentDetailView(APIView):
                 permission_required='read'
             )
             
-            serializer = DocumentSerializer(document)
+            serializer = DocumentSerializer(document, context={'request': request})
             
             logger.info(f"User {request.user.id} retrieved document {doc_id}")
             
@@ -478,7 +478,7 @@ class DocumentUpdateView(APIView):
                     **serializer.validated_data
                 )
             
-            response_serializer = DocumentSerializer(document)
+            response_serializer = DocumentSerializer(document, context={'request': request})
             
             logger.info(f"Document updated by {request.user.id}: {doc_id}")
             

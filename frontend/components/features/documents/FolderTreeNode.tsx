@@ -25,19 +25,10 @@ function matchesSearch(text: string, query: string): boolean {
 // ─── Folder Icon based on name ─────────────────────────────
 
 function getFolderIcon(name: string, isExpanded: boolean): { icon: string; color: string; bg: string } {
-    const n = name.toLowerCase()
-    if (n.includes('sop') || n.includes('quy trình')) return { icon: 'rule_folder', color: 'text-emerald-600', bg: 'bg-emerald-50' }
-    if (n.includes('dự án') || n.includes('project')) return { icon: 'work', color: 'text-violet-600', bg: 'bg-violet-50' }
-    if (n.includes('thiết kế') || n.includes('design')) return { icon: 'design_services', color: 'text-pink-600', bg: 'bg-pink-50' }
-    if (n.includes('kỹ thuật') || n.includes('technical') || n.includes('hệ thống')) return { icon: 'engineering', color: 'text-blue-600', bg: 'bg-blue-50' }
-    if (n.includes('nhân sự') || n.includes('hr')) return { icon: 'group', color: 'text-teal-600', bg: 'bg-teal-50' }
-    if (n.includes('tài chính') || n.includes('finance')) return { icon: 'payments', color: 'text-amber-600', bg: 'bg-amber-50' }
-    if (n.includes('báo cáo') || n.includes('report')) return { icon: 'assessment', color: 'text-indigo-600', bg: 'bg-indigo-50' }
-
     return {
         icon: isExpanded ? 'folder_open' : 'folder',
-        color: 'text-[#9d4300]',
-        bg: 'bg-[#fff3e0]',
+        color: 'text-amber-600',
+        bg: 'bg-amber-50',
     }
 }
 
@@ -69,14 +60,14 @@ export function FolderTreeNodeComponent({
 
     // Filter documents by search
     const filteredDocs = searchQuery
-        ? documents.filter((d) => matchesSearch(d.original_name || d.filename, searchQuery))
+        ? documents.filter((d) => matchesSearch(d.original_name || d.filename || '', searchQuery))
         : documents
 
     // Filter children by search (show if any child matches or any grandchild matches)
     const filteredChildren = searchQuery
         ? children.filter((child) => {
             if (matchesSearch(child.folder.name, searchQuery)) return true
-            if (child.documents.some((d) => matchesSearch(d.original_name || d.filename, searchQuery))) return true
+            if (child.documents.some((d) => matchesSearch(d.original_name || d.filename || '', searchQuery))) return true
             return child.children.length > 0 // Keep parents if they might have matching grandchildren
         })
         : children
@@ -95,19 +86,19 @@ export function FolderTreeNodeComponent({
         <div className="relative">
             {/* Connector line from parent */}
             {depth > 0 && (
-                <div className="absolute left-[-24px] top-[18px] w-6 h-px bg-[#e0c0b1]"></div>
+                <div className="absolute left-[-24px] top-[18px] w-6 h-px bg-amber-200"></div>
             )}
 
             {/* Folder Row */}
             <div
                 onClick={() => onToggleFolder(folder.id)}
                 className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 select-none ${isExpanded
-                    ? 'bg-[#fef5ed] border border-[#f97316]/20'
+                    ? 'bg-amber-50 border border-amber-200'
                     : 'hover:bg-white hover:shadow-sm border border-transparent'
                     }`}
             >
                 {/* Expand/Collapse Chevron */}
-                <span className={`material-symbols-outlined text-sm transition-transform duration-200 ${isExpanded ? 'rotate-90 text-[#9d4300]' : 'text-slate-400'}`}>
+                <span className={`material-symbols-outlined text-sm transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-600' : 'text-slate-400'}`}>
                     chevron_right
                 </span>
 
@@ -120,7 +111,7 @@ export function FolderTreeNodeComponent({
 
                 {/* Folder Name */}
                 <div className="flex-1 min-w-0">
-                    <h3 className={`text-xs font-semibold truncate ${isExpanded ? 'text-[#9d4300]' : 'text-slate-800'}`}>
+                    <h3 className={`text-xs font-semibold truncate ${isExpanded ? 'text-amber-700' : 'text-slate-800'}`}>
                         {folder.name}
                     </h3>
                     {folder.description && (
@@ -160,7 +151,7 @@ export function FolderTreeNodeComponent({
 
                 {/* Loading indicator */}
                 {isLoadingDocs && (
-                    <div className="w-4 h-4 border-2 border-[#9d4300]/20 border-t-[#9d4300] rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-amber-200 border-t-amber-600 rounded-full animate-spin" />
                 )}
             </div>
 
@@ -169,7 +160,7 @@ export function FolderTreeNodeComponent({
                 <div className={`${depth === 0 ? 'ml-8' : 'ml-6'} mt-1 relative`}>
                     {/* Vertical connector line */}
                     {(filteredChildren.length > 0 || filteredDocs.length > 0) && (
-                        <div className="absolute left-[-24px] top-0 w-px h-[calc(100%-16px)] bg-[#e0c0b1]/50"></div>
+                        <div className="absolute left-[-24px] top-0 w-px h-[calc(100%-16px)] bg-amber-200/60"></div>
                     )}
 
                     {/* Sub-folders */}
@@ -194,7 +185,7 @@ export function FolderTreeNodeComponent({
                             {filteredDocs.map((doc) => (
                                 <div key={doc.id} className="relative">
                                     {/* Connector line */}
-                                    <div className="absolute left-[-24px] top-[16px] w-6 h-px bg-[#e0c0b1]/50"></div>
+                                    <div className="absolute left-[-24px] top-[16px] w-6 h-px bg-amber-200/60"></div>
                                     <DocumentRow
                                         document={doc}
                                         isSelected={selectedDocId === doc.id}

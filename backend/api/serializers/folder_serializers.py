@@ -31,6 +31,7 @@ class FolderTreeSerializer(serializers.ModelSerializer):
     subfolder_count = serializers.SerializerMethodField()
     document_count = serializers.SerializerMethodField()
     sub_folders = serializers.SerializerMethodField()
+    my_permission = serializers.SerializerMethodField()
     
     class Meta:
         model = Folder
@@ -46,36 +47,24 @@ class FolderTreeSerializer(serializers.ModelSerializer):
             'created_by_username',
             'subfolder_count',
             'document_count',
+            'my_permission',
             'created_at',
             'updated_at',
             'sub_folders',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_created_by_username(self, obj):
-        """Get creator's username"""
-        if obj.created_by:
-            return obj.created_by.username
-        return None
-    
-    def get_department_name(self, obj):
-        """Get department name if associated"""
-        if obj.department:
-            return obj.department.name
-        return None
+    def get_my_permission(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 'none'
+        from core.permissions.permission_manager import get_permission_manager
+        return get_permission_manager().get_effective_level(request.user.id, obj.id, is_folder=True)
 
-    def get_subfolder_count(self, obj):
-        """Count direct sub-folders"""
-        return obj.subfolders.filter(is_deleted=False).count()
-    
-    def get_document_count(self, obj):
-        """Count documents directly in this folder"""
-        return obj.documents.filter(is_deleted=False).count()
-    
-    def get_sub_folders(self, obj):
-        """Recursively serialize sub-folders"""
+    def get_created_by_username(self, obj):
+# ... (rest of the methods) ...
         sub_folders = obj.subfolders.filter(is_deleted=False)
-        return FolderTreeSerializer(sub_folders, many=True).data
+        return FolderTreeSerializer(sub_folders, many=True, context=self.context).data
 
 
 class FolderDetailSerializer(serializers.ModelSerializer):
@@ -100,6 +89,7 @@ class FolderDetailSerializer(serializers.ModelSerializer):
     subfolder_count = serializers.SerializerMethodField()
     document_count = serializers.SerializerMethodField()
     sub_folders = serializers.SerializerMethodField()
+    my_permission = serializers.SerializerMethodField()
     
     class Meta:
         model = Folder
@@ -116,12 +106,20 @@ class FolderDetailSerializer(serializers.ModelSerializer):
             'created_by',
             'subfolder_count',
             'document_count',
+            'my_permission',
             'sub_folders',
             'metadata',
             'created_at',
             'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_my_permission(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 'none'
+        from core.permissions.permission_manager import get_permission_manager
+        return get_permission_manager().get_effective_level(request.user.id, obj.id, is_folder=True)
     
     def get_parent(self, obj):
         """Return parent folder info"""
@@ -319,6 +317,7 @@ class FolderListSerializer(serializers.ModelSerializer):
     """
     
     created_by_username = serializers.SerializerMethodField()
+    my_permission = serializers.SerializerMethodField()
     
     class Meta:
         model = Folder
@@ -329,9 +328,17 @@ class FolderListSerializer(serializers.ModelSerializer):
             'parent_id',
             'department_id',
             'created_by_username',
+            'my_permission',
             'created_at',
         ]
         read_only_fields = ['id', 'created_at']
+    
+    def get_my_permission(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 'none'
+        from core.permissions.permission_manager import get_permission_manager
+        return get_permission_manager().get_effective_level(request.user.id, obj.id, is_folder=True)
     
     def get_created_by_username(self, obj):
         return obj.created_by.username if obj.created_by else None

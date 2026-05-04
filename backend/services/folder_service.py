@@ -50,7 +50,7 @@ class FolderService(BaseService):
     # FOLDER TREE RETRIEVAL
     # ============================================================
     
-    def get_folder_tree(self, user_id: str, include_deleted: bool = False) -> List[Dict[str, Any]]:
+    def get_folder_tree(self, account_id: str, include_deleted: bool = False) -> List[Dict[str, Any]]:
         """
         Get accessible folders in tree structure for a user.
         
@@ -80,12 +80,12 @@ class FolderService(BaseService):
         """
         try:
             # Get user and their department
-            user = self.Account.objects.filter(id=user_id).first()
+            user = self.Account.objects.filter(id=account_id).first()
             if not user:
-                raise ValidationError(f"User {user_id} not found")
+                raise ValidationError(f"Account {account_id} not found")
             
             try:
-                user_profile = self.UserProfile.objects.get(account_id=user_id)
+                user_profile = self.UserProfile.objects.get(account_id=account_id)
                 user_department_id = user_profile.department_id
             except self.UserProfile.DoesNotExist:
                 user_department_id = None
@@ -93,12 +93,14 @@ class FolderService(BaseService):
             # Determine if user is Admin
             is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
             
-            # Get all accessible folders
-            all_accessible_folders = self.repository.get_accessible_folders(
-                user_id=user_id,
-                user_department_id=user_department_id,
-                is_admin=is_admin
-            )
+            # Get all accessible folders using unified PermissionManager
+            from core.permissions.permission_manager import get_permission_manager
+            pm = get_permission_manager()
+            
+            if is_admin:
+                all_accessible_folders = self.Folder.objects.filter(is_deleted=False).order_by('name')
+            else:
+                all_accessible_folders = pm.get_accessible_folders(account_id)
             
             # Map folders by parent_id for efficient lookup
             folders_by_parent = defaultdict(list)
@@ -109,9 +111,9 @@ class FolderService(BaseService):
             tree = []
             root_folders = folders_by_parent[None]
             for folder in root_folders:
-                tree.append(self._build_folder_tree_node_optimized(folder, folders_by_parent, user_id, user_department_id, is_admin))
+                tree.append(self._build_folder_tree_node_optimized(folder, folders_by_parent, account_id, user_department_id, is_admin))
             
-            logger.info(f"Retrieved folder tree for user {user_id}: {len(tree)} root folders")
+            logger.info(f"Retrieved folder tree for account {account_id}: {len(tree)} root folders")
             return tree
             
         except Exception as e:
@@ -122,7 +124,7 @@ class FolderService(BaseService):
         self,
         folder: 'Folder',
         folders_by_parent: Dict[Optional[str], List['Folder']],
-        user_id: str,
+        account_id: str,
         user_department_id: Optional[str] = None,
         is_admin: bool = False
     ) -> Dict[str, Any]:
@@ -134,7 +136,7 @@ class FolderService(BaseService):
         
         # Recursively build sub-nodes
         sub_nodes = [
-            self._build_folder_tree_node_optimized(sf, folders_by_parent, user_id, user_department_id, is_admin)
+            self._build_folder_tree_node_optimized(sf, folders_by_parent, account_id, user_department_id, is_admin)
             for sf in subfolders
         ]
         
@@ -145,10 +147,15 @@ class FolderService(BaseService):
             documents_query = documents_query.filter(
                 models.Q(access_scope='company') |
                 models.Q(access_scope='department', department_id=user_department_id) |
-                models.Q(access_scope='personal', uploader_id=user_id)
+                models.Q(access_scope='personal', uploader_id=account_id)
             ).distinct()
         
         document_count = documents_query.count()
+        
+        # Calculate effective permission level for user
+        from core.permissions.permission_manager import get_permission_manager
+        pm = get_permission_manager()
+        my_permission = pm.get_effective_level(account_id, folder.id, is_folder=True)
         
         return {
             'id': str(folder.id),
@@ -162,6 +169,7 @@ class FolderService(BaseService):
             'sub_folders': sub_nodes,
             'subfolder_count': len(subfolders),
             'document_count': document_count,
+            'my_permission': my_permission,
         }
     
     def _is_folder_accessible(

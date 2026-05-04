@@ -55,22 +55,21 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
             <div key={node.id} className="relative">
                 {/* Horizontal connector line from parent */}
                 {depth > 0 && (
-                    <div className="absolute left-[-28px] top-[24px] w-7 h-px bg-[#e0c0b1]"></div>
+                    <div className="absolute left-[-28px] top-[24px] w-7 h-px bg-amber-200"></div>
                 )}
 
                 {/* Folder Item Row */}
-                <div 
+                <div
                     onClick={() => hasChildren && toggleFolder(node.id)}
-                    className={`group flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all ${
-                        isExpanded 
-                        ? 'bg-[#fef5ed] shadow-sm ring-1 ring-[#f97316]/10' 
-                        : 'hover:bg-slate-50'
-                    }`}
+                    className={`group flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all ${isExpanded
+                            ? 'bg-amber-50 shadow-sm ring-1 ring-amber-200'
+                            : 'hover:bg-slate-50'
+                        }`}
                 >
                     {/* Expand/Collapse Chevron */}
                     <div className={`w-6 h-6 flex items-center justify-center transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
                         {hasChildren ? (
-                            <span className={`material-symbols-outlined text-xl ${isExpanded ? 'text-[#9d4300]' : 'text-slate-400'}`}>
+                            <span className={`material-symbols-outlined text-xl ${isExpanded ? 'text-amber-600' : 'text-slate-400'}`}>
                                 chevron_right
                             </span>
                         ) : (
@@ -78,19 +77,18 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                         )}
                     </div>
 
-                    {/* Folder Icon (Purple like screenshot) */}
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${
-                        isExpanded ? 'bg-[#7c3aed] text-white' : 'bg-[#f5f3ff] text-[#7c3aed]'
-                    }`}>
+                    {/* Folder Icon */}
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isExpanded ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-600'
+                        }`}>
                         <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>
-                            work
+                            {isExpanded ? 'folder_open' : 'folder'}
                         </span>
                     </div>
 
                     {/* Folder Details */}
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                            <h3 className={`text-sm font-black truncate ${isExpanded ? 'text-[#9d4300]' : 'text-[#0d1c2e]'}`}>
+                            <h3 className={`text-sm font-black truncate ${isExpanded ? 'text-amber-700' : 'text-[#0d1c2e]'}`}>
                                 {node.name}
                             </h3>
                             {node.access_scope === 'PRIVATE' && (
@@ -108,12 +106,12 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                     <div className="flex items-center gap-2">
                         {/* Subfolder Badge */}
                         {node.subfolder_count !== undefined && node.subfolder_count > 0 && (
-                            <div className="flex items-center gap-1 px-2.5 py-1.5 bg-[#eff6ff] rounded-xl border border-blue-100 text-blue-600">
+                            <div className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-600">
                                 <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>folder_zip</span>
                                 <span className="text-xs font-black">{node.subfolder_count}</span>
                             </div>
                         )}
-                        
+
                         {/* Document Badge */}
                         <div className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 rounded-xl border border-slate-100 text-slate-500">
                             <span className="material-symbols-outlined text-lg">description</span>
@@ -121,10 +119,10 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                         </div>
 
                         {/* Link to detail */}
-                        <Link 
+                        <Link
                             href={`/dashboard/folders/${node.id}`}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-9 h-9 flex items-center justify-center rounded-xl bg-white border border-[#e0c0b1]/30 text-slate-400 hover:text-[#9d4300] hover:border-[#9d4300] transition-all ml-1 shadow-sm"
+                            className="w-9 h-9 flex items-center justify-center rounded-xl bg-white border border-amber-200 text-slate-400 hover:text-amber-600 hover:border-amber-600 transition-all ml-1 shadow-sm"
                         >
                             <span className="material-symbols-outlined text-xl">open_in_new</span>
                         </Link>
@@ -135,7 +133,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                 {isExpanded && hasChildren && (
                     <div className={`${depth === 0 ? 'ml-10' : 'ml-8'} mt-2 space-y-2 relative`}>
                         {/* Vertical line connector */}
-                        <div className="absolute left-[-28px] top-[-12px] w-px h-[calc(100%-12px)] bg-[#e0c0b1]"></div>
+                        <div className="absolute left-[-28px] top-[-12px] w-px h-[calc(100%-12px)] bg-amber-200"></div>
                         {node.subFolders.map(child => renderFolderNode(child, depth + 1))}
                     </div>
                 )}
