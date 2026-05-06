@@ -77,6 +77,9 @@ export type Department = z.infer<typeof DepartmentSchema>
 export const AccessScopeEnum = z.enum(['personal', 'department', 'company'])
 export type AccessScope = z.infer<typeof AccessScopeEnum>
 
+export const ObjectPermissionSchema = z.enum(['delete', 'write', 'read', 'none'])
+export type ObjectPermission = z.infer<typeof ObjectPermissionSchema>
+
 export const DocumentStatusEnum = z.enum(['pending', 'processing', 'completed', 'failed'])
 export type DocumentStatus = z.infer<typeof DocumentStatusEnum>
 
@@ -102,6 +105,7 @@ export const DocumentSchema = z.object({
     status: DocumentStatusEnum,
     version_lock: z.number().int().nonnegative(),
     has_hierarchical_chunks: z.boolean(),
+    my_permission: ObjectPermissionSchema.default('none'),
     is_deleted: z.boolean(),
     deleted_at: z.string().datetime().nullable(),
     created_at: DateTimeSchema,
@@ -139,6 +143,7 @@ export const FolderSchema = z.object({
     description: z.string().nullable(),
     metadata: z.record(z.unknown()).default({}),
     created_by_id: UUIDSchema.nullable(),
+    my_permission: ObjectPermissionSchema.default('none'),
     is_deleted: z.boolean(),
     deleted_at: z.string().datetime().nullable(),
     created_at: DateTimeSchema,

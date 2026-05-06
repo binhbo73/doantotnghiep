@@ -127,6 +127,34 @@ class PermissionManagerRepository:
             logger.error(f"Error getting folder {folder_id}: {str(e)}")
             return None
     
+    def _get_department_and_descendants_ids(self, department_id: str) -> List[str]:
+        """Return department ID plus all descendant department IDs."""
+        if not department_id:
+            return []
+
+        Department = apps.get_model('users', 'Department')
+        dept_ids = [str(department_id)]
+        queue = [str(department_id)]
+
+        try:
+            while queue:
+                current_id = queue.pop(0)
+                child_ids = list(
+                    Department.objects.filter(
+                        parent_id=current_id,
+                        is_deleted=False
+                    ).values_list('id', flat=True)
+                )
+                for child_id in child_ids:
+                    child_id = str(child_id)
+                    if child_id not in dept_ids:
+                        dept_ids.append(child_id)
+                        queue.append(child_id)
+        except Exception as e:
+            logger.error(f"Error loading department descendants for {department_id}: {str(e)}")
+
+        return dept_ids
+
     def get_accessible_folder_ids(
         self,
         account_id: str,
@@ -145,10 +173,15 @@ class PermissionManagerRepository:
             user = Account.objects.select_related('user_profile').get(pk=account_id)
             user_dept_id = user.user_profile.department_id if hasattr(user, 'user_profile') else None
             
+            if user_dept_id:
+                accessible_dept_ids = self._get_department_and_descendants_ids(user_dept_id)
+            else:
+                accessible_dept_ids = []
+            
             # 2. Folders accessible via scope
             scope_query = Folder.objects.filter(
                 Q(access_scope='company') |
-                Q(access_scope='department', department_id=user_dept_id) |
+                Q(access_scope='department', department_id__in=accessible_dept_ids) |
                 Q(access_scope='personal', created_by_id=account_id)
             ).filter(is_deleted=False).values_list('id', flat=True)
             

@@ -8,6 +8,7 @@ export interface NavItem {
     icon: string
     href: string
     badge?: number
+    roles?: string[]
 }
 
 export const dashboardNavigation: NavItem[] = [
@@ -16,6 +17,13 @@ export const dashboardNavigation: NavItem[] = [
         label: 'Bảng điều khiển',
         icon: '📊',
         href: '/dashboard',
+    },
+    {
+        id: 'my-documents',
+        label: 'Tài liệu của tôi',
+        icon: '👤',
+        href: '/dashboard/my-documents',
+        roles: ['MANAGER', 'TRUONG_PHONG', 'USER', 'NHAN_VIEN', 'EMPLOYEE'],
     },
     {
         id: 'documents',
@@ -34,18 +42,21 @@ export const dashboardNavigation: NavItem[] = [
         label: 'Quản lý người',
         icon: '👥',
         href: '/dashboard/users',
+        roles: ['ADMIN'],
     },
     {
         id: 'departments',
         label: 'Quản lý Phòng ban',
         icon: '🏢',
         href: '/dashboard/departments',
+        roles: ['ADMIN', 'MANAGER'],
     },
     {
         id: 'roles',
         label: 'Vai trò & Quyền hạn',
         icon: '🔐',
         href: '/dashboard/roles',
+        roles: ['ADMIN'],
     },
     {
         id: 'projects',

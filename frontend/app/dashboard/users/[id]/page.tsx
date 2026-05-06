@@ -10,11 +10,15 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, Mail, Calendar, Building, Badge, Trash2, Edit, Clock } from 'lucide-react'
 import { getUserById, deleteUser, updateUser, User, UpdateUserPayload } from '@/services/users'
 import { UserAvatar, StatusBadge, RoleBadge, CreateUserModal, type CreateUserFormData } from '@/components/features/users'
+import { useAuthContext } from '@/context'
+import { useRBAC } from '@/hooks/useRBAC'
 
 export default function UserDetailPage() {
     const params = useParams()
     const router = useRouter()
     const userId = params.id as string
+    const { isLoading: authLoading } = useAuthContext()
+    const { isAdmin } = useRBAC()
 
     const [user, setUser] = useState<User | null>(null)
     const [loading, setLoading] = useState(true)
@@ -27,6 +31,13 @@ export default function UserDetailPage() {
      * Fetch user details
      */
     useEffect(() => {
+        if (authLoading) return
+
+        if (!isAdmin()) {
+            setLoading(false)
+            return
+        }
+
         const fetchUser = async () => {
             try {
                 setLoading(true)
@@ -43,12 +54,17 @@ export default function UserDetailPage() {
         }
 
         fetchUser()
-    }, [userId])
+    }, [userId, authLoading, isAdmin])
 
     /**
      * Handle user deletion
      */
     const handleDelete = async () => {
+        if (!isAdmin()) {
+            setError('Bạn không có quyền xóa người dùng này')
+            return
+        }
+
         if (!confirm('Bạn có chắc chắn muốn xóa người dùng này?')) {
             return
         }
@@ -75,6 +91,11 @@ export default function UserDetailPage() {
      * Handle user edit
      */
     const handleEditSubmit = async (data: CreateUserFormData) => {
+        if (!isAdmin()) {
+            setError('Bạn không có quyền chỉnh sửa người dùng này')
+            return
+        }
+
         try {
             setIsEditLoading(true)
             const updatePayload: UpdateUserPayload = {
@@ -132,6 +153,19 @@ export default function UserDetailPage() {
                     >
                         <h2 className="font-semibold mb-2">Lỗi</h2>
                         <p>{error || 'Không tìm thấy người dùng'}</p>
+                    </div>
+                </div>
+            </main>
+        )
+    }
+
+    if (!authLoading && !isAdmin()) {
+        return (
+            <main className="min-h-screen p-6" style={{ backgroundColor: '#f9f9ff' }}>
+                <div className="max-w-4xl mx-auto">
+                    <div className="p-6 rounded-lg" style={{ backgroundColor: '#fff3e0', color: '#9d4300' }}>
+                        <h2 className="font-semibold mb-2">Truy cập bị hạn chế</h2>
+                        <p>Bạn cần quyền Quản trị viên để xem trang chi tiết người dùng.</p>
                     </div>
                 </div>
             </main>
@@ -395,19 +429,21 @@ export default function UserDetailPage() {
                 </div>
 
                 {/* Edit Button */}
-                <div className="mt-6 flex justify-center">
-                    <button
-                        onClick={() => setIsEditModalOpen(true)}
-                        className="flex items-center gap-2 px-8 py-3 rounded-lg text-white font-medium transition-all hover:shadow-lg"
-                        style={{
-                            backgroundColor: '#9d4300',
-                            backgroundImage: 'linear-gradient(to bottom, #9d4300, #783200)',
-                        }}
-                    >
-                        <Edit size={18} />
-                        <span>Chỉnh sửa thông tin</span>
-                    </button>
-                </div>
+                {isAdmin() && (
+                    <div className="mt-6 flex justify-center">
+                        <button
+                            onClick={() => setIsEditModalOpen(true)}
+                            className="flex items-center gap-2 px-8 py-3 rounded-lg text-white font-medium transition-all hover:shadow-lg"
+                            style={{
+                                backgroundColor: '#9d4300',
+                                backgroundImage: 'linear-gradient(to bottom, #9d4300, #783200)',
+                            }}
+                        >
+                            <Edit size={18} />
+                            <span>Chỉnh sửa thông tin</span>
+                        </button>
+                    </div>
+                )}
 
                 {/* Edit Modal */}
                 <CreateUserModal

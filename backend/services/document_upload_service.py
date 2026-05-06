@@ -249,17 +249,28 @@ class DocumentUploadService:
     ) -> dict:
         """
         Xác định (folder_id, department_id, access_scope) theo logic nghiệp vụ.
+        
+        VALIDATION RULES (Direction 2 - linh hoạt theo document):
+        - Nếu folder.access_scope = personal → document access_scope PHẢI = personal
+        - Nếu folder.access_scope = department → document access_scope chỉ có thể là department/personal
+        - Nếu folder.access_scope = company → document có thể là company/department/personal
+        - department scope luôn cần department_id hiệu lực
 
-        CASE A: Có folder thuộc phòng ban
-            → scope = folder.access_scope, department = folder.department
-        CASE B: Có folder nhưng folder thuộc công ty (không có dept)
-            → scope = 'company', department = None
-        CASE C: Không có folder, có phòng ban
-            → scope = 'department', department = department_id
-        CASE D: Không có folder, không có phòng ban
-            → scope = 'company', department = None
+        CASE A: Có folder personal
+            → chỉ cho phép personal
+        CASE B: Có folder department
+            → department: kế thừa department của folder
+            → personal: department = None
+            → company: reject
+        CASE C: Có folder company
+            → tôn trọng access_scope request của document
+        CASE D: Không có folder
+            → giữ logic theo access_scope + department_id request
         """
         Folder = apps.get_model('documents', 'Folder')
+
+        # Scope mặc định theo request đầu vào
+        requested_scope = access_scope or ('department' if department_id else 'company')
 
         if folder_id:
             # Validate folder tồn tại
@@ -270,35 +281,87 @@ class DocumentUploadService:
             except Folder.DoesNotExist:
                 raise ValidationError(f"Folder {folder_id} không tồn tại")
 
-            if folder.department_id:
-                # CASE A: folder thuộc phòng ban
-                return {
-                    'folder_id': str(folder.id),
-                    'department_id': str(folder.department_id),
-                    'access_scope': folder.access_scope,  # kế thừa từ folder
-                }
-            else:
-                # CASE B: folder thuộc công ty (không có dept)
+            # CASE A: folder personal -> chỉ personal
+            if folder.access_scope == 'personal':
+                if requested_scope != 'personal':
+                    raise ValidationError(
+                        f"Document trong personal folder phải có access_scope='personal', "
+                        f"không được '{requested_scope}'"
+                    )
+
                 return {
                     'folder_id': str(folder.id),
                     'department_id': None,
-                    'access_scope': 'company',
+                    'access_scope': 'personal',
                 }
+
+            # CASE B: folder department -> company bị chặn
+            if folder.access_scope == 'department':
+                if requested_scope == 'company':
+                    raise ValidationError(
+                        "Tài liệu trong department folder không thể là company-wide"
+                    )
+
+                # personal doc trong department folder -> vẫn personal
+                if requested_scope == 'personal':
+                    return {
+                        'folder_id': str(folder.id),
+                        'department_id': None,
+                        'access_scope': 'personal',
+                    }
+
+                # department doc trong department folder -> kế thừa department của folder
+                return {
+                    'folder_id': str(folder.id),
+                    'department_id': str(folder.department_id) if folder.department_id else None,
+                    'access_scope': 'department',
+                }
+
+            # CASE C: folder company -> document scope linh hoạt theo request
+            if requested_scope == 'department':
+                if not department_id:
+                    raise ValidationError("Tài liệu department-scoped phải có department_id")
+                return {
+                    'folder_id': str(folder.id),
+                    'department_id': str(department_id),
+                    'access_scope': 'department',
+                }
+
+            if requested_scope == 'personal':
+                return {
+                    'folder_id': str(folder.id),
+                    'department_id': None,
+                    'access_scope': 'personal',
+                }
+
+            return {
+                'folder_id': str(folder.id),
+                'department_id': None,
+                'access_scope': 'company',
+            }
         else:
-            if department_id:
-                # CASE C: chỉ thuộc phòng ban, không có folder
+            # CASE D: không có folder -> theo request
+            if requested_scope == 'department':
+                if not department_id:
+                    raise ValidationError("Tài liệu department-scoped phải có department_id")
                 return {
                     'folder_id': None,
                     'department_id': str(department_id),
-                    'access_scope': access_scope or 'department',
+                    'access_scope': 'department',
                 }
-            else:
-                # CASE D: toàn công ty
+
+            if requested_scope == 'personal':
                 return {
                     'folder_id': None,
                     'department_id': None,
-                    'access_scope': access_scope or 'company',
+                    'access_scope': 'personal',
                 }
+
+            return {
+                'folder_id': None,
+                'department_id': None,
+                'access_scope': 'company',
+            }
 
     # =========================================================================
     # STEP 3 – Save file to disk

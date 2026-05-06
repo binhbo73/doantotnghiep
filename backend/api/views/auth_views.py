@@ -63,9 +63,21 @@ class UserLoginView(TokenObtainPairView):
             # One of email or username must be provided
             email_or_username = email or username
             
+            logger.info(f'🔐 [Login] Attempting login for: {email_or_username}')
+            
             # Call UserService.authenticate() - ALL LOGIC IS HERE!
             service = UserService()
             result = service.authenticate(email_or_username, password, request=request)
+            
+            # Validate result has tokens
+            if not result.get('access_token'):
+                logger.error(f'❌ [Login] No access_token in result for user: {email_or_username}')
+                raise Exception('Backend generated invalid tokens')
+            
+            if not result.get('refresh_token'):
+                logger.error(f'❌ [Login] No refresh_token in result for user: {email_or_username}')
+            
+            logger.info(f'✅ [Login] Login successful for user: {result.get("user", {}).get("id")} - tokens generated successfully')
             
             # Return success response with all result data
             return Response(
@@ -80,6 +92,7 @@ class UserLoginView(TokenObtainPairView):
         # (InvalidCredentialsError, AccountBlockedError, ValidationError, etc.)
         # But we can add specific handling here if needed
         except Exception as e:
+            logger.error(f'❌ [Login] Login failed: {str(e)}', exc_info=True)
             # Exceptions are caught by global exception handler
             raise
 
@@ -202,6 +215,57 @@ class UserLogoutView(APIView):
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+
+
+class CurrentUserView(APIView):
+    """
+    Current User API - GET current user with roles, permissions, department
+    
+    GET /api/v1/auth/me - Get current user profile with roles, permissions, department
+    
+    Used by:
+    - Frontend useRefreshUserPermissions hook (periodic permission refresh)
+    - Dashboard to verify user is still logged in
+    
+    Returns:
+    {
+        "user": {id, email, username, first_name, last_name, ...},
+        "roles": [{id, code, name}, ...],
+        "permissions": ["read_document", "write_document", ...],
+        "department_id": "uuid"
+    }
+    
+    ✅ CORRECT FLOW:
+    View → Service (business logic) → Repository → DB
+    
+    Accessible by: Any authenticated user (own data only)
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    user_service = UserService()
+    
+    def get(self, request):
+        """
+        GET /api/v1/auth/me
+        
+        Return current user with their roles, permissions, and department info.
+        """
+        try:
+            # Get current user data with roles, permissions, department
+            result = self.user_service.get_current_user_with_permissions(request.user.id)
+            
+            return Response(
+                ResponseBuilder.success(
+                    data=result,
+                    message="Current user retrieved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            logger.error(f"Error getting current user: {str(e)}", exc_info=True)
+            return Response(
+                ResponseBuilder.error(message=f"Error: {str(e)}"),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class UserProfileView(APIView):

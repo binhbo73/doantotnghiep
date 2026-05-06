@@ -30,7 +30,7 @@ from api.serializers.user_serializers import (
     RoleAssignmentSerializer, RoleRemovalSerializer, RoleUpdateSerializer, DepartmentChangeSerializer
 )
 from services.user_service import UserService
-from core.constants import RoleIds, AccountStatus
+from core.constants import AccountStatus, RoleIds
 
 import logging
 
@@ -60,21 +60,36 @@ class IsAdmin(permissions.BasePermission):
         # ✅ IMPROVED: First try to use roles cached in JWT token (no DB query!)
         if hasattr(request, 'auth') and request.auth:
             roles = request.auth.get('roles', []) if request.auth else None
-            if roles:
-                # Roles from JWT: [{'id': '...', 'name': '...', 'code': '...'}]
-                role_names = [r.get('name') for r in roles] if isinstance(roles, list) else []
-                has_role = any(name in ['ADMIN', 'MANAGER'] for name in role_names)
-                
+            if roles and isinstance(roles, list):
+                # Roles from JWT: [{'id': '...', 'code': 'admin', 'name': 'Administrator'}]
+                # Prefer checking `code` (stable identifier) case-insensitively; fall back to name.
+                has_role = any(
+                    (r.get('code') and str(r.get('code')).upper() in ['ADMIN', 'MANAGER']) or
+                    (r.get('name') and str(r.get('name')).upper() in ['ADMIN', 'MANAGER'])
+                    for r in roles
+                )
                 if has_role:
                     return True
         
         # Fallback: Query DB if not in JWT token (shouldn't happen normally)
         try:
-            return request.user.account_roles.filter(
-                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
+            # Fallback: query by role.code to avoid relying on hard-coded UUIDs
+            exists = request.user.account_roles.filter(
+                role__code__in=['admin', 'manager'],
                 is_deleted=False
             ).exists()
+            if not exists:
+                # Log contextual info to help debug permission failures
+                try:
+                    logger.debug('IsAdmin check failed for user', {
+                        'user_id': getattr(request.user, 'id', None),
+                        'request_auth': getattr(request, 'auth', None)
+                    })
+                except Exception:
+                    logger.debug('IsAdmin: failed to read request.auth or user id for debug log')
+            return exists
         except Exception:
+            logger.exception('IsAdmin: error checking account_roles')
             return False
 
 
@@ -87,20 +102,24 @@ class IsAdminOrOwner(permissions.BasePermission):
         # ✅ IMPROVED: Use cached roles from JWT first
         if hasattr(request, 'auth') and request.auth:
             roles = request.auth.get('roles', []) if request.auth else None
-            if roles:
-                role_names = [r.get('name') for r in roles] if isinstance(roles, list) else []
-                is_admin = any(name in ['ADMIN', 'MANAGER'] for name in role_names)
+            if roles and isinstance(roles, list):
+                is_admin = any(
+                    (r.get('code') and str(r.get('code')).upper() in ['ADMIN', 'MANAGER']) or
+                    (r.get('name') and str(r.get('name')).upper() in ['ADMIN', 'MANAGER'])
+                    for r in roles
+                )
                 if is_admin:
                     return True
         
         # Fallback: Check DB if not in JWT
         try:
             if request.user.account_roles.filter(
-                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
+                role__code__in=['admin', 'manager'],
                 is_deleted=False
             ).exists():
                 return True
         except Exception:
+            logger.exception('IsAdminOrOwner: error checking account_roles for object permission')
             pass
         
         # Owner can access own profile

@@ -102,16 +102,16 @@ class Logger {
         if (this.isDev) {
             const method = level === 'debug' ? 'log' : level
             const style = this.getConsoleStyle(level)
+            const normalizedData = this.normalizeData(entry.data)
 
-            // Direct console call without type assertion
             if (method === 'log') {
-                console.log(`%c[${level.toUpperCase()}]`, style, entry.message, entry.data || '')
+                console.log(`%c[${level.toUpperCase()}]`, style, entry.message, normalizedData)
             } else if (method === 'info') {
-                console.info(`%c[${level.toUpperCase()}]`, style, entry.message, entry.data || '')
+                console.info(`%c[${level.toUpperCase()}]`, style, entry.message, normalizedData)
             } else if (method === 'warn') {
-                console.warn(`%c[${level.toUpperCase()}]`, style, entry.message, entry.data || '')
+                console.warn(`%c[${level.toUpperCase()}]`, style, entry.message, normalizedData)
             } else if (method === 'error') {
-                console.error(`%c[${level.toUpperCase()}]`, style, entry.message, entry.data || '')
+                console.error(`%c[${level.toUpperCase()}]`, style, entry.message, normalizedData)
             }
         }
 
@@ -194,6 +194,36 @@ class Logger {
             return localStorage.getItem('auth_token')
         }
         return null
+    }
+
+    /**
+     * Normalize data for console logging
+     */
+    private normalizeData(data: unknown): unknown {
+        if (data instanceof Event) {
+            return {
+                type: data.type,
+                ...(data instanceof CloseEvent ? { code: data.code, reason: data.reason, wasClean: data.wasClean } : {}),
+            }
+        }
+
+        if (data instanceof Error) {
+            return {
+                name: data.name,
+                message: data.message,
+                stack: data.stack,
+            }
+        }
+
+        if (typeof data === 'object' && data !== null) {
+            try {
+                return JSON.parse(JSON.stringify(data))
+            } catch {
+                return String(data)
+            }
+        }
+
+        return data
     }
 
     /**

@@ -5,6 +5,7 @@ import { X } from 'lucide-react'
 import { IamRole } from '@/types/api'
 import { RoleDetailPermissions } from '../RoleDetailPermissions'
 import { useRolePermissions } from '@/hooks/useRolePermissions'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface RoleDetailDialogProps {
     isOpen: boolean
@@ -21,6 +22,8 @@ export function RoleDetailDialog({ isOpen, role, onClose, onEdit, onDelete }: Ro
     const { permissions, loading: permissionsLoading, error: permissionsError } = useRolePermissions(
         role?.id || ''
     )
+
+    const { isAdmin } = useRBAC()
 
     const handleDelete = async () => {
         if (!role || !onDelete) return
@@ -143,21 +146,26 @@ export function RoleDetailDialog({ isOpen, role, onClose, onEdit, onDelete }: Ro
                         >
                             Đóng
                         </button>
-                        <button
-                            onClick={() => onEdit && onEdit(role.id)}
-                            className="flex-1 px-4 py-2 rounded-lg font-medium text-white text-sm transition"
-                            style={{ backgroundColor: '#b75b00' }}
-                        >
-                            ✏️ Chỉnh sửa vai trò
-                        </button>
-                        {onDelete && (
-                            <button
-                                onClick={() => setShowDeleteConfirm(true)}
-                                className="px-4 py-2 rounded-lg font-medium text-white text-sm transition"
-                                style={{ backgroundColor: '#dc3545' }}
-                            >
-                                🗑️ Xóa
-                            </button>
+
+                        {isAdmin() && (
+                            <>
+                                <button
+                                    onClick={() => onEdit && onEdit(role.id)}
+                                    className="flex-1 px-4 py-2 rounded-lg font-medium text-white text-sm transition"
+                                    style={{ backgroundColor: '#b75b00' }}
+                                >
+                                    ✏️ Chỉnh sửa vai trò
+                                </button>
+                                {onDelete && (
+                                    <button
+                                        onClick={() => setShowDeleteConfirm(true)}
+                                        className="px-4 py-2 rounded-lg font-medium text-white text-sm transition"
+                                        style={{ backgroundColor: '#dc3545' }}
+                                    >
+                                        🗑️ Xóa
+                                    </button>
+                                )}
+                            </>
                         )}
                     </div>
 

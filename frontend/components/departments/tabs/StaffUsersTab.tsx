@@ -8,6 +8,8 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
 import { useDepartmentUsers } from '@/hooks/departments/useDepartmentDetail';
+import { useRBAC } from '@/hooks/useRBAC';
+import { useAuthContext } from '@/context';
 import Pagination from '@/components/common/Pagination';
 import TabLoading from '@/components/departments/loading/TabLoading';
 import { UserDetail, PaginatedResponse } from '@/types/departments';
@@ -27,6 +29,8 @@ const STATUSES = [
 export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProps) {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
+    const { isAdmin, hasGlobalPermission } = useRBAC();
+    const { user } = useAuthContext();
 
     // API Hook: Fetch users with pagination
     // Only call hook if we're not on page 1 OR if initialData wasn't provided
@@ -40,6 +44,9 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
     const data = page === 1 && initialData ? initialData : hookResult.data;
     const loading = page === 1 && initialData ? false : hookResult.loading;
     const error = hookResult.error;
+
+    // Check if user can edit/delete users
+    const canManageUsers = isAdmin() || hasGlobalPermission('update', 'user') || hasGlobalPermission('delete', 'user');
 
     if (loading) {
         return <TabLoading />;
@@ -126,12 +133,16 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
                                     </td>
                                     <td className="px-4 py-2 text-right">
                                         <div className="flex items-center justify-end gap-2">
-                                            <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-[#9d4300] hover:bg-white transition-all">
-                                                <span className="material-symbols-outlined text-base">edit</span>
-                                            </button>
-                                            <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-white transition-all">
-                                                <span className="material-symbols-outlined text-base">delete</span>
-                                            </button>
+                                            {canManageUsers && (
+                                                <>
+                                                    <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-[#9d4300] hover:bg-white transition-all" title="Sửa nhân viên">
+                                                        <span className="material-symbols-outlined text-base">edit</span>
+                                                    </button>
+                                                    <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-white transition-all" title="Xóa nhân viên">
+                                                        <span className="material-symbols-outlined text-base">delete</span>
+                                                    </button>
+                                                </>
+                                            )}
                                         </div>
                                     </td>
                                 </tr>

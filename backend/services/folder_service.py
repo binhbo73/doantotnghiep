@@ -156,12 +156,24 @@ class FolderService(BaseService):
         from core.permissions.permission_manager import get_permission_manager
         pm = get_permission_manager()
         my_permission = pm.get_effective_level(account_id, folder.id, is_folder=True)
+
+        uploader_name = None
+        if is_admin:
+            creator = getattr(folder, 'created_by', None)
+            if creator:
+                profile = getattr(creator, 'user_profile', None)
+                if profile and getattr(profile, 'full_name', None):
+                    uploader_name = profile.full_name
+                else:
+                    full_name = creator.get_full_name() if hasattr(creator, 'get_full_name') else ''
+                    uploader_name = full_name or creator.username
         
         return {
             'id': str(folder.id),
             'name': folder.name,
             'description': folder.description,
             'access_scope': folder.access_scope,
+            'uploader_name': uploader_name,
             'department_id': str(folder.department_id) if folder.department_id else None,
             'parent_id': str(folder.parent_id) if folder.parent_id else None,
             'created_at': folder.created_at.isoformat(),
@@ -329,13 +341,39 @@ class FolderService(BaseService):
                 if not parent:
                     raise NotFoundError(f"Parent folder {parent_id} not found")
                 
+                # ✅ VALIDATION: Subfolder cannot have different scope than parent
+                if access_scope != parent.access_scope:
+                    raise ValidationError(
+                        f"Subfolder cannot have different access_scope than parent. "
+                        f"Parent has access_scope='{parent.access_scope}', "
+                        f"but you requested '{access_scope}'. "
+                        f"Subfolder will inherit parent's scope."
+                    )
+                
                 # CASE A: Parent has department → inherit parent's scope + department
                 if parent.department_id:
                     access_scope = parent.access_scope
+                    # ✅ VALIDATION: Subfolder cannot have different department than parent
+                    if department_id and str(department_id) != str(parent.department_id):
+                        raise ValidationError(
+                            f"Subfolder cannot belong to different department than parent. "
+                            f"Parent department: {parent.department_id}, "
+                            f"you requested: {department_id}"
+                        )
                     if not department_id:
                         department_id = parent.department_id
+                    
+                    logger.info(
+                        f"Subfolder '{name}' inheriting scope='{access_scope}' "
+                        f"and department='{department_id}' from parent {parent_id}"
+                    )
                 else:
                     # CASE B: Parent is company-wide (no dept) → force company scope
+                    if access_scope != 'company':
+                        logger.warning(
+                            f"Subfolder scope '{access_scope}' forced to 'company' "
+                            f"because parent {parent_id} is company-wide"
+                        )
                     access_scope = 'company'
                     department_id = None
             else:

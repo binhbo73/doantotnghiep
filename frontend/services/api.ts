@@ -108,13 +108,17 @@ async function handleResponse<T>(response: Response): Promise<T> {
     }
 
     if (!response.ok) {
-        // Log error details
+        // Log error details with full response data for debugging
         if (response.status === 401) {
-            console.error('❌ 401 Unauthorized - Token invalid or expired')
+            console.error('❌ 401 Unauthorized - Token invalid or expired', data)
         } else if (response.status === 403) {
-            console.error('❌ 403 Forbidden - Access denied')
+            console.error('❌ 403 Forbidden - Access denied', data)
         } else if (response.status === 500) {
-            console.error('❌ 500 Server Error')
+            console.error('❌ 500 Server Error', data)
+            // Log full error object for debugging
+            if (typeof data === 'object' && data !== null) {
+                console.error('Server error details:', JSON.stringify(data, null, 2))
+            }
         }
 
         throw new ApiError(

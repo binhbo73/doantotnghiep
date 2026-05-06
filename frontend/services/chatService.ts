@@ -177,8 +177,8 @@ export class ChatService {
      */
     static async sendMessageStream(
         content: string,
-        conversationId?: string,
-        onChunk: (text: string) => void
+        onChunk: (text: string) => void,
+        conversationId?: string
     ): Promise<void> {
         try {
             const token = localStorage.getItem('auth_token')

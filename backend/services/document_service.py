@@ -187,15 +187,41 @@ class DocumentService(BaseService):
 
             normalized_file_type = self._normalize_file_type(file.name, mime_type)
             
-            # Set defaults
-            if department_id is None:
-                # Get department from UserProfile if not provided
+            # ✅ NEW LOGIC: Resolve folder + inherit scope/department if folder_id provided
+            resolved_access_scope = 'company'  # Default for root documents
+            resolved_department_id = department_id
+            
+            if folder_id:
+                # CASE A: Document placed in folder → inherit scope + department from folder
                 try:
-                    from apps.users.models import UserProfile
-                    user_profile = UserProfile.objects.get(account_id=user_id)
-                    department_id = user_profile.department_id
-                except (UserProfile.DoesNotExist, Exception):
-                    department_id = None
+                    from apps.documents.models import Folder
+                    folder = Folder.objects.get(id=folder_id, is_deleted=False)
+                    
+                    # Inherit access_scope from folder (CRITICAL FIX)
+                    resolved_access_scope = folder.access_scope
+                    
+                    # Inherit department from folder if folder has one
+                    if folder.department_id:
+                        resolved_department_id = folder.department_id
+                    
+                    logger.info(
+                        f"Document {file.name} uploading to folder {folder_id}: "
+                        f"inherited scope={resolved_access_scope}, dept={resolved_department_id}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error resolving folder {folder_id}: {e}")
+                    raise ValidationError(f"Folder {folder_id} not found or invalid")
+            else:
+                # CASE B: Root document → allow user-specified access_scope or default to 'company'
+                # Root documents should default to 'company' scope, not 'personal'
+                if department_id is None:
+                    # Get department from UserProfile for default
+                    try:
+                        from apps.users.models import UserProfile
+                        user_profile = UserProfile.objects.get(account_id=user_id)
+                        resolved_department_id = user_profile.department_id
+                    except (UserProfile.DoesNotExist, Exception):
+                        resolved_department_id = None
             
             # Prepare file hash and storage path BEFORE creating document
             import hashlib
@@ -217,10 +243,10 @@ class DocumentService(BaseService):
                     mime_type=mime_type,
                     file_size=file.size,
                     uploader_id=user_id,
-                    department_id=department_id,
+                    department_id=resolved_department_id,
                     folder_id=folder_id,
                     status='pending',
-                    access_scope='personal',
+                    access_scope=resolved_access_scope,  # ✅ INHERIT FROM FOLDER
                 )
                 
                 # Store actual file to disk
@@ -352,6 +378,7 @@ class DocumentService(BaseService):
         folder_id: int = None,
         status: str = None,
         search: str = None,
+        access_scope: str = None,
         sort_by: str = '-created_at',
         page: int = 1,
         page_size: int = 10,
@@ -364,6 +391,7 @@ class DocumentService(BaseService):
             folder_id: Filter by folder (optional)
             status: Filter by status (optional)
             search: Search in original_name and description (optional)
+            access_scope: Filter by document scope (optional)
             sort_by: Sort field (default: -created_at)
             page: Page number
             page_size: Items per page
@@ -382,6 +410,10 @@ class DocumentService(BaseService):
                 accessible = accessible.filter(folder_id=folder_id)
             if status:
                 accessible = accessible.filter(status=status)
+            if access_scope:
+                if access_scope not in ['personal', 'department', 'company']:
+                    raise ValidationError(f"Invalid access_scope: {access_scope}")
+                accessible = accessible.filter(access_scope=access_scope)
             
             # Apply search
             if search:
@@ -812,6 +844,93 @@ class DocumentService(BaseService):
                 raise
             logger.error(f"Error updating document: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to update document {doc_id}")
+    
+    def move_document(
+        self,
+        doc_id: str,
+        user_id: int,
+        new_folder_id: Optional[str] = None,
+    ) -> 'Document':
+        """
+        Move document to a different folder (or root if new_folder_id=None).
+        
+        Business Rules:
+        - User must have WRITE permission on document
+        - If new_folder_id provided, it must exist and be accessible to user
+        - Document inherits access_scope from new folder
+        - Document inherits department from new folder (if folder has one)
+        - If moving to root (new_folder_id=None), scope defaults to 'company'
+        
+        Args:
+            doc_id: Document UUID to move
+            user_id: User performing move
+            new_folder_id: Target folder ID (None to move to root)
+        
+        Returns:
+            Updated Document
+        
+        Raises:
+            NotFoundError: If document or folder not found
+            PermissionDeniedError: If user lacks write permission
+        """
+        try:
+            # Check write permission on document
+            if not self.document_repo.check_user_can_write(doc_id, user_id):
+                raise PermissionDeniedError(f"No write permission on document {doc_id}")
+            
+            # Get current document
+            document = self.document_repo.get_by_id(doc_id)
+            if not document:
+                raise NotFoundError(f"Document {doc_id} not found")
+            
+            # Resolve new scope and department
+            new_access_scope = 'company'  # Default for root
+            new_department_id = None
+            
+            if new_folder_id:
+                # Moving to a folder → inherit scope + department
+                try:
+                    from apps.documents.models import Folder
+                    new_folder = Folder.objects.get(id=new_folder_id, is_deleted=False)
+                    
+                    new_access_scope = new_folder.access_scope
+                    new_department_id = new_folder.department_id
+                    
+                    logger.info(
+                        f"Moving document {doc_id} to folder {new_folder_id}: "
+                        f"new scope={new_access_scope}, new dept={new_department_id}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error resolving target folder {new_folder_id}: {e}")
+                    raise ValidationError(f"Target folder {new_folder_id} not found or invalid")
+            else:
+                # Moving to root
+                logger.info(f"Moving document {doc_id} to root")
+            
+            # Update document
+            update_data = {
+                'folder_id': new_folder_id,
+                'access_scope': new_access_scope,
+                'department_id': new_department_id,
+            }
+            
+            document = self.document_repo.update(doc_id, **update_data)
+            
+            # Log audit
+            self._log_document_audit(
+                action='MOVE',
+                document_id=doc_id,
+                user_id=user_id,
+                details=f"Moved to folder {new_folder_id or 'root'}"
+            )
+            
+            return document
+            
+        except (NotFoundError, PermissionDeniedError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"Error moving document: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to move document {doc_id}")
     
     def get_document_download(
         self,

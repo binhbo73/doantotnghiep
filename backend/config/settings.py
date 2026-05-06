@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "corsheaders",              # CORS support
     "django_extensions",        # TimeStampedModel for BaseModel
+    "channels",                 # WebSocket support
     "apps.users",
     "apps.documents",
     "apps.operations",
@@ -77,6 +78,7 @@ MIDDLEWARE = [
 ]
 
 ROOT_URLCONF = "config.urls"
+ASGI_APPLICATION = "config.asgi.application"
 
 TEMPLATES = [
     {
@@ -188,6 +190,15 @@ CACHES = {
         },
         "KEY_PREFIX": "rag_system"
     }
+}
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(REDIS_HOST, int(REDIS_PORT))],
+        },
+    },
 }
 
 # Thời gian sống mặc định của Cache (10 phút)

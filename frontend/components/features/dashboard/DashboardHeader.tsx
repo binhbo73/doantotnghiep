@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface DashboardHeaderProps {
     userName?: string
@@ -10,11 +11,14 @@ interface DashboardHeaderProps {
 }
 
 export function DashboardHeader({
-    userName = 'Admin',
+    userName = 'Bạn',
     timeOfDay = 'buổi sáng',
     daysLabel = '7 ngày qua',
     onExport,
 }: DashboardHeaderProps) {
+    const { getRoleBadge } = useRBAC()
+    const badge = getRoleBadge()
+
     return (
         <div
             className="flex items-center justify-between mb-4 p-3 rounded-lg"
@@ -23,43 +27,36 @@ export function DashboardHeader({
                 border: '1px solid #dce2f3',
             }}
         >
-            {/* Left: Greeting */}
+            {/* Left: Greeting + Role Badge */}
             <div>
-                <h1
-                    className="text-xl font-bold mb-0.5"
-                    style={{ color: '#151c27' }}
-                >
-                    Chào {timeOfDay}, {userName} 👋
-                </h1>
+                <div className="flex items-center gap-2 mb-0.5">
+                    <h1
+                        className="text-xl font-bold"
+                        style={{ color: '#151c27' }}
+                    >
+                        Chào {timeOfDay}, {userName} 👋
+                    </h1>
+                    <span
+                        className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                        style={{
+                            color: badge.color,
+                            backgroundColor: badge.bgColor,
+                            borderColor: badge.color + '30',
+                        }}
+                    >
+                        {badge.label}
+                    </span>
+                </div>
                 <p
                     className="text-xs"
                     style={{ color: '#727785' }}
                 >
-                    Hệ thống đang vận hành tốt. Duới đây là tóm tắt dữ liệu hôm nay.
+                    Hệ thống đang vận hành tốt. Dưới đây là tóm tắt dữ liệu hôm nay.
                 </p>
             </div>
 
             {/* Right: Time period and Export button */}
-            <div className="flex items-center gap-2">
-                <span
-                    className="text-xs font-medium px-2 py-1 rounded-lg whitespace-nowrap"
-                    style={{
-                        backgroundColor: '#f0f3ff',
-                        color: '#0058be',
-                    }}
-                >
-                    📅 {daysLabel}
-                </span>
-                <button
-                    onClick={onExport}
-                    className="px-3 py-1 rounded-lg font-medium text-white transition-all hover:opacity-90 text-xs"
-                    style={{
-                        backgroundColor: '#b75b00',
-                    }}
-                >
-                    🔖 Xuất báo cáo
-                </button>
-            </div>
+           
         </div>
     )
 }

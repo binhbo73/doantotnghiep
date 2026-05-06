@@ -129,8 +129,18 @@ class DocumentListView(APIView):
             folder_id = request.query_params.get('folder_id', '').strip() or None
             doc_status = request.query_params.get('status', '').strip() or None
             search_query = request.query_params.get('search', '').strip() or None
+            access_scope = request.query_params.get('access_scope', '').strip() or None
             sort_by = request.query_params.get('sort', 'created_at')
-            
+
+            if access_scope and access_scope not in ['personal', 'department', 'company']:
+                return Response(
+                    ResponseBuilder.error(
+                        "Invalid access_scope. Must be one of: personal, department, company",
+                        status_code=400
+                    ),
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             # Call service to get accessible documents
             service = DocumentService()
             result = service.list_accessible_documents(
@@ -140,6 +150,7 @@ class DocumentListView(APIView):
                 folder_id=folder_id,
                 status=doc_status,
                 search=search_query,
+                access_scope=access_scope,
                 sort_by=sort_by,
             )
             
@@ -510,6 +521,95 @@ class DocumentUpdateView(APIView):
             logger.error(f"Error updating document: {e}", exc_info=True)
             return Response(
                 ResponseBuilder.error("Failed to update document", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ============================================================
+# 4B. Document Move (PATCH)
+# ============================================================
+
+class DocumentMoveView(APIView):
+    """
+    API Endpoint: PATCH /api/v1/documents/{doc_id}/move
+    
+    Move document to a different folder (or root if new_folder_id=None).
+    When moved, document inherits access_scope and department from target folder.
+    
+    Permission Check: User must have WRITE permission on document.
+    """
+    
+    permission_classes = [IsAuthenticatedUser]
+    
+    def patch(self, request, doc_id):
+        """
+        PATCH /api/v1/documents/{doc_id}/move
+        
+        Move document to target folder.
+        
+        Request:
+        {
+            "folder_id": "uuid-folder" (optional, null to move to root)
+        }
+        
+        Response:
+        {
+            "success": true,
+            "data": {
+                "id": "uuid-doc",
+                "folder_id": "uuid-folder",
+                "access_scope": "department",  // ← inherited from folder
+                "department_id": "uuid-dept",   // ← inherited from folder
+                ...
+            }
+        }
+        """
+        try:
+            # Get folder_id from request (can be null to move to root)
+            new_folder_id = request.data.get('folder_id', None)
+            
+            service = DocumentService()
+            
+            # Move with transaction
+            with transaction.atomic():
+                document = service.move_document(
+                    doc_id=doc_id,
+                    user_id=request.user.id,
+                    new_folder_id=new_folder_id
+                )
+            
+            response_serializer = DocumentSerializer(document, context={'request': request})
+            
+            logger.info(f"Document moved by {request.user.id}: {doc_id} to folder {new_folder_id or 'root'}")
+            
+            return Response(
+                ResponseBuilder.success(
+                    data=response_serializer.data,
+                    message="Document moved successfully"
+                ),
+                status=status.HTTP_200_OK
+            )
+        
+        except ValidationError as e:
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except NotFoundError as e:
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except PermissionDeniedError as e:
+            logger.warning(f"Permission denied for user {request.user.id}: {str(e)}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=403),
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error moving document: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to move document", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

@@ -61,26 +61,52 @@ export async function uploadFile(
 
         // Handle completion
         xhr.addEventListener('load', () => {
+            console.log(`📡 XHR Load: status=${xhr.status}`)
+
             if (xhr.status >= 200 && xhr.status < 300) {
                 try {
+                    console.log(`📝 Response text:`, xhr.responseText.substring(0, 500))
                     const response = JSON.parse(xhr.responseText)
+                    console.log(`📊 Parsed response:`, JSON.stringify(response, null, 2).substring(0, 500))
                     const document = response.data || response
+                    console.log(`📄 Extracted document:`, JSON.stringify(document, null, 2).substring(0, 300))
                     logger.info('File uploaded successfully', { filename: file.name })
+
+                    // Dispatch real-time notification event
+                    window.dispatchEvent(new CustomEvent('upload:complete', {
+                        detail: { fileName: file.name, document }
+                    }))
+
                     resolve(document)
                 } catch (err) {
+                    console.error('❌ Response parse error:', err)
                     reject(new Error('Invalid response from server'))
                 }
             } else {
+                console.log(`❌ Upload failed with status ${xhr.status}`)
+                console.log(`Response:`, xhr.responseText.substring(0, 500))
                 try {
                     const error = JSON.parse(xhr.responseText)
-                    reject(
-                        new ApiError(
-                            xhr.status,
-                            error.message || `Upload failed with status ${xhr.status}`
-                        )
+                    const apiError = new ApiError(
+                        xhr.status,
+                        error.message || `Upload failed with status ${xhr.status}`
                     )
+
+                    // Dispatch real-time notification event
+                    window.dispatchEvent(new CustomEvent('upload:failed', {
+                        detail: { fileName: file.name, error: apiError.message }
+                    }))
+
+                    reject(apiError)
                 } catch {
-                    reject(new ApiError(xhr.status, `Upload failed with status ${xhr.status}`))
+                    const apiError = new ApiError(xhr.status, `Upload failed with status ${xhr.status}`)
+
+                    // Dispatch real-time notification event
+                    window.dispatchEvent(new CustomEvent('upload:failed', {
+                        detail: { fileName: file.name, error: apiError.message }
+                    }))
+
+                    reject(apiError)
                 }
             }
         })

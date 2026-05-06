@@ -1,8 +1,8 @@
 /**
  * Token Management - Auth token lifecycle for API requests
- * 
+ *
  * Strategy:
- * 1. Initialize with placeholder on app load (non-blocking)
+ * 1. Do not create a token until real login succeeds
  * 2. Use loginAndGetToken() to get real JWT from backend
  * 3. Store in localStorage for persistence
  */
@@ -11,26 +11,18 @@ const TOKEN_KEY = 'auth_token'
 const REFRESH_TOKEN_KEY = 'refresh_token'
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
-/**
- * Initialize token on app startup (non-blocking)
- * Sets placeholder if no existing token
- */
 export function initializeToken(): void {
     if (typeof window === 'undefined') return
 
     try {
         const existing = localStorage.getItem(TOKEN_KEY)
-        if (existing && existing !== '') {
+        if (existing && existing.trim() !== '') {
             console.log('✅ Token already in localStorage')
-            return
+        } else {
+            console.log('ℹ️ No auth token found on startup')
         }
-
-        // Placeholder - will be replaced after real login
-        const placeholder = 'placeholder-' + Date.now()
-        localStorage.setItem(TOKEN_KEY, placeholder)
-        console.log('ℹ️ Placeholder token initialized. Call loginAndGetToken() to get real JWT.')
     } catch (err) {
-        console.error('❌ Error initializing token:', err)
+        console.error('❌ Error checking token on startup:', err)
     }
 }
 
@@ -113,11 +105,6 @@ export function getAuthTokenForAPI(): string {
 
     try {
         const token = localStorage.getItem(TOKEN_KEY) || ''
-
-        // Log token status
-        if (token.includes('placeholder')) {
-            console.warn('⚠️ Using placeholder token - real JWT not yet obtained. Run loginAndGetToken()')
-        }
 
         return token
     } catch (err) {

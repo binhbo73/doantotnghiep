@@ -293,8 +293,12 @@ class DocumentParser:
             logger.debug(f"PDF parsing completed: {len(text)} chars")
             return text
         
-        except ImportError:
-            raise DocumentProcessingError("docling library not installed. Install: pip install docling")
+        except ImportError as e:
+            # docling may be installed but fail to import optional/native deps (e.g. libGL for cv2)
+            raise DocumentProcessingError(
+                f"PDF parser dependency missing: {str(e)}. "
+                "Install Python deps (docling) and required system libs in Docker image."
+            )
         except Exception as e:
             logger.error(f"PDF parsing error: {str(e)}", exc_info=True)
             raise DocumentProcessingError(f"Failed to parse PDF: {str(e)}")

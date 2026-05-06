@@ -15,6 +15,7 @@ import {
     PermissionLevel,
     PermissionSubjectType,
 } from '@/services/documentAcl'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface DocumentPermissionsPanelProps {
     document?: FolderDocumentResponse | null
@@ -171,6 +172,12 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         error: null,
     })
     const subjectOptionsLoadedRef = useRef(false)
+    const { isAdmin, can } = useRBAC()
+
+    // Check if user can manage permissions for this resource
+    const canManagePermissions = isAdmin() ||
+        (effectiveDocument && can('delete', effectiveDocument.my_permission)) ||
+        (effectiveFolder && can('delete', effectiveFolder.my_permission))
 
     const folderId = effectiveFolder?.id || effectiveDocument?.folder || effectiveDocument?.folder_id || null
 
@@ -424,6 +431,21 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         if (!folderId) return 'Không có folder'
         return `${state.folderTotal} quyền`
     }, [folderId, state.folderTotal])
+
+    if (!canManagePermissions) {
+        return (
+            <div className="flex flex-col items-center justify-center p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4">
+                    <span className="material-symbols-outlined text-3xl text-slate-400">lock</span>
+                </div>
+                <h3 className="text-sm font-bold text-slate-700">Quyền truy cập bị giới hạn</h3>
+                <p className="text-[11px] text-slate-500 mt-1 max-w-[240px]">
+                    Bạn không có quyền quản lý phân quyền cho tài nguyên này.
+                    Vui lòng liên hệ quản trị viên hoặc chủ sở hữu để được hỗ trợ.
+                </p>
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-4">

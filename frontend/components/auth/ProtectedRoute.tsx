@@ -17,6 +17,7 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
     const router = useRouter()
     const { isAuthenticated, isLoading, user } = useAuthContext()
+    const hasRequiredRole = !requiredRole || user?.roles?.some((role) => role.code === requiredRole)
 
     useEffect(() => {
         // If still loading, don't do anything yet
@@ -29,11 +30,11 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
         }
 
         // If role is required, check it
-        if (requiredRole && user?.role !== requiredRole) {
+        if (requiredRole && !hasRequiredRole) {
             // Redirect to unauthorized page or dashboard
             router.push('/dashboard')
         }
-    }, [isAuthenticated, isLoading, requiredRole, user?.role, router])
+    }, [isAuthenticated, isLoading, requiredRole, hasRequiredRole, router])
 
     // Show loading state while checking auth
     if (isLoading) {
@@ -55,7 +56,7 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
     }
 
     // If role check failed, show nothing
-    if (requiredRole && user?.role !== requiredRole) {
+    if (requiredRole && !hasRequiredRole) {
         return null
     }
 

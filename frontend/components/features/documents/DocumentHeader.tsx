@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface DocumentHeaderProps {
     title: string
@@ -23,15 +24,26 @@ export function DocumentHeader({
     onCreateFolder,
     compact = false,
 }: DocumentHeaderProps) {
+    const { getRoleBadge } = useRBAC()
+    const badge = getRoleBadge()
+
     return (
         <div className={compact ? 'mb-3' : 'mb-6'}>
             {/* Title Row */}
             <div className={`flex justify-between items-start ${compact ? 'mb-2' : 'mb-4'}`}>
                 <div>
-                    <h1 className={`${compact ? 'text-xl' : 'text-2xl'} font-extrabold tracking-tight text-[#0d1c2e] mb-1 flex items-center gap-2`}>
-                        <span className={`material-symbols-outlined text-[#9d4300] ${compact ? 'text-xl' : 'text-2xl'}`}>inventory_2</span>
-                        {title}
-                    </h1>
+                    <div className="flex items-center gap-2 mb-1">
+                        <h1 className={`${compact ? 'text-xl' : 'text-2xl'} font-extrabold tracking-tight text-[#0d1c2e] flex items-center gap-2`}>
+                            <span className={`material-symbols-outlined text-[#9d4300] ${compact ? 'text-xl' : 'text-2xl'}`}>inventory_2</span>
+                            {title}
+                        </h1>
+                        <span
+                            className="px-2 py-0.5 rounded-full text-[10px] font-bold border"
+                            style={{ color: badge.color, backgroundColor: badge.bgColor, borderColor: badge.color + '30' }}
+                        >
+                            {badge.label}
+                        </span>
+                    </div>
                     {subtitle && (
                         <p className={`${compact ? 'text-xs max-w-2xl' : 'text-sm max-w-xl'} text-[#584237]`}>{subtitle}</p>
                     )}

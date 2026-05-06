@@ -6,7 +6,7 @@ import { fetchAllFolders, FolderResponse } from '@/services/folder';
 export interface DocumentNode {
     id: string;
     filename: string;
-    original_name: string;
+    original_name?: string;
     file_type: string;
     file_size: number;
     status: 'pending' | 'processing' | 'completed' | 'failed';
@@ -14,6 +14,10 @@ export interface DocumentNode {
     updated_at: string;
     access_scope: 'PUBLIC' | 'PRIVATE';
     uploader?: any;
+    folder_id?: string | null;
+    folder?: string | null;
+    department?: string | null;
+    department_id?: string | null;
 }
 
 export interface FolderTreeNode extends FolderResponse {
@@ -88,8 +92,15 @@ export function useDepartmentFolders(deptId: string): UseDepartmentFoldersResult
                 const unassignedNode: FolderTreeNode = {
                     id: `__unassigned_${deptId}`,
                     name: ' Tài liệu không có thư mục',
+                    description: null,
+                    parent_id: null,
                     department_id: deptId,
                     access_scope: 'department',
+                    metadata: {},
+                    created_by_id: null,
+                    my_permission: 'none',
+                    is_deleted: false,
+                    deleted_at: null,
                     document_count: unassignedDocuments.length,
                     subfolder_count: 0,
                     created_at: new Date().toISOString(),

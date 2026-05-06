@@ -1,6 +1,8 @@
 'use client'
 
 import React, { useMemo } from 'react'
+import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
 import { Department } from '@/types/api'
 
 interface DepartmentTreeProps {
@@ -20,6 +22,9 @@ const getIconForName = (name: string) => {
 }
 
 export function DepartmentTree({ departments, selectedId, onSelect }: DepartmentTreeProps) {
+    const { isAdmin, isTruongPhong } = useRBAC()
+    const { user } = useAuthContext()
+
     const visibleDepartments = useMemo(
         () => departments.filter((d) => !d.is_deleted),
         [departments]
@@ -81,8 +86,12 @@ export function DepartmentTree({ departments, selectedId, onSelect }: Department
 
                             {isRoot ? (
                                 <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-[#9d4300] transition-colors"><span className="material-symbols-outlined text-sm">edit</span></button>
-                                    <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-500 transition-colors"><span className="material-symbols-outlined text-sm">delete</span></button>
+                                    {(isAdmin() || (isTruongPhong() && node.id === user?.department_id)) && (
+                                        <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-[#9d4300] transition-colors"><span className="material-symbols-outlined text-sm">edit</span></button>
+                                    )}
+                                    {isAdmin() ? (
+                                        <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-500 transition-colors"><span className="material-symbols-outlined text-sm">delete</span></button>
+                                    ) : null}
                                 </div>
                             ) : (
                                 <span className={`material-symbols-outlined text-lg ${isSelected ? 'text-[#9d4300]' : 'text-slate-300'}`}>

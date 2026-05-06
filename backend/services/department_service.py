@@ -765,30 +765,25 @@ class DepartmentService(BaseService):
         try:
             from django.core.paginator import Paginator
             from apps.documents.models import Folder
+            from apps.users.models import Department
             
             # Get folder
             folder = Folder.objects.filter(is_deleted=False).get(id=folder_id)
             
             # Get documents
-            documents_queryset = folder.documents.filter(
-                is_deleted=False
-            ).select_related('uploader', 'department').order_by('-created_at')
-            
-            # Apply accessibility filtering if not admin
-            if not is_admin and user_id:
-                from apps.users.models import UserProfile
-                try:
-                    user_profile = UserProfile.objects.get(account_id=user_id)
-                    user_department_id = user_profile.department_id
-                except UserProfile.DoesNotExist:
-                    user_department_id = None
+            if is_admin:
+                documents_queryset = folder.documents.filter(
+                    is_deleted=False
+                ).select_related('uploader', 'department').order_by('-created_at')
+            else:
+                from repositories.document_repository import DocumentRepository
+                doc_repo = DocumentRepository()
+                accessible_docs = doc_repo.get_accessible_documents(user_id)
+                documents_queryset = folder.documents.filter(
+                    is_deleted=False,
+                    id__in=accessible_docs.values_list('id', flat=True)
+                ).select_related('uploader', 'department').order_by('-created_at')
 
-                documents_queryset = documents_queryset.filter(
-                    models.Q(access_scope='company') |
-                    models.Q(access_scope='department', department_id=user_department_id) |
-                    models.Q(access_scope='personal', uploader_id=user_id)
-                ).distinct()
-            
             # Paginate
             paginator = Paginator(documents_queryset, page_size)
             page_obj = paginator.get_page(page)
@@ -796,6 +791,16 @@ class DepartmentService(BaseService):
             # Serialize
             items = []
             for document in page_obj:
+                # Determine user permission level
+                # Frontend object-permission helpers only understand delete/write/read/none.
+                # Map admin to the highest supported object permission so the UI can render access correctly.
+                if is_admin:
+                    my_permission = 'delete'
+                elif str(document.uploader_id) == str(user_id):
+                    my_permission = 'write'
+                else:
+                    my_permission = 'read'
+                
                 items.append({
                     'id': str(document.id),
                     'filename': document.filename,
@@ -807,6 +812,7 @@ class DepartmentService(BaseService):
                     'department_id': str(document.department_id) if document.department_id else None,
                     'folder_id': str(document.folder_id) if document.folder_id else None,
                     'access_scope': document.access_scope,
+                    'my_permission': my_permission,
                     'created_at': document.created_at.isoformat() if document.created_at else None,
                     'updated_at': document.updated_at.isoformat() if document.updated_at else None,
                 })

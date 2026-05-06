@@ -10,31 +10,74 @@ import type { LoginRequest, LoginResponse, RegisterRequest, LoginData, Account }
 // Re-export types for convenience
 export type { LoginRequest, RegisterRequest, Account, LoginData, LoginResponse }
 
-/**
- * Get auth token from localStorage
- */
-export function getAuthToken(): string | null {
-    if (typeof window === 'undefined') return null
-    return localStorage.getItem('auth_token')
+function getCookie(name: string): string | null {
+    if (typeof document === 'undefined') return null
+    const cookieMatch = document.cookie.match(
+        new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()[\]\\/+^])/g, '\\$1') + '=([^;]*)')
+    )
+    return cookieMatch ? decodeURIComponent(cookieMatch[1]) : null
 }
 
 /**
- * Get refresh token from localStorage
+ * Get auth token from localStorage or cookie fallback
+ */
+export function getAuthToken(): string | null {
+    if (typeof window === 'undefined') {
+        console.warn('⚠️ [getAuthToken] Called on server-side (window is undefined)')
+        return null
+    }
+
+    try {
+        const fromStorage = localStorage.getItem('auth_token')
+        const fromCookie = getCookie('auth_token')
+
+        const token = fromStorage || fromCookie
+
+        if (token && token.includes('placeholder')) {
+            console.debug('ℹ️ [getAuthToken] Ignoring stale placeholder token')
+            return null
+        }
+
+        if (token) {
+            console.debug(`✅ [getAuthToken] Token retrieved (length: ${token.length}, source: ${fromStorage ? 'localStorage' : 'cookie'})`)
+        } else {
+            console.debug('ℹ️ [getAuthToken] No token found in localStorage or cookies')
+        }
+
+        return token
+    } catch (err) {
+        console.error('❌ [getAuthToken] Error retrieving token:', err)
+        return null
+    }
+}
+
+/**
+ * Get refresh token from localStorage or cookie fallback
  */
 export function getRefreshToken(): string | null {
     if (typeof window === 'undefined') return null
-    return localStorage.getItem('refresh_token')
+    return localStorage.getItem('refresh_token') || getCookie('refresh_token')
 }
 
 /**
  * Get current user from localStorage
  */
-export function getCurrentUser(): Account | null {
+export function getCurrentUser(): any | null {
     if (typeof window === 'undefined') return null
     const userJson = localStorage.getItem('current_user')
     if (!userJson) return null
     try {
-        return JSON.parse(userJson)
+        const user = JSON.parse(userJson)
+        const roles = JSON.parse(localStorage.getItem('user_roles') || '[]')
+        const department_id = localStorage.getItem('user_department_id')
+        const permissions = JSON.parse(localStorage.getItem('user_permissions') || '[]')
+
+        return {
+            ...user,
+            roles,
+            department_id,
+            permissions
+        }
     } catch {
         return null
     }
@@ -56,25 +99,123 @@ export function getUserPermissions(): string[] {
 
 /**
  * Set auth tokens and user info in localStorage + cookies
+ * EXPORTED: Can be called from anywhere to update user auth data (especially after permission changes)
  */
-function setAuthData(data: LoginData) {
-    const { access_token, refresh_token, user, permissions } = data
+export function setAuthData(data: LoginData) {
+    const { access_token, refresh_token, user, permissions, roles, department_id } = data
+
+    // Validate token before storing
+    if (!access_token || typeof access_token !== 'string' || access_token.trim() === '') {
+        console.error('❌ [setAuthData] Invalid access_token received:', {
+            type: typeof access_token,
+            isEmpty: !access_token || access_token.trim() === '',
+            length: access_token?.length
+        })
+        throw new Error('Invalid access_token from backend')
+    }
+
+    console.log('🔐 [setAuthData] Starting token storage with token length:', access_token.length)
+
+    // Store old user ID to detect if user changed
+    const oldUserJson = localStorage.getItem('current_user')
+    const oldUserId = oldUserJson ? JSON.parse(oldUserJson).id : null
+    const newUserId = user.id
 
     // Set in localStorage (for client-side access)
-    localStorage.setItem('auth_token', access_token)
-    if (refresh_token) {
-        localStorage.setItem('refresh_token', refresh_token)
+    try {
+        localStorage.setItem('auth_token', access_token)
+        const storedAccessToken = localStorage.getItem('auth_token')
+        if (!storedAccessToken || storedAccessToken !== access_token) {
+            console.error('❌ [setAuthData] Failed to store access_token in localStorage!', {
+                stored: storedAccessToken?.substring(0, 30),
+                original: access_token.substring(0, 30),
+                match: storedAccessToken === access_token
+            })
+        } else {
+            console.log('✅ [setAuthData] Access token stored in localStorage (length:', access_token.length, ')')
+        }
+    } catch (err) {
+        console.error('❌ [setAuthData] Error storing access_token:', err)
     }
-    localStorage.setItem('current_user', JSON.stringify(user))
+
+    if (refresh_token) {
+        try {
+            localStorage.setItem('refresh_token', refresh_token)
+            console.log('✅ [setAuthData] Refresh token stored in localStorage')
+        } catch (err) {
+            console.error('❌ [setAuthData] Error storing refresh_token:', err)
+        }
+    }
+
+    try {
+        localStorage.setItem('current_user', JSON.stringify(user))
+        console.log('✅ [setAuthData] User data stored in localStorage')
+    } catch (err) {
+        console.error('❌ [setAuthData] Error storing user data:', err)
+    }
+
     if (permissions && permissions.length > 0) {
-        localStorage.setItem('user_permissions', JSON.stringify(permissions))
+        try {
+            localStorage.setItem('user_permissions', JSON.stringify(permissions))
+            console.log('✅ [setAuthData] Permissions stored in localStorage')
+        } catch (err) {
+            console.error('❌ [setAuthData] Error storing permissions:', err)
+        }
+    }
+
+    if (roles) {
+        try {
+            localStorage.setItem('user_roles', JSON.stringify(roles))
+            console.log('✅ [setAuthData] Roles stored in localStorage')
+        } catch (err) {
+            console.error('❌ [setAuthData] Error storing roles:', err)
+        }
+    }
+
+    if (department_id) {
+        try {
+            localStorage.setItem('user_department_id', department_id)
+            console.log('✅ [setAuthData] Department ID stored in localStorage')
+        } catch (err) {
+            console.error('❌ [setAuthData] Error storing department_id:', err)
+        }
     }
 
     // Set in cookies (for middleware access)
     // Cookies lưu 24h hoặc theo thời gian token expiry
-    setCookie('auth_token', access_token, 24 * 60 * 60 * 1000) // 24 hours
+    try {
+        setCookie('auth_token', access_token, 24 * 60 * 60 * 1000) // 24 hours
+        console.log('✅ [setAuthData] Auth token cookie set')
+    } catch (err) {
+        console.error('❌ [setAuthData] Error setting auth_token cookie:', err)
+    }
+
     if (refresh_token) {
-        setCookie('refresh_token', refresh_token, 7 * 24 * 60 * 60 * 1000) // 7 days
+        try {
+            setCookie('refresh_token', refresh_token, 7 * 24 * 60 * 60 * 1000) // 7 days
+            console.log('✅ [setAuthData] Refresh token cookie set')
+        } catch (err) {
+            console.error('❌ [setAuthData] Error setting refresh_token cookie:', err)
+        }
+    }
+
+    // Verify token was actually stored
+    const verifyAccess = getAuthToken()
+    const verifyRefresh = getRefreshToken()
+    console.log('🔍 [setAuthData] Verification after storage:', {
+        accessTokenStored: verifyAccess ? '✅ Yes' : '❌ No',
+        refreshTokenStored: verifyRefresh ? '✅ Yes' : '❌ No',
+        accessTokenIsPlaceholder: verifyAccess?.includes('placeholder') ? '⚠️ Yes' : '✅ No',
+    })
+
+    // Emit event for same-tab auth change detection (only if user ID changed)
+    if (oldUserId && oldUserId !== newUserId) {
+        console.log('🔄 User changed from', oldUserId, 'to', newUserId, '- emitting auth:user-changed event')
+        window.dispatchEvent(new Event('auth:user-changed'))
+    } else if (!oldUserId && newUserId) {
+        // First login
+        console.log('🔄 User logged in:', newUserId, '- emitting auth:user-changed event')
+        window.dispatchEvent(new Event('auth:user-changed'))
     }
 }
 
@@ -104,6 +245,8 @@ function clearAuthData() {
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('current_user')
     localStorage.removeItem('user_permissions')
+    localStorage.removeItem('user_roles')
+    localStorage.removeItem('user_department_id')
 
     // Clear from cookies
     deleteCookie('auth_token')
@@ -125,25 +268,59 @@ function deleteCookie(name: string) {
 export async function login(credentials: LoginRequest): Promise<LoginData> {
     try {
         logger.info('Attempting login', { email: credentials.email })
+        console.log('🔐 [login] Starting login flow for:', credentials.email)
 
         // Call API - backend wraps response in ResponseBuilder
         const response = await api.post<LoginResponse>('/auth/login', credentials)
+        console.log('📡 [login] Backend response status:', response.success)
 
         // Extract the data from the wrapper
         if (!response.success || !response.data) {
-            throw new Error(response.message || 'Đăng nhập thất bại')
+            const errorMsg = response.message || 'Đăng nhập thất bại'
+            console.error('❌ [login] Login response not successful:', {
+                success: response.success,
+                message: errorMsg,
+                hasData: !!response.data
+            })
+            throw new Error(errorMsg)
         }
 
         const loginData = response.data
+        console.log('✅ [login] Login response received with tokens:', {
+            hasAccessToken: !!loginData.access_token,
+            accessTokenLength: loginData.access_token?.length,
+            hasRefreshToken: !!loginData.refresh_token,
+            refreshTokenLength: loginData.refresh_token?.length,
+            userId: loginData.user.id,
+        })
+
+        // Validate tokens before storing
+        if (!loginData.access_token) {
+            console.error('❌ [login] No access_token in login response!')
+            throw new Error('Backend did not return access_token')
+        }
 
         // Store tokens and user info
+        console.log('💾 [login] Storing auth data...')
         setAuthData(loginData)
+
+        // Verify token was stored
+        const storedToken = getAuthToken()
+        console.log('🔍 [login] Token verification after setAuthData:', {
+            tokenStored: !!storedToken,
+            tokenLength: storedToken?.length,
+            isPlaceholder: storedToken?.includes('placeholder'),
+        })
+
         logger.info('Login successful', { userId: loginData.user.id })
+        console.log('✅ [login] Login flow completed successfully')
 
         return loginData
     } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        console.error('❌ [login] Login failed:', errorMsg)
         logger.error('Login failed', {
-            error: error instanceof Error ? error.message : String(error),
+            error: errorMsg,
         })
         throw error
     }
@@ -313,10 +490,12 @@ export async function getProfile(): Promise<Account> {
 }
 
 /**
- * Check if user is authenticated
+ * Check if user is authenticated (has valid real JWT token, not placeholder)
  */
 export function isAuthenticated(): boolean {
-    return !!getAuthToken()
+    const token = getAuthToken()
+    // Must have token AND it must not be a placeholder
+    return !!token && !token.includes('placeholder')
 }
 
 /**

@@ -47,3 +47,5 @@ export const config = {
     ],
 }
 
+// Export as default for proxy compatibility
+export default middleware

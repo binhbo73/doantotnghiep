@@ -3,7 +3,10 @@ export interface User {
     id: string
     email: string
     name: string
-    role: 'admin' | 'user'
+    username?: string
+    roles: Array<{ id: string; code: string; name: string }>
+    department_id: string | null
+    permissions: string[]
 }
 
 export interface Message {

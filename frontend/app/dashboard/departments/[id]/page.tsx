@@ -10,6 +10,8 @@
 
 import { useParams } from 'next/navigation';
 import { useState } from 'react';
+import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
 import DepartmentDetailLayout from '@/components/departments/layout/DepartmentDetailLayout';
 import DepartmentDetailHeader from '@/components/departments/sections/DepartmentDetailHeader';
 import ManagerCard from '@/components/departments/sections/ManagerCard';
@@ -23,6 +25,9 @@ import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail';
 export default function DepartmentDetailPage() {
     const params = useParams();
     const deptId = params.id as string;
+
+    const { isAdmin, isTruongPhong } = useRBAC()
+    const { user } = useAuthContext()
 
     const [activeTab, setActiveTab] = useState<'users' | 'folders' | 'documents'>('users');
 
@@ -48,6 +53,22 @@ export default function DepartmentDetailPage() {
 
     if (!departmentDetail) {
         return <div className="p-8 text-center text-red-500 font-bold">Phòng ban không tồn tại</div>;
+    }
+
+    // RBAC: deny full detail access for managers who are not in the department
+    if (isTruongPhong() && deptId !== user?.department_id && !isAdmin()) {
+        return (
+            <div className="min-h-screen flex items-center justify-center p-6">
+                <div className="text-center max-w-lg bg-white rounded-2xl p-8 shadow-sm border">
+                    <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
+                        <span className="material-symbols-outlined text-3xl text-slate-400">lock</span>
+                    </div>
+                    <h3 className="text-lg font-bold mb-2">Quyền truy cập bị giới hạn</h3>
+                    <p className="text-sm text-slate-500 mb-4">Bạn chỉ có thể xem tổng quan công ty. Trưởng phòng không được phép xem chi tiết của phòng ban khác.</p>
+                    <button onClick={() => window.history.back()} className="px-4 py-2 rounded bg-[#9d4300] text-white">Quay lại</button>
+                </div>
+            </div>
+        )
     }
 
     return (

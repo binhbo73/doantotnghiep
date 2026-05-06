@@ -25,6 +25,7 @@ import { useEffect } from 'react'
 export function useProtectedRoute(requiredRole?: string) {
     const router = useRouter()
     const { isAuthenticated, isLoading, user } = useAuthContext()
+    const hasRequiredRole = !requiredRole || user?.roles?.some((role) => role.code === requiredRole)
 
     useEffect(() => {
         if (isLoading) return
@@ -36,13 +37,13 @@ export function useProtectedRoute(requiredRole?: string) {
         }
 
         // Check role if required
-        if (requiredRole && user?.role !== requiredRole) {
+        if (requiredRole && !hasRequiredRole) {
             router.push('/dashboard')
             return
         }
-    }, [isAuthenticated, isLoading, requiredRole, user?.role, router])
+    }, [isAuthenticated, isLoading, requiredRole, hasRequiredRole, router])
 
-    const isProtected = isAuthenticated && (!requiredRole || user?.role === requiredRole)
+    const isProtected = isAuthenticated && hasRequiredRole
 
     return {
         isProtected,

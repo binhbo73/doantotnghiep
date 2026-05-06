@@ -62,8 +62,8 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                 <div
                     onClick={() => hasChildren && toggleFolder(node.id)}
                     className={`group flex items-center gap-3 p-3 rounded-2xl cursor-pointer transition-all ${isExpanded
-                            ? 'bg-amber-50 shadow-sm ring-1 ring-amber-200'
-                            : 'hover:bg-slate-50'
+                        ? 'bg-amber-50 shadow-sm ring-1 ring-amber-200'
+                        : 'hover:bg-slate-50'
                         }`}
                 >
                     {/* Expand/Collapse Chevron */}
@@ -91,7 +91,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                             <h3 className={`text-sm font-black truncate ${isExpanded ? 'text-amber-700' : 'text-[#0d1c2e]'}`}>
                                 {node.name}
                             </h3>
-                            {node.access_scope === 'PRIVATE' && (
+                            {node.access_scope === 'personal' && (
                                 <span className="material-symbols-outlined text-xs text-red-400">lock</span>
                             )}
                         </div>

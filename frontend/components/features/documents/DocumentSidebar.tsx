@@ -3,10 +3,12 @@
 import React, { useState } from 'react'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { getFileIcon, formatFileSize } from './DocumentRow'
+import EffectivePermissionBadge from '@/components/common/EffectivePermissionBadge'
 import { PreviewModal } from './PreviewModal'
 import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { toast } from 'sonner'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface DocumentSidebarProps {
     document: FolderDocumentResponse | null
@@ -56,6 +58,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     const [isDownloading, setIsDownloading] = useState(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [previewUrl, setPreviewUrl] = useState<string>('')
+    const { canRead, canWrite, canDelete } = useRBAC()
 
     if (!document) {
         return (
@@ -73,6 +76,23 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
 
     const fileIcon = getFileIcon(document.file_type)
     const displayName = document.original_name || document.filename || 'Tài liệu'
+    const canReadDocument = canRead(document.my_permission)
+    const canWriteDocument = canWrite(document.my_permission)
+    const canDeleteDocument = canDelete(document.my_permission)
+
+    if (!canReadDocument) {
+        return (
+            <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl p-6 flex flex-col items-center justify-center min-h-[400px]">
+                <div className="w-20 h-20 rounded-2xl bg-red-50 flex items-center justify-center mb-4">
+                    <span className="material-symbols-outlined text-4xl text-red-400">lock</span>
+                </div>
+                <p className="text-sm font-medium text-slate-700 mb-1">Không có quyền xem tài liệu</p>
+                <p className="text-xs text-slate-400 text-center max-w-[220px]">
+                    Tài liệu này không nằm trong phạm vi truy cập của bạn
+                </p>
+            </div>
+        )
+    }
 
     const handleDownload = async (mode: 'download' | 'preview') => {
         if (!document) return
@@ -155,7 +175,10 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
             <div className="p-5 space-y-5 overflow-y-auto flex-1">
                 {/* File Name & Type */}
                 <div>
-                    <h3 className="text-sm font-bold text-slate-900 leading-snug mb-1">{displayName}</h3>
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-bold text-slate-900 leading-snug mb-1">{displayName}</h3>
+                        <EffectivePermissionBadge resource={document} resourceType="document" />
+                    </div>
                     <p className="text-[11px] text-slate-400">
                         Tệp tin {document.file_type?.toUpperCase()} • {formatFileSize(document.file_size)}
                     </p>
@@ -237,22 +260,28 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                     </div>
 
                     {/* Secondary Actions */}
-                    <div className="flex gap-2 pt-1">
-                        <button
-                            className="flex-[2] flex items-center justify-center gap-1.5 px-4 py-2.5 border border-slate-200 text-slate-700 bg-white rounded-xl text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
-                            title="Sửa file ở máy tính sau đó tải lên bản mới"
-                        >
-                            <span className="material-symbols-outlined text-sm text-[#9d4300]">update</span>
-                            Cập nhật phiên bản mới
-                        </button>
+                    {(canWriteDocument || canDeleteDocument) && (
+                        <div className="flex gap-2 pt-1">
+                            {canWriteDocument && (
+                                <button
+                                    className="flex-[2] flex items-center justify-center gap-1.5 px-4 py-2.5 border border-slate-200 text-slate-700 bg-white rounded-xl text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
+                                    title="Sửa file ở máy tính sau đó tải lên bản mới"
+                                >
+                                    <span className="material-symbols-outlined text-sm text-[#9d4300]">update</span>
+                                    Cập nhật phiên bản mới
+                                </button>
+                            )}
 
-                        <button
-                            className="px-3 py-2.5 border border-red-100 text-red-500 bg-red-50 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors"
-                            title="Xóa tài liệu này"
-                        >
-                            <span className="material-symbols-outlined text-sm">delete</span>
-                        </button>
-                    </div>
+                            {canDeleteDocument && (
+                                <button
+                                    className="px-3 py-2.5 border border-red-100 text-red-500 bg-red-50 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors"
+                                    title="Xóa tài liệu này"
+                                >
+                                    <span className="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
 

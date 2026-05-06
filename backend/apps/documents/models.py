@@ -287,8 +287,8 @@ class DocumentPermission(BaseModel):
     permission = models.CharField(
         max_length=50,
         default='read',
-        choices=[('read', 'Read'), ('write', 'Write'), ('admin', 'Admin')],
-        help_text="Permission level (read, write, admin)"
+        choices=[('read', 'Read'), ('write', 'Write'), ('delete', 'Delete')],
+        help_text="Permission level (read, write, delete)"
     )
     permission_precedence = models.CharField(
         max_length=50,
@@ -352,8 +352,8 @@ class FolderPermission(BaseModel):
     permission = models.CharField(
         max_length=50,
         default='read',
-        choices=[('read', 'Read'), ('write', 'Write'), ('admin', 'Admin')],
-        help_text="Permission level (read, write, admin)"
+        choices=[('read', 'Read'), ('write', 'Write'), ('delete', 'Delete')],
+        help_text="Permission level (read, write, delete)"
     )
     is_active = models.BooleanField(default=True, help_text="Is this permission active?")
 

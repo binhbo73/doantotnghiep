@@ -194,6 +194,35 @@ class FolderRepository(BaseRepository):
             logger.error(f"Error checking circular reference: {str(e)}")
             raise
     
+    def _get_department_and_descendants_ids(self, department_id: Optional[str]) -> List[str]:
+        """Return department ID plus all descendant department IDs."""
+        if not department_id:
+            return []
+
+        from apps.users.models import Department
+
+        dept_ids = [str(department_id)]
+        queue = [str(department_id)]
+
+        try:
+            while queue:
+                current_id = queue.pop(0)
+                child_ids = list(
+                    Department.objects.filter(
+                        parent_id=current_id,
+                        is_deleted=False
+                    ).values_list('id', flat=True)
+                )
+                for child_id in child_ids:
+                    child_id = str(child_id)
+                    if child_id not in dept_ids:
+                        dept_ids.append(child_id)
+                        queue.append(child_id)
+        except Exception as e:
+            logger.error(f"Error loading department descendants for {department_id}: {str(e)}")
+
+        return dept_ids
+
     def get_accessible_folders(
         self, 
         user_id: str, 
@@ -206,7 +235,7 @@ class FolderRepository(BaseRepository):
         LOGIC:
         - Admin (is_admin=True) → Access all folders
         - 'company' → all users can access
-        - 'department' → only users in same department
+        - 'department' → users in same department or any child departments
         - 'personal' → only creator
         """
         try:
@@ -216,10 +245,15 @@ class FolderRepository(BaseRepository):
             if is_admin:
                 return list(query.order_by('name'))
             
+            if user_department_id:
+                accessible_dept_ids = self._get_department_and_descendants_ids(user_department_id)
+            else:
+                accessible_dept_ids = []
+
             # Combine filters using Q objects for regular users
             accessible = query.filter(
                 Q(access_scope='company') |
-                Q(access_scope='department', department_id=user_department_id) |
+                Q(access_scope='department', department_id__in=accessible_dept_ids) |
                 Q(access_scope='personal', created_by_id=user_id)
             ).distinct()
             

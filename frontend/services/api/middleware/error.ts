@@ -93,7 +93,13 @@ export async function errorMiddleware(
 
         case 403:
             // Forbidden - user doesn't have permission
+            // This might mean user's role/permission was revoked
+            // Dispatch event so UI can refresh
             window.dispatchEvent(new CustomEvent('auth:forbidden'))
+
+            // Also dispatch a custom event to trigger permission refresh
+            // Any component listening can call useRefreshUserPermissions
+            window.dispatchEvent(new CustomEvent('permission:refresh-needed'))
 
             throw new ApiError(
                 status,

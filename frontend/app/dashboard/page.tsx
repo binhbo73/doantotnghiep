@@ -11,89 +11,132 @@ import {
 import AddEmployeeDialog from '@/components/features/dashboard/AddEmployeeDialog'
 import { ToastContainer } from '@/components/common/Toast'
 import { createEmployee } from '@/services/employee'
-import { useUsers } from '@/hooks/useUsers'
 import { useDocuments } from '@/hooks/useDocuments'
-import { useDepartments } from '@/hooks/useDashboardMetrics'
 import { useToast } from '@/hooks/useToast'
+import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
+import { useRouter } from 'next/navigation'
 
+/**
+ * Dashboard Page - Role-aware
+ * 
+ * Admin:   Sees all stats (Users, Documents, Departments), quick actions, activity
+ * Manager: Sees Documents stat, quick actions (limited), activity
+ * User:    Sees Documents stat, activity only
+ */
 export default function DashboardPage() {
-    const [selectedPeriod, setSelectedPeriod] = useState('7days')
+    const router = useRouter()
     const [isAddEmployeeDialogOpen, setIsAddEmployeeDialogOpen] = useState(false)
-    const [dialogMessage, setDialogMessage] = useState<{ type: 'success' | 'error' | null; text: string }>({
-        type: null,
-        text: '',
-    })
     const { toasts, removeToast, showSuccess, showError } = useToast()
+    const { user } = useAuthContext()
+    const { isAdmin, isTruongPhong } = useRBAC()
 
-    // Custom hooks - Frontend standard flow
-    const { count: userCount, loading: usersLoading, error: usersError, refetch: refetchUsers } = useUsers()
+    // --- RBAC-aware API calls ---
+    // Documents API is accessible to ALL roles
     const { count: documentCount, loading: docsLoading, error: docsError } = useDocuments()
-    const { count: departmentCount, loading: deptsLoading, error: deptsError } = useDepartments()
 
-    // Overall loading and error states
-    const isLoading = usersLoading || docsLoading || deptsLoading
-    const errors = [usersError, docsError, deptsError].filter(Boolean)
+    // Users & Departments API are admin-only on backend
+    // We use lazy state so we don't make the API call for non-admin users
+    const [adminStats, setAdminStats] = useState<{ userCount: number; deptCount: number } | null>(null)
+    const [adminStatsLoading, setAdminStatsLoading] = useState(false)
+
+    React.useEffect(() => {
+        if (!isAdmin()) return
+
+        const fetchAdminStats = async () => {
+            setAdminStatsLoading(true)
+            try {
+                const { api } = await import('@/services/api')
+                const [usersRes, deptsRes] = await Promise.allSettled([
+                    api.get<any>('/users/?page=1&page_size=1'),
+                    api.get<any>('/departments/?page=1&page_size=1'),
+                ])
+
+                const userCount = usersRes.status === 'fulfilled'
+                    ? (usersRes.value?.data?.pagination?.total_items || usersRes.value?.pagination?.total_items || 0)
+                    : 0
+                const deptCount = deptsRes.status === 'fulfilled'
+                    ? (deptsRes.value?.data?.pagination?.total_items || deptsRes.value?.pagination?.total_items || 0)
+                    : 0
+
+                setAdminStats({ userCount, deptCount })
+            } catch (err) {
+                console.error('Failed to fetch admin stats:', err)
+            } finally {
+                setAdminStatsLoading(false)
+            }
+        }
+        fetchAdminStats()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []) // Only run once on mount
+
+    // --- Loading & Error ---
+    const isLoading = docsLoading || adminStatsLoading
+    const errors = [docsError].filter(Boolean)
     const hasError = errors.length > 0
 
-    // Mock data for stats - will be replaced with real API data
+    // --- Build stats cards based on role ---
     const stats = [
-        {
+        // Admin-only: User count
+        isAdmin() && {
             id: 'users',
             icon: '👥',
             label: 'SỐ NGƯỜI DÙNG',
-            value: isLoading ? '...' : userCount.toLocaleString(),
+            value: isLoading ? '...' : (adminStats?.userCount ?? 0).toLocaleString(),
             trend: 'up' as const,
-
             iconBgColor: '#f0f3ff',
         },
+        // All roles: Document count
         {
             id: 'documents',
             icon: '📁',
             label: 'TÀI LIỆU LƯU TRỮ',
             value: isLoading ? '...' : documentCount.toLocaleString(),
             trend: 'up' as const,
-
             iconBgColor: '#fff4e0',
         },
-        {
+        // Admin-only: Department count
+        isAdmin() && {
             id: 'departments',
             icon: '🏢',
             label: 'SỐ PHÒNG BAN',
-            value: isLoading ? '...' : departmentCount.toLocaleString(),
+            value: isLoading ? '...' : (adminStats?.deptCount ?? 0).toLocaleString(),
             trend: 'neutral' as const,
             iconBgColor: '#e0f2fe',
         },
-    ]
+    ].filter(Boolean) as any[]
 
-    // Quick action buttons
+    // --- Quick action buttons based on role ---
     const quickActions = [
-        {
+        // Admin-only: Add employee
+        isAdmin() && {
             id: 'add-user',
             label: 'Thêm nhân sự',
             icon: '👤',
             onClick: () => setIsAddEmployeeDialogOpen(true),
         },
-        {
+        // Admin + Manager: Upload document
+        (isAdmin() || isTruongPhong()) && {
             id: 'upload-doc',
             label: 'Tải tài liệu',
             icon: '📤',
-            onClick: () => console.log('Upload doc'),
+            onClick: () => router.push('/dashboard/documents'),
         },
-        {
+        // Admin-only: Permission management
+        isAdmin() && {
             id: 'view-report',
-            label: 'Phản quyền',
+            label: 'Phân quyền',
             icon: '🔐',
-            onClick: () => console.log('View permissions'),
+            onClick: () => router.push('/dashboard/roles'),
         },
-        {
-            id: 'settings',
-            label: 'Cấu hình AI',
-            icon: '⚙️',
-            onClick: () => console.log('Settings'),
+        // Admin + Manager: Department management
+        (isAdmin() || isTruongPhong()) && {
+            id: 'departments',
+            label: 'Phòng ban',
+            icon: '🏢',
+            onClick: () => router.push('/dashboard/departments'),
         },
-    ]
-
-    // Recent activities: removed hardcoded demo data so component fetches real audit logs
+    ].filter(Boolean) as any[]
 
     const handleExport = () => {
         console.log('Export report')
@@ -105,8 +148,6 @@ export default function DashboardPage() {
 
     const handleAddEmployee = async (formData: any) => {
         try {
-            setDialogMessage({ type: null, text: '' })
-
             // Call API to create employee
             const result = await createEmployee({
                 username: formData.username,
@@ -118,17 +159,11 @@ export default function DashboardPage() {
             })
 
             console.log('✅ Employee created:', result)
-
-            // Show success toast notification (top-right corner)
             showSuccess(`Tạo tài khoản thành công cho ${result.first_name} ${result.last_name}`)
-
-            // Refetch user count
-            await refetchUsers()
 
             // Close dialog after 1.5 seconds
             setTimeout(() => {
                 setIsAddEmployeeDialogOpen(false)
-                setDialogMessage({ type: null, text: '' })
             }, 1500)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Có lỗi xảy ra'
@@ -136,6 +171,10 @@ export default function DashboardPage() {
             showError(message)
         }
     }
+
+    // --- Determine greeting time ---
+    const hour = new Date().getHours()
+    const timeOfDay = hour < 12 ? 'sáng' : hour < 18 ? 'chiều' : 'tối'
 
     return (
         <main
@@ -147,18 +186,20 @@ export default function DashboardPage() {
             {/* Toast Notifications - Top Right */}
             <ToastContainer toasts={toasts} onRemove={removeToast} />
 
-            {/* Add Employee Dialog */}
-            <AddEmployeeDialog
-                isOpen={isAddEmployeeDialogOpen}
-                onClose={() => setIsAddEmployeeDialogOpen(false)}
-                onSubmit={handleAddEmployee}
-            />
+            {/* Add Employee Dialog (Admin only) */}
+            {isAdmin() && (
+                <AddEmployeeDialog
+                    isOpen={isAddEmployeeDialogOpen}
+                    onClose={() => setIsAddEmployeeDialogOpen(false)}
+                    onSubmit={handleAddEmployee}
+                />
+            )}
 
             {/* Dashboard Header - Compact */}
             <div className="px-4 py-3">
                 <DashboardHeader
-                    userName="Admin"
-                    timeOfDay="sáng"
+                    userName={user?.name || user?.username || 'Bạn'}
+                    timeOfDay={timeOfDay}
                     daysLabel="7 ngày qua"
                     onExport={handleExport}
                 />
@@ -182,9 +223,9 @@ export default function DashboardPage() {
 
             {/* Main Content */}
             <div className="px-4 pb-6">
-                {/* Stats Section - 3 columns grid, compact */}
+                {/* Stats Section */}
                 <section className="mb-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-${stats.length > 2 ? '3' : stats.length} gap-3`}>
                         {stats.map((stat) => (
                             <StatCard
                                 key={stat.id}
@@ -229,24 +270,26 @@ export default function DashboardPage() {
                     </ActivitySummary>
                 </section>
 
-                {/* Quick Actions Section */}
-                <section className="mb-4">
-                    <div
-                        className="rounded-lg p-4"
-                        style={{
-                            backgroundColor: '#ffffff',
-                            border: '1px solid #dce2f3',
-                        }}
-                    >
-                        <h2
-                            className="text-sm font-bold mb-3"
-                            style={{ color: '#151c27' }}
+                {/* Quick Actions Section - Admin & Manager only */}
+                {quickActions.length > 0 && (
+                    <section className="mb-4">
+                        <div
+                            className="rounded-lg p-4"
+                            style={{
+                                backgroundColor: '#ffffff',
+                                border: '1px solid #dce2f3',
+                            }}
                         >
-                            ⚡ LỐI TẮT QUẢN TRỊ
-                        </h2>
-                        <QuickActionButtons actions={quickActions} />
-                    </div>
-                </section>
+                            <h2
+                                className="text-sm font-bold mb-3"
+                                style={{ color: '#151c27' }}
+                            >
+                                ⚡ LỐI TẮT QUẢN TRỊ
+                            </h2>
+                            <QuickActionButtons actions={quickActions} />
+                        </div>
+                    </section>
+                )}
 
                 {/* Recent Activity Section */}
                 <section className="mb-4">

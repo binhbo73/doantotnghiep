@@ -3,10 +3,9 @@
 import React from 'react'
 import { CreateRoleDialogLeftPanel } from './CreateRoleDialogLeftPanel'
 import { CreateRoleDialogRightPanel } from './CreateRoleDialogRightPanel'
+import { IamPermission } from '@/types/api'
 
-interface Permission {
-    id: string
-    name: string
+interface RolePermission extends IamPermission {
     checked: boolean
 }
 
@@ -17,14 +16,14 @@ interface CreateRoleDialogProps {
         code: string
         displayName: string
         description: string
-        permissions: Permission[]
+        permissions: RolePermission[]
     }
     onClose: () => void
     onSubmit?: (data: {
         code: string
         displayName: string
         description: string
-        permissions: Permission[]
+        permissions: RolePermission[]
     }) => void
 }
 

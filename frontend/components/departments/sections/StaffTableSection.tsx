@@ -71,7 +71,6 @@ export default function StaffTableSection({
                 {activeTab === 'folders' && (
                     <StaffFoldersTab
                         deptId={deptId}
-                        initialData={departmentDetail.folders}
                     />
                 )}
                 {activeTab === 'documents' && (

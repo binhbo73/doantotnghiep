@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { dashboardNavigation } from '@/constants/navigation'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface SidebarProps {
     onLogout?: () => void
@@ -23,6 +24,15 @@ export function Sidebar({
         }
         return pathname.startsWith(href)
     }
+
+    const { hasRole, isAdmin } = useRBAC()
+
+    // Filter navigation based on roles
+    const filteredNavigation = dashboardNavigation.filter(item => {
+        if (!item.roles || item.roles.length === 0) return true
+        if (isAdmin() && item.roles.includes('ADMIN')) return true
+        return item.roles.some(role => hasRole(role))
+    })
 
     return (
         <aside
@@ -81,7 +91,7 @@ export function Sidebar({
             {/* Navigation Items */}
             <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4">
                 <div className="space-y-1">
-                    {dashboardNavigation.map((item) => {
+                    {filteredNavigation.map((item) => {
                         const active = isActive(item.href)
                         return (
                             <Link

@@ -257,11 +257,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def ai_response(self, event):
         """Receive AI response from group"""
         await self.send(json.dumps(event))
-    
-    # ============================================================
-    # DATABASE OPERATIONS (sync_to_async)
-    # ============================================================
-    
+
+    def _extract_token_from_query(self, query_string: str) -> Optional[str]:
+        """Extract JWT token from query string"""
+        for param in query_string.split('&'):
+            if param.startswith('token='):
+                return param.split('=', 1)[1]
+        return None
+
     @database_sync_to_async
     def _get_user_from_token(self, token_str: str) -> Optional[Account]:
         """Validate JWT token and return user"""
@@ -272,7 +275,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.warning(f"Token validation failed: {str(e)}")
             return None
-    
+
     @database_sync_to_async
     def _get_conversation(self, conversation_id: str, user_id: UUID) -> Optional[Conversation]:
         """Get conversation and verify ownership"""
@@ -285,7 +288,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             return conversation
         except (Conversation.DoesNotExist, ValueError):
             return None
-    
+
     @database_sync_to_async
     def _save_user_message(self, content: str) -> Message:
         """Save user message to database"""
@@ -296,7 +299,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             content=content
         )
         return message
-    
+
     @database_sync_to_async
     def _get_conversation_messages(self, limit: int, offset: int):
         """Get conversation history"""
@@ -315,7 +318,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'created_at': msg.created_at.isoformat(),
             })
         return result
-    
+
     async def _get_ai_response(self, content: str):
         """Get AI response asynchronously"""
         from services.chat_service import ChatService
@@ -358,14 +361,80 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     'message': f"AI service error: {str(e)}"
                 }
             )
-    
-    # ============================================================
-    # UTILITY METHODS
-    # ============================================================
-    
+
+
+class PermissionConsumer(AsyncWebsocketConsumer):
+    """WebSocket consumer for real-time permission updates.
+
+    Connects to: ws://host/ws/permissions/?token={auth_auth}
+    """
+
+    async def connect(self):
+        self.user = None
+
+        try:
+            query_string = self.scope.get('query_string', b'').decode()
+            token_str = self._extract_token_from_query(query_string)
+
+            if not token_str:
+                await self.close()
+                logger.warning("WebSocket permissions connection attempted without token")
+                return
+
+            self.user = await self._get_user_from_token(token_str)
+            if not self.user:
+                await self.close()
+                logger.warning("Invalid token in WebSocket permissions connection")
+                return
+
+            self.room_group_name = f'permissions_{self.user.id}'
+            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            await self.accept()
+            logger.info(f"User {self.user.id} connected to permissions WebSocket")
+
+        except Exception as e:
+            logger.error(f"Error in WebSocket permissions connect: {str(e)}", exc_info=True)
+            await self.close()
+
+    async def disconnect(self, close_code):
+        try:
+            if hasattr(self, 'room_group_name') and self.user:
+                await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
+                logger.info(f"User {self.user.id} disconnected from permissions WebSocket")
+        except Exception as e:
+            logger.error(f"Error in WebSocket permissions disconnect: {str(e)}", exc_info=True)
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            message_type = data.get('type')
+
+            if message_type == 'heartbeat':
+                await self.send(json.dumps({ 'type': 'heartbeat', 'timestamp': timezone.now().isoformat() }))
+            else:
+                logger.debug(f"Received unsupported permissions WS message type: {message_type}")
+        except json.JSONDecodeError:
+            await self.send(json.dumps({ 'type': 'error', 'message': 'Invalid JSON' }))
+        except Exception as e:
+            logger.error(f"Error processing permissions WebSocket message: {str(e)}", exc_info=True)
+            await self.send(json.dumps({ 'type': 'error', 'message': str(e) }))
+
+    async def permission_update(self, event):
+        await self.send(json.dumps(event))
+
     def _extract_token_from_query(self, query_string: str) -> Optional[str]:
-        """Extract JWT token from query string"""
         for param in query_string.split('&'):
             if param.startswith('token='):
                 return param.split('=', 1)[1]
         return None
+
+    @database_sync_to_async
+    def _get_user_from_token(self, token_str: str) -> Optional[Account]:
+        try:
+            access_token = AccessToken(token_str)
+            user_id = access_token.get('user_id') or access_token.get('user_id')
+            if not user_id:
+                return None
+            return Account.objects.filter(id=user_id, is_active=True).first()
+        except Exception:
+            return None

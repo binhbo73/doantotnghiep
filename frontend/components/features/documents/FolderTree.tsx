@@ -16,6 +16,7 @@ interface FolderTreeProps {
     onToggleOtherDocuments: () => void
     onSelectDocument: (doc: FolderDocumentResponse, folder: FolderResponse) => void
     searchQuery?: string
+    showPersonal?: boolean
 }
 
 export function FolderTree({
@@ -26,6 +27,7 @@ export function FolderTree({
     onToggleOtherDocuments,
     onSelectDocument,
     searchQuery = '',
+    showPersonal = true,
 }: FolderTreeProps) {
     // Load department list to show readable department names
     const { data: departments } = useDepartmentOptions()
@@ -85,6 +87,7 @@ export function FolderTree({
                                         onSelectDocument={onSelectDocument}
                                         searchQuery={searchQuery}
                                         departmentMap={departmentMap}
+                                        showPersonal={showPersonal}
                                     />
                                 ))}
                             </div>
@@ -98,6 +101,7 @@ export function FolderTree({
                             onSelectDocument={(doc, folder) => onSelectDocument(doc, folder as any)}
                             searchQuery={searchQuery}
                             departmentMap={departmentMap}
+                            showPersonal={showPersonal}
                         />
                     </>
                 ) : (

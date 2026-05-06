@@ -140,12 +140,12 @@ export const useChat = (options: UseChatOptions = {}) => {
 
                 // 4. Gọi Stream API
                 let fullContent = ''
-                await ChatService.sendMessageStream(content, conversationId, (chunk) => {
+                await ChatService.sendMessageStream(content, (chunk) => {
                     fullContent += chunk
                     setMessages((prev) =>
                         prev.map(msg => msg.id === botMsgId ? { ...msg, content: fullContent } : msg)
                     )
-                })
+                }, conversationId)
 
                 // 5. Cập nhật danh sách hội thoại nếu cần
                 await fetchConversations()

@@ -1,9 +1,11 @@
 'use client'
 
 import React from 'react'
-import { OtherDocumentsNode, FolderDocumentResponse } from '@/hooks/useDocumentStore'
+import { OtherDocumentsNode } from '@/hooks/useDocumentStore'
+import { FolderDocumentResponse } from '@/services/folder'
 import { FolderResponse } from '@/services/folder'
 import { DocumentRow } from './DocumentRow'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface OtherDocumentsProps {
     otherDocuments: OtherDocumentsNode
@@ -12,6 +14,7 @@ interface OtherDocumentsProps {
     onSelectDocument: (doc: FolderDocumentResponse, folder?: FolderResponse) => void
     searchQuery?: string
     departmentMap?: Record<string, string>
+    showPersonal?: boolean
 }
 
 interface CategoryProps {
@@ -77,10 +80,14 @@ export function OtherDocuments({
     onSelectDocument,
     searchQuery = '',
     departmentMap = {},
-}: OtherDocumentsProps) {
+    showPersonal = true,
+}: OtherDocumentsProps & { showPersonal?: boolean }) {
+    const { isAdmin } = useRBAC()
+
+    const effectiveShowPersonal = showPersonal || isAdmin()
     const totalOtherDocs =
         otherDocuments.departmentDocs.length +
-        otherDocuments.personalDocs.length +
+        (effectiveShowPersonal ? otherDocuments.personalDocs.length : 0) +
         otherDocuments.companyDocs.length
 
     if (totalOtherDocs === 0) {
@@ -127,8 +134,8 @@ export function OtherDocuments({
                         />
                     )}
 
-                    {/* Personal Documents */}
-                    {otherDocuments.personalDocs.length > 0 && (
+                    {/* Personal Documents (optional) */}
+                    {effectiveShowPersonal && otherDocuments.personalDocs.length > 0 && (
                         <DocumentCategory
                             title="Tài liệu Cá nhân"
                             icon="person"

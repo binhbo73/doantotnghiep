@@ -64,10 +64,11 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
 
         try {
             const comment = feedbackComments.get(messageId)?.trim()
+            const normalizedRating: 'upvote' | 'downvote' = rating === 'downvote' ? 'downvote' : 'upvote'
             if (onFeedback) {
                 await onFeedback(messageId, rating, comment)
             } else {
-                await submitFeedback(messageId, rating, comment)
+                await submitFeedback(messageId, normalizedRating, comment)
             }
 
             // Success!

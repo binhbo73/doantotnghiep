@@ -56,7 +56,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
         }
 
         conversations.forEach((conv) => {
-            const convDate = new Date(conv.updatedAt)
+            const convDate = new Date(conv.updatedAt || conv.updated_at || new Date().toISOString())
             const convDateOnly = new Date(convDate.getFullYear(), convDate.getMonth(), convDate.getDate())
 
             if (convDateOnly.getTime() >= today.getTime()) {

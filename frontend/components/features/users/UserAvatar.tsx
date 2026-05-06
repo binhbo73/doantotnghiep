@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react'
+import Image from 'next/image'
 import { User } from 'lucide-react'
 
 interface UserAvatarProps {
@@ -45,15 +46,13 @@ export function UserAvatar({ src, alt, initials, size = 'md', className = '' }: 
     }
 
     return (
-        <img
+        <Image
             src={src}
             alt={alt}
+            width={sizeConfig.size}
+            height={sizeConfig.size}
             onError={() => setImageError(true)}
             className={`rounded-full object-cover ${className}`}
-            style={{
-                width: sizeConfig.size,
-                height: sizeConfig.size,
-            }}
         />
     )
 }

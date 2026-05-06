@@ -10,15 +10,27 @@ interface CreateFolderModalProps {
     isOpen: boolean
     onClose: () => void
     onSuccess?: () => void
+    defaultAccessScope?: 'company' | 'department' | 'personal'
+    allowedScopes?: Array<'company' | 'department' | 'personal'>
 }
 
-export function CreateFolderModal({ isOpen, onClose, onSuccess }: CreateFolderModalProps) {
+export function CreateFolderModal({
+    isOpen,
+    onClose,
+    onSuccess,
+    defaultAccessScope,
+    allowedScopes: allowedScopesProp,
+}: CreateFolderModalProps) {
     const { tree, refetch } = useDocumentStore()
     const { departments } = useDepartments()
 
+    const allowedScopes = allowedScopesProp ?? ['company', 'department', 'personal']
+
     const [folderName, setFolderName] = useState('')
     const [description, setDescription] = useState('')
-    const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>('company')
+    const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>(
+        defaultAccessScope ?? 'company'
+    )
     const [departmentId, setDepartmentId] = useState<string>('')
     const [parentFolderId, setParentFolderId] = useState<string>('')
 
@@ -30,24 +42,34 @@ export function CreateFolderModal({ isOpen, onClose, onSuccess }: CreateFolderMo
         if (isOpen) {
             setFolderName('')
             setDescription('')
-            setAccessScope('company')
+            setAccessScope(defaultAccessScope ?? 'company')
             setDepartmentId('')
             setParentFolderId('')
             setError(null)
             setIsCreating(false)
         }
-    }, [isOpen])
+    }, [isOpen, defaultAccessScope])
 
     // Reset parent folder when department changes
     useEffect(() => {
         setParentFolderId('')
+        // Reset department if access scope is not 'department'
+        if (accessScope !== 'department') {
+            setDepartmentId('')
+        }
     }, [departmentId, accessScope])
 
     // Flatten folder tree for select options
-    const flattenTree = (nodes: typeof tree, depth = 0): { id: string, name: string, depth: number, department_id: string | null }[] => {
-        let result: { id: string, name: string, depth: number, department_id: string | null }[] = []
+    const flattenTree = (nodes: typeof tree, depth = 0): { id: string, name: string, depth: number, department_id: string | null, access_scope: string }[] => {
+        let result: { id: string, name: string, depth: number, department_id: string | null, access_scope: string }[] = []
         for (const node of nodes) {
-            result.push({ id: node.folder.id, name: node.folder.name, depth, department_id: node.folder.department_id })
+            result.push({
+                id: node.folder.id,
+                name: node.folder.name,
+                depth,
+                department_id: node.folder.department_id,
+                access_scope: node.folder.access_scope
+            })
             if (node.children && node.children.length > 0) {
                 result = result.concat(flattenTree(node.children, depth + 1))
             }
@@ -56,9 +78,22 @@ export function CreateFolderModal({ isOpen, onClose, onSuccess }: CreateFolderMo
     }
 
     const foldersList = flattenTree(tree)
-    const displayFoldersList = departmentId
-        ? foldersList.filter(f => f.department_id === departmentId)
-        : foldersList
+    // Filter parent folders to show only those with matching access_scope
+    const displayFoldersList = foldersList.filter(f => {
+        if (allowedScopes.length === 1 && allowedScopes[0] === 'personal') {
+            return f.access_scope === 'personal'
+        }
+
+        // Must have matching access_scope
+        if (f.access_scope !== accessScope) return false
+
+        // If department scope, also filter by department_id
+        if (accessScope === 'department' && departmentId) {
+            return f.department_id === departmentId
+        }
+
+        return true
+    })
 
     const handleCreate = async () => {
         if (!folderName.trim()) {
@@ -73,7 +108,7 @@ export function CreateFolderModal({ isOpen, onClose, onSuccess }: CreateFolderMo
 
         // Enforce department requirement when scope is 'department'
         if (accessScope === 'department' && !departmentId) {
-            setError('Vui lòng chọn phòng ban cho thư mục khi phạm vi là Theo Phòng Ban.')
+            setError('Vui lòng chọn phòng ban.')
             return
         }
 
@@ -95,8 +130,8 @@ export function CreateFolderModal({ isOpen, onClose, onSuccess }: CreateFolderMo
                 payload.parent_id = parentFolderId
             }
 
-            // Send department_id if selected (allowed for any scope)
-            if (departmentId) {
+            // Send department_id only if access_scope is 'department' and department is selected
+            if (accessScope === 'department' && departmentId) {
                 payload.department_id = departmentId
             }
 
@@ -194,41 +229,50 @@ export function CreateFolderModal({ isOpen, onClose, onSuccess }: CreateFolderMo
                     </div>
 
                     {/* Access Scope */}
-                    {/* Department (always shown at top) */}
-                    <div>
-                        <label className="block text-sm font-semibold text-slate-700 mb-2">
-                            Phòng Ban {accessScope === 'department' && <span className="text-red-500">*</span>}
-                        </label>
-                        <select
-                            value={departmentId}
-                            onChange={(e) => setDepartmentId(e.target.value)}
-                            disabled={isCreating}
-                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
-                        >
-                            <option value="">-- Không chọn --</option>
-                            {departments.map((dept) => (
-                                <option key={dept.id} value={dept.id}>{dept.name}</option>
-                            ))}
-                        </select>
-                        <p className="text-xs text-slate-500 mt-2">Phòng ban có thể để trống đối với phạm vi Toàn Công Ty hoặc Cá Nhân. Nếu phạm vi là "Theo Phòng Ban" thì bắt buộc chọn.</p>
-                    </div>
-
-                    {/* Access Scope */}
                     <div>
                         <label className="block text-sm font-semibold text-slate-700 mb-2">
                             Phạm Vi Truy Cập <span className="text-red-500">*</span>
                         </label>
-                        <select
-                            value={accessScope}
-                            onChange={(e) => setAccessScope(e.target.value as any)}
-                            disabled={isCreating}
-                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
-                        >
-                            <option value="company">Toàn Công Ty</option>
-                            <option value="department">Theo Phòng Ban</option>
-                            <option value="personal">Cá Nhân</option>
-                        </select>
+                        {allowedScopes.length === 1 ? (
+                            <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
+                                {allowedScopes[0] === 'company' && 'Toàn Công Ty'}
+                                {allowedScopes[0] === 'department' && 'Theo Phòng Ban'}
+                                {allowedScopes[0] === 'personal' && 'Cá Nhân'}
+                            </div>
+                        ) : (
+                            <select
+                                value={accessScope}
+                                onChange={(e) => setAccessScope(e.target.value as any)}
+                                disabled={isCreating}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
+                            >
+                                {allowedScopes.includes('company') && <option value="company">Toàn Công Ty</option>}
+                                {allowedScopes.includes('department') && <option value="department">Theo Phòng Ban</option>}
+                                {allowedScopes.includes('personal') && <option value="personal">Cá Nhân</option>}
+                            </select>
+                        )}
                     </div>
+
+                    {/* Department (only shown when scope is 'department') */}
+                    {accessScope === 'department' && (
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                Phòng Ban <span className="text-red-500">*</span>
+                            </label>
+                            <select
+                                value={departmentId}
+                                onChange={(e) => setDepartmentId(e.target.value)}
+                                disabled={isCreating}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
+                            >
+                                <option value="">-- Chọn Phòng Ban --</option>
+                                {departments.map((dept) => (
+                                    <option key={dept.id} value={dept.id}>{dept.name}</option>
+                                ))}
+                            </select>
+                            <p className="text-xs text-slate-500 mt-2">Chọn phòng ban cho thư mục này.</p>
+                        </div>
+                    )}
 
                     {/* Parent Folder */}
                     <div>

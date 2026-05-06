@@ -4,6 +4,7 @@ import React from 'react'
 import { FolderTreeNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { DocumentRow } from './DocumentRow'
+import { useRBAC, ObjectPerm } from '@/hooks/useRBAC'
 
 interface FolderTreeNodeProps {
     node: FolderTreeNode
@@ -13,6 +14,7 @@ interface FolderTreeNodeProps {
     onSelectDocument: (doc: FolderDocumentResponse, folder: FolderResponse) => void
     searchQuery?: string
     departmentMap?: Record<string, string>
+    showPersonal?: boolean
 }
 
 // ─── Helper: Match search query ────────────────────────────
@@ -46,6 +48,23 @@ function toSafeCount(primary: number | undefined, fallback: number | undefined):
     return 0
 }
 
+// ─── Scope Badge Component ───────────────────────────────────
+
+export function ScopeBadge({ scope }: { scope: string }) {
+    const config = {
+        company: { icon: 'corporate_fare', color: 'text-blue-600 bg-blue-50 border-blue-100', label: 'Công ty' },
+        department: { icon: 'group', color: 'text-purple-600 bg-purple-50 border-purple-100', label: 'Phòng ban' },
+        personal: { icon: 'lock', color: 'text-slate-500 bg-slate-50 border-slate-200', label: 'Cá nhân' },
+    }[scope as 'company' | 'department' | 'personal'] || { icon: 'folder', color: 'text-slate-400 bg-slate-50 border-slate-100', label: scope }
+
+    return (
+        <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border ${config.color}`}>
+            <span className="material-symbols-outlined text-[10px]">{config.icon}</span>
+            {config.label}
+        </span>
+    )
+}
+
 export function FolderTreeNodeComponent({
     node,
     depth,
@@ -54,9 +73,18 @@ export function FolderTreeNodeComponent({
     onSelectDocument,
     searchQuery = '',
     departmentMap = {},
+    showPersonal = true,
 }: FolderTreeNodeProps) {
     const { folder, children, documents, isExpanded, isLoadingDocs, hasLoadedDocs } = node
+    const { canWrite, canDelete, isTruongPhong, isInDepartment, isAdmin } = useRBAC()
+    const folderPerm = folder.my_permission
+
     const folderIcon = getFolderIcon(folder.name, isExpanded)
+
+    // FIXED: Check access_scope first - company-scoped folders are accessible to everyone
+    const isFolderCompanyScope = folder.access_scope === 'company'
+    const isManagerInDifferentDept = isTruongPhong() && folder.department_id && !isInDepartment(folder.department_id)
+    const restricted = !isFolderCompanyScope && isManagerInDifferentDept
 
     // Filter documents by search
     const filteredDocs = searchQuery
@@ -77,6 +105,9 @@ export function FolderTreeNodeComponent({
     const hasMatchingContent = filteredDocs.length > 0 || filteredChildren.length > 0
     if (searchQuery && !folderMatches && !hasMatchingContent) return null
 
+    // Hide personal-scoped folders when showPersonal is false, but allow admins to see them
+    if (folder.access_scope === 'personal' && !showPersonal && !isAdmin()) return null
+
     const hasContent = children.length > 0 || (hasLoadedDocs && documents.length > 0)
     const docCount = documents.length
     const subfolderCount = toSafeCount(children.length, folder.subfolder_count)
@@ -91,8 +122,8 @@ export function FolderTreeNodeComponent({
 
             {/* Folder Row */}
             <div
-                onClick={() => onToggleFolder(folder.id)}
-                className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 select-none ${isExpanded
+                onClick={!restricted ? () => onToggleFolder(folder.id) : undefined}
+                className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl ${restricted ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'} transition-all duration-200 select-none ${isExpanded
                     ? 'bg-amber-50 border border-amber-200'
                     : 'hover:bg-white hover:shadow-sm border border-transparent'
                     }`}
@@ -128,6 +159,15 @@ export function FolderTreeNodeComponent({
                             </span>
                         </div>
                     )}
+
+                    {/* Scope Badge */}
+                    <div className="flex items-center gap-1 mt-1">
+                        <ScopeBadge scope={folder.access_scope} />
+                        {/* If folder is personal, show owner/uploader name to admins */}
+                        {folder.access_scope === 'personal' && folder.uploader_name && isAdmin() && (
+                            <span className="ml-2 text-[10px] bg-yellow-50 px-2 py-0.5 rounded text-yellow-700 border border-yellow-100">{folder.uploader_name}</span>
+                        )}
+                    </div>
                 </div>
 
                 {/* Counts Badges */}
@@ -156,72 +196,110 @@ export function FolderTreeNodeComponent({
             </div>
 
             {/* Expanded Content */}
-            {isExpanded && (
-                <div className={`${depth === 0 ? 'ml-8' : 'ml-6'} mt-1 relative`}>
-                    {/* Vertical connector line */}
-                    {(filteredChildren.length > 0 || filteredDocs.length > 0) && (
-                        <div className="absolute left-[-24px] top-0 w-px h-[calc(100%-16px)] bg-amber-200/60"></div>
-                    )}
+            {isExpanded && (() => {
+                // FIXED: Check access_scope BEFORE checking department restrictions
+                // Logic:
+                // - access_scope='company' → Everyone can see (no restriction)
+                // - access_scope='department' → Managers can only see own/child departments (not parent)
+                // - access_scope='personal' → Only owner can see (handled by backend)
 
-                    {/* Sub-folders */}
-                    <div className="space-y-1">
-                        {filteredChildren.map((child) => (
-                            <FolderTreeNodeComponent
-                                key={child.folder.id}
-                                node={child}
-                                depth={depth + 1}
-                                selectedDocId={selectedDocId}
-                                onToggleFolder={onToggleFolder}
-                                onSelectDocument={onSelectDocument}
-                                searchQuery={searchQuery}
-                                departmentMap={departmentMap}
-                            />
-                        ))}
-                    </div>
+                // Determine if this folder content should be restricted for display
+                const isFolderCompanyScope = folder.access_scope === 'company'
+                const isFolderPersonalScope = folder.access_scope === 'personal'
+                const isManagerInDifferentDept = isTruongPhong() && folder.department_id && !isInDepartment(folder.department_id)
 
-                    {/* Documents */}
-                    {hasLoadedDocs && filteredDocs.length > 0 && (
-                        <div className="mt-1 space-y-0.5">
-                            {filteredDocs.map((doc) => (
-                                <div key={doc.id} className="relative">
-                                    {/* Connector line */}
-                                    <div className="absolute left-[-24px] top-[16px] w-6 h-px bg-amber-200/60"></div>
-                                    <DocumentRow
-                                        document={doc}
-                                        isSelected={selectedDocId === doc.id}
-                                        onSelect={() => onSelectDocument(doc, folder)}
-                                        folderName={folder.name}
-                                        departmentName={departmentMap[doc.department || doc.department_id || '']}
-                                    />
+                // Show restriction ONLY if:
+                // 1. NOT company-scoped (company-scoped is visible to everyone)
+                // 2. AND is personal-scoped OR manager in different department
+                const restricted = !isFolderCompanyScope && isManagerInDifferentDept && !isFolderPersonalScope
+
+                if (restricted) {
+                    return (
+                        <div className={`${depth === 0 ? 'ml-8' : 'ml-6'} mt-1 relative`}>
+                            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                                <div className="flex flex-col items-center">
+                                    <span className="material-symbols-outlined text-3xl text-slate-400 mb-2">lock</span>
+                                    <p className="text-sm font-semibold">Quyền hạn giới hạn</p>
+                                    <p className="text-xs text-slate-500 mt-1">Bạn chỉ có thể xem dữ liệu thư mục thuộc phòng ban của bạn.</p>
                                 </div>
+                            </div>
+                        </div>
+                    )
+                }
+
+                return (
+                    <div className={`${depth === 0 ? 'ml-8' : 'ml-6'} mt-1 relative`}>
+                        {/* Vertical connector line */}
+                        {(filteredChildren.length > 0 || filteredDocs.length > 0) && (
+                            <div className="absolute left-[-24px] top-0 w-px h-[calc(100%-16px)] bg-amber-200/60"></div>
+                        )}
+
+                        {/* Sub-folders */}
+                        <div className="space-y-1">
+                            {filteredChildren.map((child) => (
+                                <FolderTreeNodeComponent
+                                    key={child.folder.id}
+                                    node={child}
+                                    depth={depth + 1}
+                                    selectedDocId={selectedDocId}
+                                    onToggleFolder={onToggleFolder}
+                                    onSelectDocument={onSelectDocument}
+                                    searchQuery={searchQuery}
+                                    departmentMap={departmentMap}
+                                    showPersonal={showPersonal}
+                                />
                             ))}
                         </div>
-                    )}
 
-                    {/* Empty state */}
-                    {hasLoadedDocs && documents.length === 0 && children.length === 0 && (
-                        <div className="flex items-center gap-2 px-3 py-3 text-xs text-slate-400 italic">
-                            <span className="material-symbols-outlined text-sm">folder_off</span>
-                            Thư mục trống
-                        </div>
-                    )}
-
-                    {/* Loading skeleton */}
-                    {isLoadingDocs && (
-                        <div className="space-y-2 px-3 py-2">
-                            {[1, 2, 3].map((i) => (
-                                <div key={i} className="flex items-center gap-3 animate-pulse">
-                                    <div className="w-8 h-8 bg-slate-200 rounded-lg" />
-                                    <div className="flex-1 space-y-1.5">
-                                        <div className="h-3 bg-slate-200 rounded w-3/4" />
-                                        <div className="h-2 bg-slate-100 rounded w-1/3" />
+                        {/* Documents */}
+                        {hasLoadedDocs && filteredDocs.length > 0 && (
+                            <div className="mt-1 space-y-0.5">
+                                {filteredDocs.map((doc) => (
+                                    <div key={doc.id} className="relative">
+                                        {/* Connector line */}
+                                        <div className="absolute left-[-24px] top-[16px] w-6 h-px bg-amber-200/60"></div>
+                                        <DocumentRow
+                                            document={doc}
+                                            isSelected={selectedDocId === doc.id}
+                                            onSelect={() => onSelectDocument(doc, folder)}
+                                            folderName={folder.name}
+                                            departmentName={departmentMap[doc.department || doc.department_id || '']}
+                                        />
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
-            )}
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Empty state */}
+                        {hasLoadedDocs && documents.length === 0 && children.length === 0 && (
+                            <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
+                                <span className="material-symbols-outlined text-3xl text-slate-200 mb-2">folder_off</span>
+                                <p className="text-[11px] text-slate-500 font-medium">Thư mục trống</p>
+                                {canWrite(folderPerm) ? (
+                                    <p className="text-[10px] text-slate-400 mt-1">Sẵn sàng để tải lên tài liệu mới</p>
+                                ) : (
+                                    <p className="text-[10px] text-slate-400 mt-1 italic">Bạn chỉ có quyền xem thư mục này</p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Loading skeleton */}
+                        {isLoadingDocs && (
+                            <div className="space-y-2 px-3 py-2">
+                                {[1, 2, 3].map((i) => (
+                                    <div key={i} className="flex items-center gap-3 animate-pulse">
+                                        <div className="w-8 h-8 bg-slate-200 rounded-lg" />
+                                        <div className="flex-1 space-y-1.5">
+                                            <div className="h-3 bg-slate-200 rounded w-3/4" />
+                                            <div className="h-2 bg-slate-100 rounded w-1/3" />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )
+            })()}
         </div>
     )
 }

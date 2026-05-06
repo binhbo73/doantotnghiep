@@ -1,9 +1,12 @@
 """
 Document Serializers - Serialization for Folder, Document, Chunk, Tag models.
 """
+import logging
 from rest_framework import serializers
 from apps.documents.models import Document, Folder, DocumentChunk, DocumentEmbedding, Tag
 from .base import SoftDeleteModelSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -16,7 +19,7 @@ class TagSerializer(serializers.ModelSerializer):
 
 class FolderSerializer(SoftDeleteModelSerializer):
     """Serializer for Folder model"""
-    uploader_name = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    uploader_name = serializers.SerializerMethodField()
     child_count = serializers.IntegerField(source='subfolders.count', read_only=True)
     document_count = serializers.IntegerField(source='documents.count', read_only=True)
     my_permission = serializers.SerializerMethodField()
@@ -30,6 +33,34 @@ class FolderSerializer(SoftDeleteModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def get_uploader_name(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+
+        # Only admin can see owner full name for management use-cases.
+        is_admin = request.user.is_superuser
+        if hasattr(request.user, 'has_role'):
+            try:
+                from core.constants import RoleIds
+                is_admin = is_admin or request.user.has_role(RoleIds.ADMIN)
+            except Exception:
+                pass
+
+        if not is_admin:
+            return None
+
+        creator = getattr(obj, 'created_by', None)
+        if not creator:
+            return None
+
+        profile = getattr(creator, 'user_profile', None)
+        if profile and getattr(profile, 'full_name', None):
+            return profile.full_name
+
+        full_name = creator.get_full_name() if hasattr(creator, 'get_full_name') else ''
+        return full_name or creator.username
+
     def get_my_permission(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
@@ -38,9 +69,10 @@ class FolderSerializer(SoftDeleteModelSerializer):
         from core.permissions.permission_manager import get_permission_manager
         # For folders, we reuse the inheritance logic
         pm = get_permission_manager()
-        # Helper to convert scope to level
+        # Helper to convert scope to level.
+        # Keep the response in the frontend-supported permission scale.
         if pm.check_folder_access(request.user.id, obj.id, 'delete'):
-            return 'admin'
+            return 'delete'
         if pm.check_folder_access(request.user.id, obj.id, 'write'):
             return 'write'
         if pm.check_folder_access(request.user.id, obj.id, 'read'):
@@ -50,7 +82,7 @@ class FolderSerializer(SoftDeleteModelSerializer):
 
 class DocumentSerializer(SoftDeleteModelSerializer):
     """Serializer for Document model - dùng cho list/detail response"""
-    uploader_name = serializers.CharField(source='uploader.username', read_only=True, allow_null=True)
+    uploader_name = serializers.SerializerMethodField()
     folder_name = serializers.CharField(source='folder.name', read_only=True, allow_null=True)
     department_name = serializers.CharField(source='department.name', read_only=True, allow_null=True)
     tags_list = TagSerializer(source='tags', many=True, read_only=True)
@@ -75,13 +107,46 @@ class DocumentSerializer(SoftDeleteModelSerializer):
     def get_chunk_count(self, obj):
         return obj.chunks.filter(is_deleted=False).count()
 
+    def get_uploader_name(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+
+        # Only admin can see owner full name for personal docs management.
+        is_admin = request.user.is_superuser
+        if hasattr(request.user, 'has_role'):
+            try:
+                from core.constants import RoleIds
+                is_admin = is_admin or request.user.has_role(RoleIds.ADMIN)
+            except Exception:
+                pass
+
+        if not is_admin:
+            return None
+
+        uploader = getattr(obj, 'uploader', None)
+        if not uploader:
+            return None
+
+        profile = getattr(uploader, 'user_profile', None)
+        if profile and getattr(profile, 'full_name', None):
+            return profile.full_name
+
+        full_name = uploader.get_full_name() if hasattr(uploader, 'get_full_name') else ''
+        return full_name or uploader.username
+
     def get_my_permission(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return 'none'
         
-        from core.permissions.permission_manager import get_permission_manager
-        return get_permission_manager().get_effective_level(request.user.id, obj.id)
+        try:
+            from core.permissions.permission_manager import get_permission_manager
+            level = get_permission_manager().get_effective_level(request.user.id, obj.id, is_folder=False)
+            return level or 'none'
+        except Exception as e:
+            logger.warning(f"Error calculating my_permission for doc {obj.id}: {e}")
+            return 'none'
 
 
 class DocumentChunkSerializer(serializers.ModelSerializer):

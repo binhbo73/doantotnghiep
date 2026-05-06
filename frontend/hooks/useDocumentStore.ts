@@ -17,6 +17,7 @@ import {
     FolderResponse,
     FolderDocumentResponse,
 } from '@/services/folder'
+import { ApiError } from '@/services/api'
 
 // ─── Types ─────────────────────────────────────────────────
 
@@ -101,7 +102,10 @@ function categorizeOtherDocuments(allDocs: FolderDocumentResponse[]): OtherDocum
     const personalDocs: FolderDocumentResponse[] = []
     const companyDocs: FolderDocumentResponse[] = []
 
-    allDocs.forEach((doc) => {
+    // ✅ FIXED: Only process ROOT documents (folder_id = null)
+    const rootDocs = allDocs.filter(doc => !doc.folder_id && !doc.folder)
+
+    rootDocs.forEach((doc) => {
         const deptRef = doc.department ?? doc.department_id ?? null
 
         if (deptRef && doc.access_scope === 'department') {
@@ -312,6 +316,17 @@ export function useDocumentStore() {
                 )
             } catch (err) {
                 console.error(`❌ Failed to load documents for folder ${folderId}:`, err)
+                // Log full ApiError data for debugging 500 errors
+                if (err instanceof ApiError) {
+                    console.error(`API Error Status: ${err.status}, Message: ${err.message}`)
+                    console.error('API Error Data:', JSON.stringify(err.data, null, 2))
+                }
+                const message = err instanceof ApiError
+                    ? err.message || (err.data && (err.data as any).message) || `Server error ${(err as any).status}`
+                    : err instanceof Error
+                        ? err.message
+                        : 'Failed to load documents for folder'
+                setError(message)
                 setTree((prev) =>
                     updateTreeNode(prev, folderId, (node) => ({
                         ...node,

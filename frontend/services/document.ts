@@ -145,6 +145,18 @@ export async function hardDeleteDocument(documentId: string): Promise<void> {
 }
 
 /**
+ * Move document to folder (or root if folderId=null)
+ */
+export async function moveDocument(documentId: string, folderId: string | null): Promise<Document> {
+    const response = await api.patch<ApiResponse<Document>>(
+        `/documents/${documentId}/move`,
+        { folder_id: folderId }
+    )
+    logger.info('Document moved', { documentId, folderId })
+    return response.data
+}
+
+/**
  * List folders with pagination
  */
 export async function listFolders(
@@ -232,6 +244,7 @@ export const documentService = {
     uploadDocuments,
     deleteDocument,
     hardDeleteDocument,
+    moveDocument,
     listFolders,
     getFolderDetail,
     createFolder,

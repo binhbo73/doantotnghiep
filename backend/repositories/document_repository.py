@@ -171,9 +171,14 @@ class DocumentRepository(BaseRepository):
             can_read = repo.check_user_can_read(doc_id, user_id)
         """
         try:
-            from apps.users.models import Account, UserProfile
+            from apps.users.models import Account, UserProfile, RoleIds
             doc = self.get_by_id(doc_id)
             user = Account.objects.get(pk=user_id)
+
+            # Admin users can read everything
+            if user.has_role(RoleIds.ADMIN):
+                return True
+
             user_department_id = None
             try:
                 user_profile = UserProfile.objects.get(account_id=user_id)
@@ -186,8 +191,9 @@ class DocumentRepository(BaseRepository):
                 return doc.uploader_id == user_id
             elif doc.access_scope == 'department':
                 if user_department_id is None:
-                    return True
-                return doc.department_id == user_department_id
+                    return False
+                accessible_dept_ids = self._get_department_and_descendants_ids(user_department_id)
+                return str(doc.department_id) in [str(d) for d in accessible_dept_ids]
             else:  # company
                 return True
         except Exception as e:
@@ -328,15 +334,45 @@ class DocumentRepository(BaseRepository):
     # ACCESSIBLE DOCUMENTS (Phase 4B)
     # ============================================================================
     
+    def _get_department_and_descendants_ids(self, department_id: Optional[str]) -> List[str]:
+        """Return department ID plus all descendant department IDs."""
+        if not department_id:
+            return []
+
+        from apps.users.models import Department
+
+        dept_ids = [str(department_id)]
+        queue = [str(department_id)]
+
+        try:
+            while queue:
+                current_id = queue.pop(0)
+                child_ids = list(
+                    Department.objects.filter(
+                        parent_id=current_id,
+                        is_deleted=False
+                    ).values_list('id', flat=True)
+                )
+                for child_id in child_ids:
+                    child_id = str(child_id)
+                    if child_id not in dept_ids:
+                        dept_ids.append(child_id)
+                        queue.append(child_id)
+        except Exception as e:
+            logger.error(f"Error loading department descendants for {department_id}: {str(e)}")
+
+        return dept_ids
+
     def get_accessible_documents(self, user_id: int):
         """
         Get QuerySet of documents accessible to user (based on access_scope).
         
         Access Rules:
         - 'personal': Only owner
-        - 'department': Owner's department members (or all dept docs if user has no dept)
+        - 'department': Users in same department or any child departments
         - 'company': All users
         - Admin (no department): sees ALL documents
+        - Special case: User without department sees only company + personal docs
         
         Returns:
             QuerySet of accessible documents
@@ -366,18 +402,19 @@ class DocumentRepository(BaseRepository):
                 pass
             
             if user_department_id:
-                # Normal user with department: filter by scope
+                accessible_dept_ids = self._get_department_and_descendants_ids(user_department_id)
                 queryset = self.get_base_queryset().filter(
                     Q(access_scope='company') |                                              # Everyone
-                    Q(access_scope='department', department_id=user_department_id) |         # Same department
+                    Q(access_scope='department', department_id__in=accessible_dept_ids) |    # Same department or child departments
                     Q(access_scope='personal', uploader_id=user_id)                          # Personal
                 )
             else:
-                # User without department (e.g. no profile yet):
-                # See company + own personal + ALL department docs (no dept restriction)
+                # User without department:
+                # - See company docs
+                # - See own personal docs
+                # - DON'T see department-scoped docs (no department assigned)
                 queryset = self.get_base_queryset().filter(
                     Q(access_scope='company') |
-                    Q(access_scope='department') |
                     Q(access_scope='personal', uploader_id=user_id)
                 )
             

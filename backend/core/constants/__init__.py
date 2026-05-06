@@ -12,18 +12,42 @@ APP_ENVIRONMENT = "development"  # development | staging | production
 
 
 # ============================================================
-# ROLE DEFINITIONS (Changed from integer IDs to UUID)
+# ROLE DEFINITIONS
 # ============================================================
-import uuid
+from functools import lru_cache
 
-# UUID mappings for roles (MUST MATCH database actual role IDs)
-# These are populated from actual database roles
-# Run: python manage.py shell with: Role.objects.filter(is_deleted=False).values_list('code', 'id')
-class RoleIds:
-    """Role UUIDs - MUST match actual database role IDs"""
-    ADMIN = uuid.UUID('c7a5723e-c7e4-485a-bae7-d68d1455954e')
-    MANAGER = uuid.UUID('243d9952-4c18-45cc-bc33-9d5efe312ff7')
-    USER = uuid.UUID('a2584097-84ec-441b-9c24-2efc52c7d445')
+from django.apps import apps
+
+from .role_ids import RoleIds as RoleCodes
+
+
+@lru_cache(maxsize=None)
+def _resolve_role_uuid(role_code: str):
+    """Resolve the current database UUID for a role code."""
+    Role = apps.get_model('users', 'Role')
+    role = Role.objects.filter(code=role_code, is_deleted=False).only('id').first()
+    if not role:
+        raise LookupError(f"Role with code '{role_code}' was not found in the database")
+    return role.id
+
+
+class _RoleIdsMeta(type):
+    """Resolve role UUIDs lazily from the database by role code."""
+
+    def __getattr__(cls, name):
+        code_map = {
+            'ADMIN': RoleCodes.ADMIN,
+            'MANAGER': RoleCodes.MANAGER,
+            'USER': RoleCodes.USER,
+        }
+        if name in code_map:
+            return _resolve_role_uuid(code_map[name])
+        raise AttributeError(f"{cls.__name__} has no attribute {name!r}")
+
+
+class RoleIds(metaclass=_RoleIdsMeta):
+    """Role UUIDs resolved from the database at runtime."""
+
 
 class RoleNames:
     """Role names"""
@@ -31,18 +55,19 @@ class RoleNames:
     MANAGER = "manager"
     USER = "user"
 
+
 ROLES = {
-    str(RoleIds.ADMIN): {
+    RoleCodes.ADMIN: {
         "name": RoleNames.ADMIN,
-        "description": "Administrator - Full access to system"
+        "description": "Administrator - Full access to system",
     },
-    str(RoleIds.MANAGER): {
+    RoleCodes.MANAGER: {
         "name": RoleNames.MANAGER,
-        "description": "Department Manager - Manage department resources"
+        "description": "Department Manager - Manage department resources",
     },
-    str(RoleIds.USER): {
+    RoleCodes.USER: {
         "name": RoleNames.USER,
-        "description": "Regular User - Basic access"
+        "description": "Regular User - Basic access",
     },
 }
 
@@ -167,7 +192,7 @@ class ObjectPermissionLevel:
     """Permission levels for specific documents/folders (Action Level)"""
     READ = "read"
     WRITE = "write"
-    DELETE = "admin"  # Full control/Admin
+    DELETE = "delete"  # Full control (delete/share)
     DENY = "deny"
     NONE = "none"
 

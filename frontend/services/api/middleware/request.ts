@@ -10,6 +10,20 @@ interface RequestMetadata {
     timestamp: string
 }
 
+// Public endpoints that don't require auth token
+const PUBLIC_ENDPOINTS = [
+    '/auth/login',
+    '/auth/register',
+    '/auth/forgot-password',
+    '/auth/reset-password',
+    '/auth/refresh',
+    '/health',
+]
+
+function isPublicEndpoint(url: string): boolean {
+    return PUBLIC_ENDPOINTS.some(endpoint => url.includes(endpoint))
+}
+
 export async function requestMiddleware(
     request: Request,
     data?: unknown
@@ -26,12 +40,18 @@ export async function requestMiddleware(
     request.headers.set('X-API-Version', '1.0')
     request.headers.set('X-Timestamp', timestamp)
 
-    // Add auth header if token exists
-    if (token) {
+    // Add auth header if token exists (but filter out placeholder tokens)
+    if (token && !token.includes('placeholder')) {
         request.headers.set('Authorization', `Bearer ${token}`)
-        console.log(`✅ [RequestMiddleware] Authorization header added (token length: ${token.length})`)
-    } else {
-        console.warn(`⚠️ [RequestMiddleware] No auth token found`)
+        console.log(`✅ [RequestMiddleware] Authorization header added for ${request.method} ${request.url} (token length: ${token.length})`)
+    } else if (token && token.includes('placeholder')) {
+        console.warn(`⚠️ [RequestMiddleware] Placeholder token found for ${request.method} ${request.url} - no real JWT yet. User not authenticated.`)
+    } else if (!isPublicEndpoint(request.url)) {
+        // Only warn about missing tokens for protected endpoints
+        console.warn(`⚠️ [RequestMiddleware] No auth token found for ${request.method} ${request.url}. localStorage check:`, {
+            storageName: typeof window !== 'undefined' ? (typeof localStorage !== 'undefined' ? 'available' : 'unavailable') : 'server-side',
+            tokenValue: token ? 'exists' : 'null/empty'
+        })
     }
 
     // Add body for non-GET requests

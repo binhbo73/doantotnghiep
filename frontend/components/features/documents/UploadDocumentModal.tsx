@@ -1,23 +1,45 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { env } from '@/config/environment'
 import { uploadService } from '@/services/upload'
 import { useDepartments } from '@/hooks/useDepartments'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface UploadDocumentModalProps {
     isOpen: boolean
     onClose: () => void
     onSuccess?: () => void
+    defaultAccessScope?: 'company' | 'department' | 'personal'
+    allowedScopes?: Array<'company' | 'department' | 'personal'>
 }
 
-export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocumentModalProps) {
+export function UploadDocumentModal({
+    isOpen,
+    onClose,
+    onSuccess,
+    defaultAccessScope,
+    allowedScopes: allowedScopesProp,
+}: UploadDocumentModalProps) {
     const { tree } = useDocumentStore()
     const { departments } = useDepartments()
+    const { isAdmin, isTruongPhong } = useRBAC()
+    const isAdminUser = isAdmin()
+    const isTruongPhongUser = isTruongPhong()
+
+    const roleAllowedScopes = isAdminUser
+        ? ['personal', 'department', 'company']
+        : isTruongPhongUser
+            ? ['department', 'personal']
+            : ['personal']
+
+    const allowedScopes = allowedScopesProp ?? roleAllowedScopes
 
     const [file, setFile] = useState<File | null>(null)
-    const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>('company')
+    const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>(
+        defaultAccessScope ?? (isAdminUser ? 'company' : isTruongPhongUser ? 'department' : 'personal')
+    )
     const [departmentId, setDepartmentId] = useState<string>('')
     const [folderId, setFolderId] = useState<string>('')
     const [description, setDescription] = useState('')
@@ -41,7 +63,7 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
     useEffect(() => {
         if (isOpen) {
             setFile(null)
-            setAccessScope('company')
+            setAccessScope(defaultAccessScope ?? (isAdminUser ? 'company' : isTruongPhongUser ? 'department' : 'personal'))
             setDepartmentId('')
             setFolderId('')
             setDescription('')
@@ -50,18 +72,34 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
             setError(null)
             setIsUploading(false)
         }
-    }, [isOpen])
-
-    // Reset folder selection when department changes
-    useEffect(() => {
-        setFolderId('')
-    }, [departmentId])
+    }, [isOpen, defaultAccessScope, isAdminUser, isTruongPhongUser])
 
     // Flatten folder tree for select options
-    const flattenTree = (nodes: typeof tree, depth = 0): { id: string, name: string, depth: number, department_id: string | null }[] => {
-        let result: { id: string, name: string, depth: number, department_id: string | null }[] = []
+    const flattenTree = (
+        nodes: typeof tree,
+        depth = 0
+    ): {
+        id: string
+        name: string
+        depth: number
+        department_id: string | null
+        access_scope: 'company' | 'department' | 'personal'
+    }[] => {
+        let result: {
+            id: string
+            name: string
+            depth: number
+            department_id: string | null
+            access_scope: 'company' | 'department' | 'personal'
+        }[] = []
         for (const node of nodes) {
-            result.push({ id: node.folder.id, name: node.folder.name, depth, department_id: node.folder.department_id })
+            result.push({
+                id: node.folder.id,
+                name: node.folder.name,
+                depth,
+                department_id: node.folder.department_id,
+                access_scope: node.folder.access_scope,
+            })
             if (node.children && node.children.length > 0) {
                 result = result.concat(flattenTree(node.children, depth + 1))
             }
@@ -70,9 +108,35 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
     }
 
     const foldersList = flattenTree(tree)
-    const displayFoldersList = departmentId
-        ? foldersList.filter(f => f.department_id === departmentId)
-        : foldersList
+    const selectedFolder = foldersList.find(f => f.id === folderId)
+
+    // Scope-compatible folder filtering for Direction 2 behavior
+    const displayFoldersList = foldersList.filter(f => {
+        if (allowedScopes.length === 1 && allowedScopes[0] === 'personal') {
+            return f.access_scope === 'personal'
+        }
+
+        if (accessScope === 'company') {
+            // company-scoped documents cannot go into department/personal folders
+            return f.access_scope === 'company'
+        }
+        if (accessScope === 'department') {
+            // department-scoped documents can go to company or department folders
+            return f.access_scope !== 'personal'
+        }
+        // personal docs can exist in any folder type (with backend validation)
+        return true
+    })
+
+    // Auto-map department when user picks a department folder in department scope.
+    useEffect(() => {
+        if (!folderId || !selectedFolder) return
+        if (accessScope === 'department' && selectedFolder.access_scope === 'department' && selectedFolder.department_id) {
+            setDepartmentId(selectedFolder.department_id)
+        }
+    }, [folderId, accessScope, selectedFolder])
+
+    const fileInputRef = useRef<HTMLInputElement | null>(null)
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -84,37 +148,120 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
         }
     }
 
+    /**
+     * ✅ NEW: Validate scope/folder/department compatibility
+     * Rules (from backend):
+     * 1. Personal folder → document MUST be personal scope
+     * 2. Department folder → document cannot be company scope
+     * 3. Company folder → document can be any scope
+     * 4. Department scope → requires effective department_id
+     * 
+     * Reference: backend/services/document_upload_service.py lines 253-297
+     */
+    const validateUploadRules = (): boolean => {
+        // Rule 2-4: Validate scope compatibility with folder
+        if (folderId) {
+            if (!selectedFolder) {
+                setError('❌ Folder không tồn tại')
+                return false
+            }
+
+            // Personal folder → document MUST be personal
+            if (selectedFolder.access_scope === 'personal' && accessScope !== 'personal') {
+                setError('❌ Tài liệu trong personal folder phải có access_scope="personal", không được "' + accessScope + '"')
+                return false
+            }
+
+            // Department folder → document cannot be company-wide
+            // (but can be department or personal - will inherit in backend)
+            if (selectedFolder.access_scope === 'department' && accessScope === 'company') {
+                setError('❌ Tài liệu trong department folder không thể là company-wide')
+                return false
+            }
+        }
+
+        // Rule: department scope requires effective department_id
+        const effectiveDepartmentId =
+            accessScope === 'department'
+                ? (selectedFolder?.access_scope === 'department'
+                    ? selectedFolder.department_id
+                    : departmentId)
+                : ''
+
+        if (accessScope === 'department' && !effectiveDepartmentId) {
+            setError('⚠️ Vui lòng chọn phòng ban cho tài liệu department-scoped')
+            return false
+        }
+
+        return true
+    }
+
     const handleUpload = async () => {
         if (!file) {
             setError('Vui lòng chọn một file.')
+            console.log('❌ Upload blocked: No file selected')
             return
         }
 
         if (!validateFile(file)) {
+            console.log('❌ Upload blocked: File validation failed')
             return
         }
+
+        // ✅ NEW: Validate scope/folder/department before uploading
+        if (!validateUploadRules()) {
+            console.log('❌ Upload blocked: Upload rules validation failed')
+            return  // Stop upload, show error message
+        }
+
+        console.log('📤 Starting upload:', {
+            fileName: file.name,
+            fileSize: file.size,
+            accessScope,
+            folderId: folderId || 'none',
+            departmentId: departmentId || 'none',
+        })
 
         setIsUploading(true)
         setError(null)
 
         try {
             const tagsArray = tagsInput.split(',').map(t => t.trim()).filter(t => t !== '')
+            const effectiveDepartmentId =
+                accessScope === 'department'
+                    ? (selectedFolder?.access_scope === 'department'
+                        ? selectedFolder.department_id || undefined
+                        : departmentId || undefined)
+                    : undefined
+
+            console.log('📋 Upload config:', {
+                file: file.name,
+                folderId: folderId || undefined,
+                departmentId: effectiveDepartmentId,
+                accessScope,
+                tagsArray,
+                description: description || undefined,
+            })
 
             await uploadService.uploadFile(file, {
                 folderId: folderId || undefined,
-                departmentId: departmentId || undefined,
+                departmentId: effectiveDepartmentId,
                 accessScope,
                 description: description || undefined,
                 tags: tagsArray,
                 onProgress: (prog) => {
+                    console.log(`📈 Upload progress: ${prog.percentage}%`)
                     setProgress(prog.percentage)
                 }
             })
 
+            console.log('✅ Upload successful!')
             if (onSuccess) onSuccess()
             onClose()
         } catch (err: any) {
-            setError(err.message || 'Upload thất bại.')
+            const errorMsg = err.message || 'Upload thất bại.'
+            console.error('❌ Upload failed:', err)
+            setError(errorMsg)
         } finally {
             setIsUploading(false)
         }
@@ -167,9 +314,10 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
                             <input
                                 type="file"
                                 accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls"
+                                ref={fileInputRef}
                                 onChange={handleFileChange}
                                 disabled={isUploading}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed z-10"
                             />
                             {file ? (
                                 <>
@@ -196,35 +344,76 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
                         <label className="block text-sm font-semibold text-slate-700 mb-2">
                             Phạm vi truy cập
                         </label>
-                        <select
-                            value={accessScope}
-                            onChange={(e) => setAccessScope(e.target.value as any)}
-                            disabled={isUploading}
-                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors"
-                        >
-                            <option value="company">Toàn công ty</option>
-                            <option value="department">Phòng ban</option>
-                            <option value="personal">Cá nhân</option>
-                        </select>
+                        {allowedScopes.length === 1 ? (
+                            <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
+                                {allowedScopes[0] === 'company' && 'Toàn công ty'}
+                                {allowedScopes[0] === 'department' && 'Phòng ban'}
+                                {allowedScopes[0] === 'personal' && 'Cá nhân'}
+                            </div>
+                        ) : (
+                            <select
+                                value={accessScope}
+                                onChange={(e) => setAccessScope(e.target.value as any)}
+                                disabled={isUploading || allowedScopes.length <= 1}
+                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors disabled:opacity-75 disabled:bg-slate-100"
+                            >
+                                {allowedScopes.includes('company') && <option value="company">Toàn công ty</option>}
+                                {allowedScopes.includes('department') && <option value="department">Phòng ban</option>}
+                                {allowedScopes.includes('personal') && <option value="personal">Cá nhân</option>}
+                            </select>
+                        )}
+
+                        {/* ✅ NEW: Helper text explaining scope options */}
+                        <p className="text-xs text-slate-600 mt-2">
+                            {accessScope === 'company' && '🏢 Mọi người trong công ty có thể xem tài liệu này'}
+                            {accessScope === 'department' && '👥 Chỉ những người trong phòng ban được chọn có thể xem'}
+                            {accessScope === 'personal' && '🔒 Chỉ bạn có thể xem tài liệu này'}
+                        </p>
                     </div>
 
                     {/* Department */}
-                    <div>
-                        <label className="block text-sm font-semibold text-slate-700 mb-2">
-                            Phòng ban {accessScope === 'department' ? <span className="text-red-500">*</span> : '(Tùy chọn)'}
-                        </label>
-                        <select
-                            value={departmentId}
-                            onChange={(e) => setDepartmentId(e.target.value)}
-                            disabled={isUploading}
-                            className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors"
-                        >
-                            <option value="">-- Chọn phòng ban --</option>
-                            {departments.map((dept, index) => (
-                                <option key={`${dept.id}-${index}`} value={dept.id}>{dept.name}</option>
-                            ))}
-                        </select>
-                    </div>
+                    {/* ✅ NEW: Only show as required when access_scope='department' */}
+                    {accessScope === 'department' ? (
+                        <div className="bg-amber-50 p-4 rounded-xl border-l-4 border-amber-400">
+                            <label className="block text-sm font-bold text-amber-900 mb-2">
+                                Phòng ban <span className="text-red-500">*</span> (Bắt buộc)
+                            </label>
+                            <select
+                                value={departmentId}
+                                onChange={(e) => setDepartmentId(e.target.value)}
+                                disabled={isUploading || selectedFolder?.access_scope === 'department'}
+                                className={`w-full px-4 py-2.5 bg-white border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors ${!departmentId ? 'border-red-500 border-2' : 'border-amber-300'
+                                    }`}
+                            >
+                                <option value="">-- Chọn phòng ban --</option>
+                                {departments.map((dept, index) => (
+                                    <option key={`${dept.id}-${index}`} value={dept.id}>{dept.name}</option>
+                                ))}
+                            </select>
+                            <p className="text-xs text-amber-700 mt-2">
+                                {selectedFolder?.access_scope === 'department'
+                                    ? '👥 Đang chọn department folder: phòng ban sẽ tự kế thừa từ thư mục'
+                                    : '👥 Tài liệu sẽ chỉ có thể truy cập bởi những người trong phòng ban này'}
+                            </p>
+                        </div>
+                    ) : (
+                        <div>
+                            <label className="block text-sm font-semibold text-slate-700 mb-2">
+                                Phòng ban (Tùy chọn)
+                            </label>
+                            <select
+                                value={departmentId}
+                                onChange={(e) => setDepartmentId(e.target.value)}
+                                disabled={isUploading}
+                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors"
+                            >
+                                <option value="">-- Không chọn --</option>
+                                {departments.map((dept, index) => (
+                                    <option key={`${dept.id}-${index}`} value={dept.id}>{dept.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     {/* Folder */}
                     <div>
@@ -246,6 +435,13 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
                                 </option>
                             ))}
                         </select>
+
+                        {/* ✅ NEW: Show warning if folder scope differs from selected scope */}
+                        {folderId && selectedFolder?.access_scope && (
+                            <p className="text-xs text-blue-700 mt-2">
+                                ℹ️ Thư mục đang chọn có phạm vi: {selectedFolder.access_scope === 'company' ? '🏢 công ty' : selectedFolder.access_scope === 'department' ? '👥 phòng ban' : '🔒 cá nhân'}
+                            </p>
+                        )}
                     </div>
 
                     {/* Description */}
@@ -301,7 +497,7 @@ export function UploadDocumentModal({ isOpen, onClose, onSuccess }: UploadDocume
                     </button>
                     <button
                         onClick={handleUpload}
-                        disabled={!file || isUploading || (accessScope === 'department' && !departmentId)}
+                        disabled={!file || isUploading}
                         className="px-5 py-2.5 text-sm font-bold text-white bg-[#9d4300] hover:bg-[#b75b00] rounded-xl shadow-md shadow-[#9d4300]/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     >
                         {isUploading ? (

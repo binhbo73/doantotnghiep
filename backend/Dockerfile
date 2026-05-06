@@ -13,11 +13,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Cài đặt các package hệ thống cần thiết
+# Cài đặt các package hệ thống cần thiết cho docling/opencv
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     libreoffice-writer \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages từ builder
@@ -41,5 +46,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Run Django with Gunicorn
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "600"]
+# Run Django with ASGI server for Channels support
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

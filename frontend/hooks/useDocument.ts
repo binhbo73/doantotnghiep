@@ -109,6 +109,27 @@ export function useDeleteDocument() {
     })
 }
 
+/**
+ * Hook: Move document to folder
+ */
+export function useMoveDocument() {
+    const queryClient = useQueryClient()
+
+    return useMutation({
+        mutationFn: ({ documentId, folderId }: { documentId: string; folderId: string | null }) =>
+            documentService.moveDocument(documentId, folderId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: QUERY_KEYS.documents.lists() })
+            queryClient.invalidateQueries({ queryKey: QUERY_KEYS.folders.lists() })
+            logger.info('Document moved and cache invalidated')
+        },
+        onError: (error: unknown) => {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            logger.error('Document move failed', { error: errorMessage })
+        },
+    })
+}
+
 // ============================================
 // FOLDER HOOKS
 // ============================================

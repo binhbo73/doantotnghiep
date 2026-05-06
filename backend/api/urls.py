@@ -4,6 +4,7 @@ from api.views.auth_views import (
     UserLoginView, 
     UserRefreshTokenView, 
     UserLogoutView, 
+    CurrentUserView,
     UserProfileView, 
     RegisterAccountView, 
     ChangePasswordView,
@@ -56,6 +57,7 @@ from api.views.document_views import (
     DocumentUploadView,
     DocumentDetailView,
     DocumentUpdateView,
+    DocumentMoveView,
     DocumentDeleteView,
     DocumentDownloadView,
     DocumentPreviewView,
@@ -99,6 +101,7 @@ urlpatterns = [
     re_path(r"^auth/login/?$", UserLoginView.as_view(), name="auth_login"),
     re_path(r"^auth/refresh/?$", UserRefreshTokenView.as_view(), name="auth_refresh"),
     re_path(r"^auth/logout/?$", UserLogoutView.as_view(), name="auth_logout"),
+    re_path(r"^auth/me/?$", CurrentUserView.as_view(), name="auth_me"),
     re_path(r"^auth/register/?$", RegisterAccountView.as_view(), name="auth_register"),
     re_path(r"^auth/account/?$", UserProfileView.as_view(), name="auth_account"),
     re_path(rf"^auth/account/(?P<account_id>{UUID_PATTERN})/?$", UserProfileView.as_view(), name="auth_account_update"),
@@ -248,9 +251,11 @@ urlpatterns = [
     
     # 3. GET /api/v1/documents/{doc_id} - Get document detail
     # 4. PUT /api/v1/documents/{doc_id} - Update document metadata
+    # 4B. PATCH /api/v1/documents/{doc_id}/move - Move document to folder
     # 5. DELETE /api/v1/documents/{doc_id} - Soft delete + Qdrant sync
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/?$", DocumentDetailView.as_view(), name="document_detail_view"),
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/update/?$", DocumentUpdateView.as_view(), name="document_update"),
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/move/?$", DocumentMoveView.as_view(), name="document_move"),
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/delete/?$", DocumentDeleteView.as_view(), name="document_delete"),
     
     # 6. GET /api/v1/documents/{doc_id}/download - Download original file

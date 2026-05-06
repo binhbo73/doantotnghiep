@@ -11,8 +11,7 @@ import Link from 'next/link';
 import { useDepartmentDocuments } from '@/hooks/departments/useDepartmentDetail';
 import Pagination from '@/components/common/Pagination';
 import TabLoading from '@/components/departments/loading/TabLoading';
-import { DocumentDetail } from '@/types/documents';
-import { PaginatedResponse } from '@/types/departments';
+import { DocumentDetail, PaginatedResponse } from '@/types/departments';
 
 interface StaffDocumentsTabProps {
     deptId: string;

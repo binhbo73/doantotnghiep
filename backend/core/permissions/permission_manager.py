@@ -26,7 +26,7 @@ import logging
 from typing import List, Optional, Tuple
 from django.db.models import Q, Exists, OuterRef
 from django.apps import apps
-from core.constants import PermissionCodes, AccessScope
+from core.constants import PermissionCodes, AccessScope, ObjectPermissionLevel
 from core.exceptions import (
     PermissionDeniedError,
     NotFoundError,
@@ -136,7 +136,7 @@ class PermissionManager:
             
             # Principle of least privilege: if user is blocked/inactive, deny
             if not user.is_active:
-                logger.info(f"User {user_id} is inactive, denying access to document {document_id}")
+                logger.info(f"Account {account_id} is inactive, denying access to document {document_id}")
                 return False
             
             # Uploader gets all permissions (implicit)
@@ -182,7 +182,7 @@ class PermissionManager:
             try:
                 doc = Document.objects.get(pk=document_id, is_deleted=False)
                 raise PermissionDeniedError(
-                    f"User {user_id} cannot {action} document '{doc.original_name}'"
+                    f"Account {account_id} cannot {action} document '{doc.original_name}'"
                 )
             except Document.DoesNotExist:
                 raise DocumentNotFoundError(f"Document {document_id} not found")
@@ -191,7 +191,7 @@ class PermissionManager:
     def get_effective_level(self, account_id: str, object_id: str, is_folder: bool = False) -> str:
         """
         Calculates the highest permission level a user has on a document or folder.
-        Returns: 'admin', 'write', 'read', or 'none'.
+        Returns: 'delete', 'write', 'read', or 'none'.
         Used for UI mapping (my_permission field).
         """
         from core.constants import ObjectPermissionLevel
@@ -239,7 +239,7 @@ class PermissionManager:
             # Union all + remove duplicates
             result = (uploaded_query | explicit_perms | folder_docs).distinct()
             
-            logger.debug(f"User {user_id} has access to {result.count()} documents for {action}")
+            logger.debug(f"Account {account_id} has access to {result.count()} documents for {action}")
             return result
             
         except Exception as e:
@@ -444,11 +444,11 @@ class PermissionManager:
             # LEVEL 5: Inherit from folder
             if document.folder:
                 folder_access = self._check_folder_inheritance(user, user_department, document.folder)
-                if folder_access in [AccessScope.WRITE, AccessScope.ADMIN]:
+                if folder_access in [ObjectPermissionLevel.WRITE, ObjectPermissionLevel.DELETE]:
                     # WRITE/ADMIN on folder → can do all on document
                     logger.debug(f"User {user.id} has folder-level permission on parent folder")
                     return True
-                elif folder_access == AccessScope.READ and action == 'read':
+                elif folder_access == ObjectPermissionLevel.READ and action == 'read':
                     # READ on folder → only can read documents inside
                     return True
             
@@ -567,52 +567,96 @@ class PermissionManager:
         """
         Check if user can access content in target department
         
-        Rules:
-        - User can access their own department
-        - User can access sub-departments of their own
-        - User CANNOT access parent or sibling departments (unless admin)
+        ✅ Rules:
+        - No target_dept restriction → Allow (company-wide access)
+        - No user_dept → Deny (user has no department context)
+        - Same department → Allow
+        - Target is sub-department of user's dept → Allow
+        - Target is parent/sibling → Deny
         
         Args:
-            user_dept: User's department
-            target_dept: Target department (folder's department)
+            user_dept: User's department (from UserProfile)
+            target_dept: Target department (from Folder/Document)
         
         Returns:
             bool: True if user can access target department
         """
         if not target_dept:
-            # No department restriction
+            # No department restriction - company-wide access
+            logger.debug("No department restriction on target, allowing access")
             return True
         
         if not user_dept:
-            # User has no department, can access all
-            return True
+            # User has no department - cannot access department-scoped content
+            logger.debug("User has no department, denying access to department-scoped content")
+            return False
         
-        if user_dept.id == target_dept.id:
+        # Compare as strings to handle UUID/int conversion
+        if str(user_dept.id) == str(target_dept.id):
             # Same department
+            logger.debug(f"User and target in same department: {user_dept.id}")
             return True
         
-        # Check if target is sub-department of user's dept
+        # Check if target is sub-department of user's dept (user can see own + children)
         try:
-            Department = apps.get_model('users', 'Department')
             parent_chain = self._get_department_parent_chain(target_dept)
-            return user_dept.id in parent_chain
+            parent_chain_strs = [str(p_id) for p_id in parent_chain]
+            
+            if str(user_dept.id) in parent_chain_strs:
+                logger.debug(
+                    f"Target department {target_dept.id} is sub-department of user's {user_dept.id}"
+                )
+                return True
+            
+            logger.debug(
+                f"User dept {user_dept.id} not in target's parent chain {parent_chain_strs}, denying access"
+            )
+            return False
+            
         except Exception as e:
-            logger.error(f"Error checking department hierarchy: {str(e)}")
+            logger.error(f"Error checking department hierarchy: {str(e)}", exc_info=True)
+            # Fail secure - deny access if error
             return False
     
-    def _get_department_parent_chain(self, dept: 'Department') -> List[int]:
-        """Get all parent department IDs up the hierarchy"""
-        chain = []
+    def _get_department_parent_chain(self, dept: 'Department') -> List:
+        """
+        Get list of parent department IDs from given department to root.
+        
+        Example:
+            Hierarchy: Company → Division → Department → Team
+            For Team, returns: [Team.id, Department.id, Division.id, Company.id]
+        
+        Args:
+            dept: Department object to trace up
+        
+        Returns:
+            List of department IDs from given department to root
+        """
+        if not dept:
+            return []
+        
+        parent_chain = [dept.id]
         current = dept
         iterations = 0
-        max_iterations = 10
+        max_iterations = 10  # Prevent infinite loops
         
-        while current and iterations < max_iterations:
-            chain.append(current.id)
-            current = current.parent
-            iterations += 1
+        try:
+            while current.parent_id and iterations < max_iterations:
+                iterations += 1
+                try:
+                    current = current.parent  # Follow ForeignKey relation
+                    if current:
+                        parent_chain.append(current.id)
+                    else:
+                        break
+                except Exception:
+                    logger.warning(f"Error traversing parent at department {current.id}")
+                    break
+        except Exception as e:
+            logger.warning(f"Error getting department parent chain: {str(e)}")
         
-        return chain
+        logger.debug(f"Department parent chain for {dept.id}: {parent_chain}")
+        return parent_chain
     
     def _get_user_roles(self, user_id: int) -> set:
         """Get all roles for user"""

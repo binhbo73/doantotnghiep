@@ -1,5 +1,14 @@
 'use client'
 
+/**
+ * Documents Page
+ * RBAC:
+ * - All authenticated users can browse documents (tab "Duyệt tài liệu")
+ * - Only Admin can access the "Phân quyền" tab
+ * - Upload button visibility: Admin + Manager can upload, User can only upload personal
+ * - Create Folder: Admin + Manager only
+ */
+
 import React, { useState } from 'react'
 import {
     DocumentHeader,
@@ -11,6 +20,7 @@ import {
 } from '@/components/features/documents'
 import { DocumentsPermissionsWorkspace } from '@/components/features/documents/DocumentsPermissionsWorkspace'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
+import { useRBAC } from '@/hooks/useRBAC'
 
 type DocumentsPageTab = 'browse' | 'permissions'
 
@@ -20,27 +30,35 @@ function PageTabButton({
     icon,
     description,
     onClick,
+    disabled,
 }: {
     active: boolean
     label: string
     icon: string
     description: string
     onClick: () => void
+    disabled?: boolean
 }) {
     return (
         <button
             onClick={onClick}
+            disabled={disabled}
             className={`flex-1 rounded-2xl px-3.5 py-2.5 text-left transition-all ${active
                 ? 'bg-[#9d4300] text-white shadow-lg shadow-[#9d4300]/20'
-                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                : disabled
+                    ? 'border border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+                    : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                 }`}
         >
             <div className="flex items-center gap-2.5">
-                <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${active ? 'bg-white/15' : 'bg-[#fff3e0]'}`}>
-                    <span className={`material-symbols-outlined text-base ${active ? 'text-white' : 'text-[#9d4300]'}`}>{icon}</span>
+                <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${active ? 'bg-white/15' : disabled ? 'bg-slate-100' : 'bg-[#fff3e0]'}`}>
+                    <span className={`material-symbols-outlined text-base ${active ? 'text-white' : disabled ? 'text-slate-300' : 'text-[#9d4300]'}`}>{icon}</span>
                 </div>
                 <div className="min-w-0">
                     <p className="text-[13px] font-bold">{label}</p>
+                    {disabled && (
+                        <p className="text-[10px] opacity-60">Yêu cầu quyền Admin</p>
+                    )}
                 </div>
             </div>
         </button>
@@ -51,6 +69,7 @@ export default function DocumentsPage() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
+    const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
 
     const {
         tree,
@@ -70,6 +89,11 @@ export default function DocumentsPage() {
     } = useDocumentStore()
 
     const stats = getStats()
+
+    // Permissions for document page features
+    const canManagePermissions = isAdmin()
+    const canCreateFolder = isAdmin() || isTruongPhong()
+    const canUpload = isAdmin() || isTruongPhong() || hasGlobalPermission('create', 'document')
 
     // ── Loading State ──────────────────────────────────────
     if (isLoading) {
@@ -117,7 +141,7 @@ export default function DocumentsPage() {
                     totalDocuments={stats.totalDocuments}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
-                    onCreateFolder={() => setIsCreateFolderModalOpen(true)}
+                    onCreateFolder={canCreateFolder ? () => setIsCreateFolderModalOpen(true) : undefined}
                     compact={activeTab === 'permissions'}
                 />
 
@@ -136,7 +160,8 @@ export default function DocumentsPage() {
                             label="Phân quyền"
                             icon="admin_panel_settings"
                             description="Quản lý folder_permission và document_permission"
-                            onClick={() => setActiveTab('permissions')}
+                            onClick={() => canManagePermissions && setActiveTab('permissions')}
+                            disabled={!canManagePermissions}
                         />
                     </div>
                 </div>
@@ -153,6 +178,7 @@ export default function DocumentsPage() {
                             onToggleOtherDocuments={toggleOtherDocuments}
                             onSelectDocument={selectDocument}
                             searchQuery={searchQuery}
+                            showPersonal={false}
                         />
 
                         {/* Document Detail Sidebar */}
@@ -174,15 +200,17 @@ export default function DocumentsPage() {
             </main>
 
             {/* Floating Upload Button */}
-            <button
-                onClick={() => setIsUploadModalOpen(true)}
-                className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
-            >
-                <span className="material-symbols-outlined text-3xl">upload_file</span>
-                <span className="absolute right-full mr-4 bg-[#0d1c2e] text-white px-3 py-1 rounded-lg text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-lg">
-                    Tải lên Tài liệu
-                </span>
-            </button>
+            {canUpload && (
+                <button
+                    onClick={() => setIsUploadModalOpen(true)}
+                    className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
+                >
+                    <span className="material-symbols-outlined text-3xl">upload_file</span>
+                    <span className="absolute right-full mr-4 bg-[#0d1c2e] text-white px-3 py-1 rounded-lg text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-lg">
+                        Tải lên Tài liệu
+                    </span>
+                </button>
+            )}
 
             {/* Upload Modal */}
             <UploadDocumentModal
@@ -193,14 +221,16 @@ export default function DocumentsPage() {
                 }}
             />
 
-            {/* Create Folder Modal */}
-            <CreateFolderModal
-                isOpen={isCreateFolderModalOpen}
-                onClose={() => setIsCreateFolderModalOpen(false)}
-                onSuccess={() => {
-                    void refetch()
-                }}
-            />
+            {/* Create Folder Modal - Admin + Manager only */}
+            {canCreateFolder && (
+                <CreateFolderModal
+                    isOpen={isCreateFolderModalOpen}
+                    onClose={() => setIsCreateFolderModalOpen(false)}
+                    onSuccess={() => {
+                        void refetch()
+                    }}
+                />
+            )}
         </div>
     )
 }

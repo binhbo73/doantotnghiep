@@ -2,7 +2,7 @@
 
 /**
  * Users Management Page
- * Main page for managing users with full CRUD functionality
+ * RBAC: Admin-only page. Non-admin users see an access denied message.
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
@@ -28,9 +28,15 @@ import {
     type FilterOptions,
     type CreateUserFormData,
 } from '@/components/features/users'
+import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
+import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 
 export default function UsersPage() {
     const router = useRouter()
+    const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
+    const { user } = useAuthContext()
+
     const [users, setUsers] = useState<User[]>([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -58,6 +64,21 @@ export default function UsersPage() {
     const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
 
     /**
+     * RBAC Guard - Admin or Manager (with limited scope)
+     */
+    if (!isAdmin() && !isTruongPhong()) {
+        return (
+            <AccessDeniedPage
+                title="Truy cập bị hạn chế"
+                message="Bạn cần quyền Quản trị viên (Admin) hoặc Trưởng phòng để truy cập trang Quản lý người dùng. Vui lòng liên hệ quản trị viên hệ thống nếu bạn cần được cấp quyền."
+                icon="🔒"
+                showBackButton={true}
+                onGoBack={() => router.push('/dashboard')}
+            />
+        )
+    }
+
+    /**
      * Fetch users from API
      */
     const fetchUsers = useCallback(async () => {
@@ -65,11 +86,13 @@ export default function UsersPage() {
             setLoading(true)
             setError(null)
 
+            const deptFilter = isTruongPhong() ? (user?.department_id ?? undefined) : filters.department
+
             const response = await getAllUsers(
                 currentPage,
                 pageSize,
                 filters.search,
-                filters.department,
+                deptFilter,
                 filters.role,
                 filters.status === 'active'
                     ? true
@@ -104,7 +127,15 @@ export default function UsersPage() {
         try {
             setModalLoading(true)
 
+            const canManageUser = (target: User | null | undefined) => {
+                if (!target) return false
+                return isAdmin() || (isTruongPhong() && target.department_id === user?.department_id)
+            }
+
             if (editingUser) {
+                if (!canManageUser(editingUser)) {
+                    throw new Error('Bạn không có quyền chỉnh sửa người dùng này')
+                }
                 // Update existing user
                 const updatePayload: UpdateUserPayload = {
                     email: data.email,
@@ -121,6 +152,14 @@ export default function UsersPage() {
                 await updateUser(editingUser.id, filteredPayload)
                 setSuccess('Người dùng đã được cập nhật thành công')
             } else {
+                // Manager can only create users in their own department
+                if (!isAdmin() && isTruongPhong()) {
+                    if (data.department_id && data.department_id !== user?.department_id) {
+                        throw new Error('Bạn chỉ có thể tạo người dùng trong phòng ban của mình')
+                    }
+                    // force department to manager's department if empty
+                    if (!data.department_id) data.department_id = user?.department_id || ''
+                }
                 // Create new user
                 const payload: CreateUserPayload = {
                     username: data.username,
@@ -153,14 +192,20 @@ export default function UsersPage() {
     /**
      * Handle user deletion
      */
-    const handleDeleteUser = async (user: User) => {
-        if (!confirm(`Bạn có chắc chắn muốn xóa người dùng ${user.full_name}?`)) {
+    const handleDeleteUser = async (targetUser: User) => {
+        // Permission check: admin or manager of same department
+        if (!(isAdmin() || (isTruongPhong() && targetUser.department_id === user?.department_id))) {
+            alert('Bạn không có quyền xóa người dùng này')
+            return
+        }
+
+        if (!confirm(`Bạn có chắc chắn muốn xóa người dùng ${targetUser.full_name}?`)) {
             return
         }
 
         try {
             setLoading(true)
-            await deleteUser(user.account_id)
+            await deleteUser(targetUser.account_id)
             setSuccess('Người dùng đã được xóa thành công')
             setCurrentPage(1)
             fetchUsers()
@@ -178,8 +223,12 @@ export default function UsersPage() {
     /**
      * Handle opening edit modal
      */
-    const handleEditUser = (user: User) => {
-        setEditingUser(user)
+    const handleEditUser = (targetUser: User) => {
+        if (!(isAdmin() || (isTruongPhong() && targetUser.department_id === user?.department_id))) {
+            alert('Bạn không có quyền chỉnh sửa người dùng này')
+            return
+        }
+        setEditingUser(targetUser)
         setIsModalOpen(true)
     }
 
@@ -249,7 +298,7 @@ export default function UsersPage() {
                 <PageHeader
                     title="👥 Quản lý người dùng"
                     description="Quản lý tài khoản người dùng, phân quyền và cấu hình hệ thống"
-                    onAddNew={handleAddUser}
+                    onAddNew={isAdmin() || hasGlobalPermission('create', 'user') || isTruongPhong() ? handleAddUser : undefined}
                     actionLabel="Thêm người dùng mới"
                 />
 

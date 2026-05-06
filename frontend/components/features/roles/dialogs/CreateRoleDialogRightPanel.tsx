@@ -8,7 +8,7 @@ import { useCreateRole } from '@/hooks/useCreateRole'
 import { usePermissions } from '@/hooks/usePermissions'
 import { IamPermission } from '@/types/api'
 
-interface Permission extends IamPermission {
+interface RolePermission extends IamPermission {
     checked: boolean
 }
 
@@ -19,13 +19,13 @@ interface CreateRoleDialogRightPanelProps {
         code: string
         displayName: string
         description: string
-        permissions: Permission[]
+        permissions: RolePermission[]
     }) => void
     initialData?: {
         code: string
         displayName: string
         description: string
-        permissions: Permission[]
+        permissions: RolePermission[]
     }
 }
 
@@ -50,7 +50,7 @@ export function CreateRoleDialogRightPanel({
     // Create role hook
     const { createRole, addPermissionsToRole, loading: createLoading, error: createError } = useCreateRole()
 
-    const [permissions, setPermissions] = useState<Permission[]>([])
+    const [permissions, setPermissions] = useState<RolePermission[]>([])
     const [isPermissionsSelectorOpen, setIsPermissionsSelectorOpen] = useState(false)
     const [isCreatePermissionDialogOpen, setIsCreatePermissionDialogOpen] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)

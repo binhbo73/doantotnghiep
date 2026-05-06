@@ -10,6 +10,12 @@ import { useRoles } from '@/hooks/useRoles'
 import { useUpdateRole } from '@/hooks/useUpdateRole'
 import { useDeleteRole } from '@/hooks/useDeleteRole'
 import { useRolePermissions } from '@/hooks/useRolePermissions'
+import { useRefreshUserPermissions } from '@/hooks/useRefreshUserPermissions'
+import { IamPermission } from '@/types/api'
+
+type RolePermission = IamPermission & {
+  checked: boolean
+}
 
 export function RoleManagementPage() {
   const [selectedRoleId, setSelectedRoleId] = useState<string>('')
@@ -26,6 +32,7 @@ export function RoleManagementPage() {
 
   const { updateRole } = useUpdateRole()
   const { deleteRole } = useDeleteRole()
+  const { refreshUserPermissions } = useRefreshUserPermissions()
 
   // Fetch current permissions for edit mode
   const { permissions: editRolePermissions, loading: editPermissionsLoading } = useRolePermissions(editRoleId || '')
@@ -41,7 +48,7 @@ export function RoleManagementPage() {
     code: string
     displayName: string
     description: string
-    permissions: Array<{ id: string; name: string; checked: boolean }>
+    permissions: RolePermission[]
   }) => {
     console.log('Creating role:', data)
     setIsCreateDialogOpen(false)
@@ -82,7 +89,7 @@ export function RoleManagementPage() {
     code: string
     displayName: string
     description: string
-    permissions: Array<{ id: string; name: string; checked: boolean }>
+    permissions: RolePermission[]
   }) => {
     if (!editRoleId) return
 
@@ -100,6 +107,9 @@ export function RoleManagementPage() {
       setEditRoleId(null)
       await refetchRoles()
 
+      // Refresh current user's permissions in case they were affected
+      await refreshUserPermissions()
+
       console.log('✅ Cập nhật vai trò thành công')
     } catch (error) {
       console.error('❌ Lỗi cập nhật vai trò:', error)
@@ -111,6 +121,9 @@ export function RoleManagementPage() {
     try {
       await deleteRole(roleId)
       await refetchRoles()
+
+      // Refresh current user's permissions in case they were affected
+      await refreshUserPermissions()
 
       console.log('✅ Xóa vai trò thành công')
     } catch (error) {
@@ -135,9 +148,8 @@ export function RoleManagementPage() {
       description: editRole.description || '',
       permissions: editRolePermissions.map((perm) => ({
         ...perm,
-        name: perm.code, // Map 'code' to 'name' for Permission interface
         checked: true,
-      })) as any[],
+      })),
     }
   }, [editRole, editRolePermissions, editPermissionsLoading])
 

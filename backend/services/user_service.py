@@ -262,7 +262,7 @@ class UserService(BaseService):
                 perm_repo = PermissionRepository()
                 permission_codes = list(perm_repo.get_user_permission_codes(user.id))
                 
-                logger.info(f"Prepared roles ({len(roles_data)}) and permissions ({len(permission_codes)}) for JWT token")
+                logger.info(f"✅ Prepared roles ({len(roles_data)}) and permissions ({len(permission_codes)}) for JWT token")
             except Exception as e:
                 logger.warning(f"Failed to prepare roles/permissions for JWT: {str(e)}")
             
@@ -278,7 +278,7 @@ class UserService(BaseService):
             access_token = str(access_token_obj)
             refresh_token = str(refresh)
             
-            logger.info(f"JWT tokens generated with cached roles and permissions for user {user.id}")
+            logger.info(f"✅ JWT tokens generated for user {user.id}: access_token length={len(access_token)}, refresh_token length={len(refresh_token)}")
             
             # STEP 7: Update last_login timestamp
             try:
@@ -1286,6 +1286,79 @@ class UserService(BaseService):
         
         except Exception as e:
             logger.error(f"Error creating admin account: {str(e)}")
+            raise
+    
+    def get_current_user_with_permissions(self, account_id) -> Dict[str, Any]:
+        """
+        Get current user with their roles, permissions, and department info.
+        
+        Used for:
+        - GET /api/v1/auth/me endpoint (refresh user permissions)
+        - Frontend useRefreshUserPermissions hook
+        
+        Returns:
+            Dict with keys:
+            - user: User account data (id, email, username, first_name, last_name)
+            - roles: List of role objects {id, code, name}
+            - permissions: List of permission codes
+            - department_id: User's department ID (if any)
+        
+        Raises:
+            ValidationError: If user not found
+        """
+        try:
+            # Get user account
+            user = self.get_by_id(account_id)
+            if not user:
+                raise ValidationError(f"User {account_id} not found")
+            
+            # Get roles
+            from api.serializers.user_serializers import AccountSerializer
+            user_data = AccountSerializer(user).data
+            
+            roles_data = []
+            try:
+                roles_data = [
+                    {
+                        "id": str(ar.role.id),
+                        "code": ar.role.code,
+                        "name": ar.role.name
+                    }
+                    for ar in user.account_roles.filter(is_deleted=False).select_related('role')
+                ]
+            except Exception as e:
+                logger.warning(f"Failed to get roles for user {account_id}: {str(e)}")
+            
+            # Get permissions
+            permission_codes = []
+            try:
+                from repositories.permission_repository import PermissionRepository
+                perm_repo = PermissionRepository()
+                permission_codes = list(perm_repo.get_user_permission_codes(account_id))
+            except Exception as e:
+                logger.warning(f"Failed to get permissions for user {account_id}: {str(e)}")
+            
+            # Get department
+            department_id = ""
+            try:
+                profile = self.profile_repository.get_profile_by_account_id(account_id)
+                if profile and profile.department:
+                    department_id = str(profile.department.id)
+            except Exception as e:
+                logger.warning(f"Failed to get department for user {account_id}: {str(e)}")
+            
+            result = {
+                "user": user_data,
+                "roles": roles_data,
+                "permissions": permission_codes,
+                "department_id": department_id
+            }
+            
+            logger.info(f"✅ Current user data retrieved for {account_id}")
+            return result
+        
+        except Exception as e:
+            logger.error(f"Error getting current user with permissions: {str(e)}")
             raise
     
     def list_users(self, search: str = None, department_id: str = None, status: str = None) -> List:
