@@ -315,6 +315,22 @@ class DocumentUploadView(APIView):
             description = validated.get('description') or None
             tags = validated.get('tags')                    # đã được convert sang list trong serializer
 
+            # ── Lấy department của user ───────────────────────────────────────
+            user_department = None
+            if hasattr(request.user, 'user_profile') and request.user.user_profile:
+                user_department = request.user.user_profile.department
+
+            # ── Auto-set access_scope cho user ───────────────────────────────
+            if not folder_id and access_scope is None:
+                # User upload không chỉ định folder và access_scope → mặc định department scope
+                access_scope = 'department'
+                if user_department:
+                    department_id = str(user_department.id)
+                else:
+                    # User không có department → fallback to personal
+                    access_scope = 'personal'
+                    department_id = None
+
             # ── Kiểm tra quyền ghi trên folder (nếu có) ──────────────────────
             if folder_id:
                 folder_service = FolderService()
@@ -332,6 +348,19 @@ class DocumentUploadView(APIView):
                             ),
                             status=status.HTTP_403_FORBIDDEN
                         )
+                    
+                    # ── Validation: chỉ cho phép upload vào folder của department user ──
+                    folder = folder_service.repository.get_by_id(folder_id)
+                    if folder and folder.access_scope == 'department':
+                        if not user_department or str(folder.department_id) != str(user_department.id):
+                            return Response(
+                                ResponseBuilder.error(
+                                    "Bạn chỉ được upload tài liệu vào folder của phòng ban mình",
+                                    status_code=403
+                                ),
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+                            
                 except NotFoundError as e:
                     return Response(
                         ResponseBuilder.error(str(e), status_code=404),
@@ -378,7 +407,7 @@ class DocumentUploadView(APIView):
                 'status': document.status,
                 'file_size': document.file_size,
                 'access_scope': document.access_scope,
-                'department': str(document.department_id) if document.department_id else None,
+                'department': str(document.department_id) if document.department_id and document.access_scope != 'personal' else None,
                 'folder': str(document.folder_id) if document.folder_id else None,
                 'chunk_count': document.chunks.filter(is_deleted=False).count(),
                 'metadata': document.metadata,

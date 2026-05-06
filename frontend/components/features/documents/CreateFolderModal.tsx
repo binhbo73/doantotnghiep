@@ -5,6 +5,8 @@ import { env } from '@/config/environment'
 import { authService } from '@/services/auth'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useDepartments } from '@/hooks/useDepartments'
+import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
 
 interface CreateFolderModalProps {
     isOpen: boolean
@@ -23,15 +25,23 @@ export function CreateFolderModal({
 }: CreateFolderModalProps) {
     const { tree, refetch } = useDocumentStore()
     const { departments } = useDepartments()
+    const { user } = useAuthContext()
+    const { isAdmin, isTruongPhong } = useRBAC()
 
-    const allowedScopes = allowedScopesProp ?? ['company', 'department', 'personal']
+    const isAdminUser = isAdmin()
+    const isTruongPhongUser = isTruongPhong()
+    const isDepartmentUser = !isAdminUser && !isTruongPhongUser
+    const userDepartmentId = user?.department_id ?? ''
+    const userDepartment = departments.find((dept) => dept.id === userDepartmentId)
+
+    const allowedScopes = allowedScopesProp ?? (isAdminUser ? ['company', 'department', 'personal'] : ['department'])
 
     const [folderName, setFolderName] = useState('')
     const [description, setDescription] = useState('')
     const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>(
-        defaultAccessScope ?? 'company'
+        defaultAccessScope ?? (isAdminUser ? 'company' : 'department')
     )
-    const [departmentId, setDepartmentId] = useState<string>('')
+    const [departmentId, setDepartmentId] = useState<string>(isAdminUser ? '' : userDepartmentId)
     const [parentFolderId, setParentFolderId] = useState<string>('')
 
     const [isCreating, setIsCreating] = useState(false)
@@ -42,22 +52,19 @@ export function CreateFolderModal({
         if (isOpen) {
             setFolderName('')
             setDescription('')
-            setAccessScope(defaultAccessScope ?? 'company')
-            setDepartmentId('')
+            setAccessScope(defaultAccessScope ?? (isAdminUser ? 'company' : 'department'))
+            setDepartmentId(isAdminUser ? '' : userDepartmentId)
             setParentFolderId('')
             setError(null)
             setIsCreating(false)
         }
-    }, [isOpen, defaultAccessScope])
+    }, [isOpen, defaultAccessScope, isAdminUser, userDepartmentId])
 
-    // Reset parent folder when department changes
     useEffect(() => {
-        setParentFolderId('')
-        // Reset department if access scope is not 'department'
-        if (accessScope !== 'department') {
+        if (accessScope !== 'department' && !isDepartmentUser) {
             setDepartmentId('')
         }
-    }, [departmentId, accessScope])
+    }, [accessScope, isDepartmentUser])
 
     // Flatten folder tree for select options
     const flattenTree = (nodes: typeof tree, depth = 0): { id: string, name: string, depth: number, department_id: string | null, access_scope: string }[] => {
@@ -259,17 +266,23 @@ export function CreateFolderModal({
                             <label className="block text-sm font-semibold text-slate-700 mb-2">
                                 Phòng Ban <span className="text-red-500">*</span>
                             </label>
-                            <select
-                                value={departmentId}
-                                onChange={(e) => setDepartmentId(e.target.value)}
-                                disabled={isCreating}
-                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
-                            >
-                                <option value="">-- Chọn Phòng Ban --</option>
-                                {departments.map((dept) => (
-                                    <option key={dept.id} value={dept.id}>{dept.name}</option>
-                                ))}
-                            </select>
+                            {!isAdminUser && userDepartment ? (
+                                <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700">
+                                    {userDepartment.name}
+                                </div>
+                            ) : (
+                                <select
+                                    value={departmentId}
+                                    onChange={(e) => setDepartmentId(e.target.value)}
+                                    disabled={isCreating}
+                                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
+                                >
+                                    <option value="">-- Chọn Phòng Ban --</option>
+                                    {departments.map((dept) => (
+                                        <option key={dept.id} value={dept.id}>{dept.name}</option>
+                                    ))}
+                                </select>
+                            )}
                             <p className="text-xs text-slate-500 mt-2">Chọn phòng ban cho thư mục này.</p>
                         </div>
                     )}

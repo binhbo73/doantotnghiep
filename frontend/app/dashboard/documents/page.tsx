@@ -6,7 +6,7 @@
  * - All authenticated users can browse documents (tab "Duyệt tài liệu")
  * - Only Admin can access the "Phân quyền" tab
  * - Upload button visibility: Admin + Manager can upload, User can only upload personal
- * - Create Folder: Admin + Manager only
+ * - Create Folder: Admin + Manager + Users in their own department
  */
 
 import React, { useState } from 'react'
@@ -21,6 +21,7 @@ import {
 import { DocumentsPermissionsWorkspace } from '@/components/features/documents/DocumentsPermissionsWorkspace'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
 
 type DocumentsPageTab = 'browse' | 'permissions'
 
@@ -71,6 +72,7 @@ export default function DocumentsPage() {
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
     const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
 
+    const { user } = useAuthContext()
     const {
         tree,
         otherDocuments,
@@ -92,7 +94,7 @@ export default function DocumentsPage() {
 
     // Permissions for document page features
     const canManagePermissions = isAdmin()
-    const canCreateFolder = isAdmin() || isTruongPhong()
+    const canCreateFolder = isAdmin() || isTruongPhong() || !!user?.department_id
     const canUpload = isAdmin() || isTruongPhong() || hasGlobalPermission('create', 'document')
 
     // ── Loading State ──────────────────────────────────────

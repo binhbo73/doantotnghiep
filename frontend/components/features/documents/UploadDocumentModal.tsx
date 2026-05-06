@@ -6,6 +6,7 @@ import { uploadService } from '@/services/upload'
 import { useDepartments } from '@/hooks/useDepartments'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
 
 interface UploadDocumentModalProps {
     isOpen: boolean
@@ -24,23 +25,22 @@ export function UploadDocumentModal({
 }: UploadDocumentModalProps) {
     const { tree } = useDocumentStore()
     const { departments } = useDepartments()
-    const { isAdmin, isTruongPhong } = useRBAC()
+    const { user } = useAuthContext()
+    const { isAdmin } = useRBAC()
     const isAdminUser = isAdmin()
-    const isTruongPhongUser = isTruongPhong()
+    const userDepartmentId = user?.department_id || ''
 
     const roleAllowedScopes = isAdminUser
         ? ['personal', 'department', 'company']
-        : isTruongPhongUser
-            ? ['department', 'personal']
-            : ['personal']
+        : ['department', 'company']
 
     const allowedScopes = allowedScopesProp ?? roleAllowedScopes
 
     const [file, setFile] = useState<File | null>(null)
     const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>(
-        defaultAccessScope ?? (isAdminUser ? 'company' : isTruongPhongUser ? 'department' : 'personal')
+        defaultAccessScope ?? (isAdminUser ? 'company' : 'department')
     )
-    const [departmentId, setDepartmentId] = useState<string>('')
+    const [departmentId, setDepartmentId] = useState<string>(userDepartmentId)
     const [folderId, setFolderId] = useState<string>('')
     const [description, setDescription] = useState('')
     const [tagsInput, setTagsInput] = useState('')
@@ -63,8 +63,8 @@ export function UploadDocumentModal({
     useEffect(() => {
         if (isOpen) {
             setFile(null)
-            setAccessScope(defaultAccessScope ?? (isAdminUser ? 'company' : isTruongPhongUser ? 'department' : 'personal'))
-            setDepartmentId('')
+            setAccessScope(defaultAccessScope ?? (isAdminUser ? 'company' : 'department'))
+            setDepartmentId(userDepartmentId)
             setFolderId('')
             setDescription('')
             setTagsInput('')
@@ -72,7 +72,7 @@ export function UploadDocumentModal({
             setError(null)
             setIsUploading(false)
         }
-    }, [isOpen, defaultAccessScope, isAdminUser, isTruongPhongUser])
+    }, [isOpen, defaultAccessScope, isAdminUser, userDepartmentId])
 
     // Flatten folder tree for select options
     const flattenTree = (
@@ -135,6 +135,15 @@ export function UploadDocumentModal({
             setDepartmentId(selectedFolder.department_id)
         }
     }, [folderId, accessScope, selectedFolder])
+
+    useEffect(() => {
+        if (accessScope === 'department') {
+            setDepartmentId(userDepartmentId)
+        }
+        if (accessScope === 'personal') {
+            setDepartmentId('')
+        }
+    }, [accessScope, userDepartmentId])
 
     const fileInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -372,46 +381,42 @@ export function UploadDocumentModal({
                     </div>
 
                     {/* Department */}
-                    {/* ✅ NEW: Only show as required when access_scope='department' */}
-                    {accessScope === 'department' ? (
+                    {accessScope === 'department' && (
                         <div className="bg-amber-50 p-4 rounded-xl border-l-4 border-amber-400">
                             <label className="block text-sm font-bold text-amber-900 mb-2">
-                                Phòng ban <span className="text-red-500">*</span> (Bắt buộc)
+                                Phòng ban <span className="text-red-500">*</span> (Chỉ phòng ban của bạn)
                             </label>
                             <select
                                 value={departmentId}
                                 onChange={(e) => setDepartmentId(e.target.value)}
-                                disabled={isUploading || selectedFolder?.access_scope === 'department'}
-                                className={`w-full px-4 py-2.5 bg-white border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors ${!departmentId ? 'border-red-500 border-2' : 'border-amber-300'
-                                    }`}
+                                disabled={isUploading || !!userDepartmentId}
+                                className={`w-full px-4 py-2.5 bg-white border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors ${!departmentId ? 'border-red-500 border-2' : 'border-amber-300'}`}
                             >
-                                <option value="">-- Chọn phòng ban --</option>
-                                {departments.map((dept, index) => (
-                                    <option key={`${dept.id}-${index}`} value={dept.id}>{dept.name}</option>
-                                ))}
+                                {userDepartmentId ? (
+                                    <>
+                                        <option value="">-- Phòng ban của bạn --</option>
+                                        {departments
+                                            .filter((dept) => dept.id === userDepartmentId)
+                                            .map((dept) => (
+                                                <option key={dept.id} value={dept.id}>
+                                                    {dept.name}
+                                                </option>
+                                            ))}
+                                    </>
+                                ) : (
+                                    <>
+                                        <option value="">-- Chọn phòng ban --</option>
+                                        {departments.map((dept, index) => (
+                                            <option key={`${dept.id}-${index}`} value={dept.id}>{dept.name}</option>
+                                        ))}
+                                    </>
+                                )}
                             </select>
                             <p className="text-xs text-amber-700 mt-2">
                                 {selectedFolder?.access_scope === 'department'
-                                    ? '👥 Đang chọn department folder: phòng ban sẽ tự kế thừa từ thư mục'
-                                    : '👥 Tài liệu sẽ chỉ có thể truy cập bởi những người trong phòng ban này'}
+                                    ? '👥 Department folder sẽ tự động kế thừa phòng ban từ thư mục'
+                                    : '👥 Chỉ phòng ban của bạn mới được chọn và lưu tài liệu'}
                             </p>
-                        </div>
-                    ) : (
-                        <div>
-                            <label className="block text-sm font-semibold text-slate-700 mb-2">
-                                Phòng ban (Tùy chọn)
-                            </label>
-                            <select
-                                value={departmentId}
-                                onChange={(e) => setDepartmentId(e.target.value)}
-                                disabled={isUploading}
-                                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300] transition-colors"
-                            >
-                                <option value="">-- Không chọn --</option>
-                                {departments.map((dept, index) => (
-                                    <option key={`${dept.id}-${index}`} value={dept.id}>{dept.name}</option>
-                                ))}
-                            </select>
                         </div>
                     )}
 

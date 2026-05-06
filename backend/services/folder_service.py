@@ -208,6 +208,14 @@ class FolderService(BaseService):
             logger.warning(f"Unknown access_scope: {folder.access_scope}")
             return False
 
+    def _get_user_department_id(self, user_id: str) -> Optional[str]:
+        """Return the user's department_id if available."""
+        try:
+            user_profile = self.UserProfile.objects.get(account_id=user_id)
+            return user_profile.department_id
+        except self.UserProfile.DoesNotExist:
+            return None
+
     def check_folder_permission(
         self,
         folder_id: str,
@@ -333,6 +341,24 @@ class FolderService(BaseService):
             valid_scopes = ['personal', 'department', 'company']
             if access_scope not in valid_scopes:
                 raise ValidationError(f"invalid access_scope. Must be one of {valid_scopes}")
+
+            user = self.Account.objects.filter(id=user_id).first()
+            if not user:
+                raise ValidationError(f"Account {user_id} not found")
+
+            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            is_manager = user.has_role(RoleIds.MANAGER)
+            user_department_id = self._get_user_department_id(user_id)
+
+            if not is_admin and access_scope != 'department':
+                raise ValidationError("Bạn chỉ có thể tạo thư mục với phạm vi phòng ban.")
+
+            if not is_admin:
+                if not user_department_id:
+                    raise ValidationError("Người dùng chưa có phòng ban, không thể tạo thư mục phòng ban.")
+                if department_id and str(department_id) != str(user_department_id):
+                    raise ValidationError("Bạn chỉ có thể tạo thư mục trong phòng ban của mình.")
+                department_id = user_department_id
             
             # Resolve scope based on parent (similar to document upload logic)
             parent = None
@@ -340,6 +366,12 @@ class FolderService(BaseService):
                 parent = self.repository.get_by_id(parent_id)
                 if not parent:
                     raise NotFoundError(f"Parent folder {parent_id} not found")
+
+                if not is_admin and not is_manager:
+                    if parent.access_scope != 'department':
+                        raise ValidationError("Bạn chỉ có thể tạo thư mục con trong phòng ban của mình.")
+                    if not parent.department_id or str(parent.department_id) != str(user_department_id):
+                        raise ValidationError("Bạn chỉ có thể tạo thư mục trong phòng ban của mình.")
                 
                 # ✅ VALIDATION: Subfolder cannot have different scope than parent
                 if access_scope != parent.access_scope:
@@ -383,12 +415,13 @@ class FolderService(BaseService):
                     # CASE C: Department scope requires department_id
                     if not department_id:
                         # Try to get user's department as fallback
-                        try:
-                            user_profile = self.UserProfile.objects.get(account_id=user_id)
-                            department_id = user_profile.department_id
-                        except self.UserProfile.DoesNotExist:
-                            pass
-                        
+                        if not user_department_id:
+                            try:
+                                user_profile = self.UserProfile.objects.get(account_id=user_id)
+                                user_department_id = user_profile.department_id
+                            except self.UserProfile.DoesNotExist:
+                                pass
+                        department_id = user_department_id
                         if not department_id:
                             raise ValidationError("Department folder must have department_id")
                 # CASE D: Company or personal scope - keep department_id as provided (optional)
