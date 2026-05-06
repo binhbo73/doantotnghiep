@@ -46,6 +46,7 @@ import logging
 import os
 import mimetypes
 import hashlib
+import re
 from typing import Tuple, Dict, Any, Optional
 from pathlib import Path
 from django.conf import settings
@@ -240,12 +241,15 @@ class DocumentParser:
                 text = self.parse_text(file_path)
             else:
                 raise DocumentProcessingError(f"Unsupported file type: {file_type}")
+
+            # 6. Normalize extracted text to improve chunk quality for RAG
+            text = self._normalize_extracted_text(text)
             
-            # 6. Extract metadata
+            # 7. Extract metadata
             metadata = self._extract_metadata(text, file_path, file_type)
             metadata['from_cache'] = False
             
-            # 7. Cache result
+            # 8. Cache result
             self._set_cached_result(file_path, text, metadata)
             
             logger.info(
@@ -441,6 +445,63 @@ class DocumentParser:
         if (file_type == 'application/vnd.ms-excel' or file_path.lower().endswith('.xls')):
             return self.parse_xls(file_path)
         return self.parse_xlsx(file_path)
+
+    def _normalize_extracted_text(self, text: str) -> str:
+        """
+        Normalize parser output before chunking.
+
+        Why:
+        - Doc parsers may emit markdown/html image markers like <!-- image -->
+        - Placeholder-only tokens reduce semantic quality for embeddings
+        """
+        if not text:
+            return text
+
+        normalized = text
+
+        # Convert markdown images to readable text so image captions/alt survive.
+        normalized = re.sub(
+            r'!\[([^\]]*)\]\(([^)]+)\)',
+            lambda m: f"[Image: {(m.group(1) or 'embedded image').strip()}]",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        # Convert HTML <img ...> tags to readable text using alt/title when present.
+        def _replace_img_tag(match):
+            tag = match.group(0)
+            alt_match = re.search(r'alt=[\"\']([^\"\']+)[\"\']', tag, flags=re.IGNORECASE)
+            title_match = re.search(r'title=[\"\']([^\"\']+)[\"\']', tag, flags=re.IGNORECASE)
+            label = None
+            if alt_match and alt_match.group(1).strip():
+                label = alt_match.group(1).strip()
+            elif title_match and title_match.group(1).strip():
+                label = title_match.group(1).strip()
+            return f"[Image: {label or 'embedded image'}]"
+
+        normalized = re.sub(
+            r'<img\b[^>]*>',
+            _replace_img_tag,
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        # Remove HTML comment placeholders such as <!-- image --> produced by converters.
+        normalized = re.sub(
+            r'<!--\s*image\s*-->',
+            '[Image]',
+            normalized,
+            flags=re.IGNORECASE,
+        )
+
+        # Drop any remaining HTML comments.
+        normalized = re.sub(r'<!--.*?-->', ' ', normalized, flags=re.DOTALL)
+
+        # Keep paragraph structure but avoid excessive blank lines/noisy spaces.
+        normalized = re.sub(r'[ \t]+', ' ', normalized)
+        normalized = re.sub(r'\n{3,}', '\n\n', normalized)
+
+        return normalized.strip()
 
     def parse_xls(self, file_path: str) -> str:
         """

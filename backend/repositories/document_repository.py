@@ -4,6 +4,7 @@ Queries: search, filter by folder, by department, by status, etc.
 """
 from typing import List, Optional, Dict, Tuple
 from django.db.models import Q, Count, Prefetch
+from django.apps import apps
 from apps.documents.models import Document, DocumentChunk, Folder
 from .base_repository import BaseRepository
 import logging
@@ -422,4 +423,91 @@ class DocumentRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error getting accessible documents: {e}", exc_info=True)
             return self.get_base_queryset().none()
+
+    # ============================================================================
+    # SHARED WITH ME (ACL override access_scope)
+    # ============================================================================
+
+    def get_account_role_ids(self, account_id: str) -> List[str]:
+        """Return role IDs assigned to account via AccountRole mapping."""
+        try:
+            AccountRole = apps.get_model('users', 'AccountRole')
+            return [
+                str(role_id)
+                for role_id in AccountRole.objects.filter(
+                    account_id=account_id,
+                    is_deleted=False,
+                ).values_list('role_id', flat=True)
+            ]
+        except Exception as e:
+            logger.error(f"Error loading account roles for {account_id}: {e}", exc_info=True)
+            return []
+
+    def get_shared_folder_ids(self, account_id: str, role_ids: List[str]) -> List[str]:
+        """Return folder IDs shared directly to account or its roles."""
+        try:
+            FolderPermission = apps.get_model('documents', 'FolderPermission')
+
+            query = FolderPermission.objects.filter(
+                is_active=True,
+                is_deleted=False,
+            ).filter(
+                Q(subject_type='account', subject_id=str(account_id)) |
+                Q(subject_type='role', subject_id__in=role_ids)
+            )
+
+            return [str(folder_id) for folder_id in query.values_list('folder_id', flat=True).distinct()]
+        except Exception as e:
+            logger.error(f"Error loading shared folder IDs for {account_id}: {e}", exc_info=True)
+            return []
+
+    def get_shared_document_ids(self, account_id: str, role_ids: List[str]) -> List[str]:
+        """Return document IDs explicitly shared (inherit/override) to account or roles."""
+        try:
+            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+
+            query = DocumentPermission.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                permission_precedence__in=['inherit', 'override'],
+            ).filter(
+                Q(subject_type='account', subject_id=str(account_id)) |
+                Q(subject_type='role', subject_id__in=role_ids)
+            )
+
+            return [str(doc_id) for doc_id in query.values_list('document_id', flat=True).distinct()]
+        except Exception as e:
+            logger.error(f"Error loading shared document IDs for {account_id}: {e}", exc_info=True)
+            return []
+
+    def get_denied_document_ids(self, account_id: str, role_ids: List[str]) -> List[str]:
+        """Return document IDs explicitly denied to account or roles."""
+        try:
+            DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+
+            query = DocumentPermission.objects.filter(
+                is_active=True,
+                is_deleted=False,
+                permission_precedence='deny',
+            ).filter(
+                Q(subject_type='account', subject_id=str(account_id)) |
+                Q(subject_type='role', subject_id__in=role_ids)
+            )
+
+            return [str(doc_id) for doc_id in query.values_list('document_id', flat=True).distinct()]
+        except Exception as e:
+            logger.error(f"Error loading denied document IDs for {account_id}: {e}", exc_info=True)
+            return []
+
+    def get_folders_by_ids(self, folder_ids: List[str]):
+        """Return shared folders queryset with stable ordering."""
+        if not folder_ids:
+            return Folder.objects.none()
+        return Folder.objects.filter(id__in=folder_ids, is_deleted=False).order_by('name')
+
+    def get_candidate_shared_documents(self, folder_ids: List[str], document_ids: List[str]):
+        """Return documents reachable via shared folders OR direct document shares."""
+        folder_docs = Document.objects.filter(folder_id__in=folder_ids, is_deleted=False)
+        direct_docs = Document.objects.filter(id__in=document_ids, is_deleted=False)
+        return (folder_docs | direct_docs).distinct().select_related('folder', 'department', 'uploader').prefetch_related('tags')
 

@@ -54,6 +54,7 @@ from api.views.folder_views import (
 )
 from api.views.document_views import (
     DocumentListView,
+    SharedWithMeDocumentsView,
     DocumentUploadView,
     DocumentDetailView,
     DocumentUpdateView,
@@ -244,6 +245,7 @@ urlpatterns = [
     # 1. GET /api/v1/documents - List documents (paginated, filtered)
     # 2. POST /api/v1/documents/upload - Upload file + AsyncTask submission
     re_path(r"^documents/?$", DocumentListView.as_view(), name="document_list"),
+    re_path(r"^documents/shared-with-me/?$", SharedWithMeDocumentsView.as_view(), name="documents_shared_with_me"),
     re_path(r"^documents/upload/?$", DocumentUploadView.as_view(), name="document_upload"),
 
     # GET /api/v1/documents/permissions - Get all manageable documents with their ACL entries

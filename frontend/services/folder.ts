@@ -211,6 +211,8 @@ export interface PersonalDocumentsOrganized {
     unfoldered_documents: FolderDocumentResponse[]
 }
 
+export type SharedDocumentsOrganized = PersonalDocumentsOrganized
+
 /**
  * Fetch personal folders and documents organized by folder
  */
@@ -322,6 +324,39 @@ export async function fetchPersonalFoldersWithDocuments(
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch personal folders and documents'
         console.error('❌ Error fetching organized personal documents:', err)
+        if (err instanceof ApiError) {
+            throw err
+        }
+        throw new Error(message)
+    }
+}
+
+/**
+ * Fetch folders/documents explicitly shared with current user.
+ * GET /api/v1/documents/shared-with-me
+ */
+export async function fetchSharedWithMeFoldersAndDocuments(): Promise<SharedDocumentsOrganized> {
+    try {
+        const response = await api.get<any>('/documents/shared-with-me')
+
+        if (response?.data?.folders && response?.data?.unfoldered_documents) {
+            return {
+                folders: response.data.folders,
+                unfoldered_documents: response.data.unfoldered_documents,
+            }
+        }
+
+        if (response?.folders && response?.unfoldered_documents) {
+            return {
+                folders: response.folders,
+                unfoldered_documents: response.unfoldered_documents,
+            }
+        }
+
+        return { folders: [], unfoldered_documents: [] }
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to fetch shared documents'
+        console.error('❌ Error fetching shared-with-me documents:', err)
         if (err instanceof ApiError) {
             throw err
         }

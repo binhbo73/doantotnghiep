@@ -7,17 +7,28 @@ import { DocumentRow } from '@/components/features/documents/DocumentRow'
 import { UploadDocumentModal } from '@/components/features/documents/UploadDocumentModal'
 import { useDepartmentOptions } from '@/hooks/useDepartmentOptions'
 import { useRBAC } from '@/hooks/useRBAC'
-import { fetchPersonalFoldersWithDocuments, FolderDocumentResponse, FolderWithDocuments, PersonalDocumentsOrganized } from '@/services/folder'
+import {
+    fetchPersonalFoldersWithDocuments,
+    fetchSharedWithMeFoldersAndDocuments,
+    FolderDocumentResponse,
+    FolderWithDocuments,
+    PersonalDocumentsOrganized,
+    SharedDocumentsOrganized,
+} from '@/services/folder'
 
 export default function MyDocumentsPage() {
     const [organizedData, setOrganizedData] = useState<PersonalDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
+    const [sharedData, setSharedData] = useState<SharedDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
     const [selectedDocument, setSelectedDocument] = useState<FolderDocumentResponse | null>(null)
     const [selectedFolder, setSelectedFolder] = useState<FolderWithDocuments | null>(null)
     const [isLoading, setIsLoading] = useState(true)
+    const [isSharedLoading, setIsSharedLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
+    const [sharedError, setSharedError] = useState<string | null>(null)
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+    const [expandedSharedFolders, setExpandedSharedFolders] = useState<Set<string>>(new Set())
 
     const { data: departments } = useDepartmentOptions()
     const { isAdmin } = useRBAC()
@@ -30,7 +41,6 @@ export default function MyDocumentsPage() {
             const data = await fetchPersonalFoldersWithDocuments('personal')
             setOrganizedData(data)
 
-            // Auto-expand folders that have documents
             const expandedIds = new Set<string>()
             data.folders.forEach(folder => {
                 if (folder.documents.length > 0) {
@@ -50,9 +60,37 @@ export default function MyDocumentsPage() {
         }
     }, [])
 
+    const loadSharedDocuments = useCallback(async () => {
+        setIsSharedLoading(true)
+        setSharedError(null)
+
+        try {
+            const data = await fetchSharedWithMeFoldersAndDocuments()
+            setSharedData(data)
+
+            const expandedIds = new Set<string>()
+            data.folders.forEach(folder => {
+                if (folder.documents.length > 0) {
+                    expandedIds.add(folder.id)
+                }
+            })
+            if (data.unfoldered_documents.length > 0) {
+                expandedIds.add('_shared_unfoldered')
+            }
+            setExpandedSharedFolders(expandedIds)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Không thể tải dữ liệu được chia sẻ'
+            setSharedError(message)
+            console.error('❌ Error loading shared documents:', err)
+        } finally {
+            setIsSharedLoading(false)
+        }
+    }, [])
+
     useEffect(() => {
         void loadPersonalDocuments()
-    }, [loadPersonalDocuments])
+        void loadSharedDocuments()
+    }, [loadPersonalDocuments, loadSharedDocuments])
 
     const departmentMap = useMemo(() => {
         const map: Record<string, string> = {}
@@ -73,9 +111,12 @@ export default function MyDocumentsPage() {
     }, [departments])
 
     const totalDocuments = useMemo(() => {
-        return organizedData.folders.reduce((sum, folder) => sum + folder.documents.length, 0) +
-            organizedData.unfoldered_documents.length
+        return organizedData.folders.reduce((sum, folder) => sum + folder.documents.length, 0) + organizedData.unfoldered_documents.length
     }, [organizedData])
+
+    const totalSharedDocuments = useMemo(() => {
+        return sharedData.folders.reduce((sum, folder) => sum + folder.documents.length, 0) + sharedData.unfoldered_documents.length
+    }, [sharedData])
 
     const clearSelection = () => {
         setSelectedDocument(null)
@@ -90,6 +131,16 @@ export default function MyDocumentsPage() {
             newExpanded.add(folderId)
         }
         setExpandedFolders(newExpanded)
+    }
+
+    const toggleSharedFolder = (folderId: string) => {
+        const newExpanded = new Set(expandedSharedFolders)
+        if (newExpanded.has(folderId)) {
+            newExpanded.delete(folderId)
+        } else {
+            newExpanded.add(folderId)
+        }
+        setExpandedSharedFolders(newExpanded)
     }
 
     const handleSelectDocument = (document: FolderDocumentResponse, folder: FolderWithDocuments | null) => {
@@ -144,11 +195,11 @@ export default function MyDocumentsPage() {
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                             <div>
                                 <h1 className="text-2xl font-bold text-slate-900">Tài liệu của tôi</h1>
-                                <p className="text-sm text-slate-500">Xem các tài liệu cá nhân được organized theo thư mục và access_scope = personal.</p>
+                                <p className="text-sm text-slate-500">Xem tài liệu cá nhân và tài liệu được chia sẻ theo phân quyền ACL.</p>
                             </div>
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
                                 <div className="rounded-3xl bg-[#f4f9ff] px-4 py-3 text-sm text-slate-600">
-                                    {totalDocuments} tài liệu • {organizedData.folders.length} thư mục
+                                    {totalDocuments} tài liệu cá nhân • {totalSharedDocuments} tài liệu được chia sẻ
                                 </div>
                                 <div className="flex flex-col gap-2 sm:flex-row">
                                     <button
@@ -172,103 +223,213 @@ export default function MyDocumentsPage() {
                 </div>
 
                 <div className="grid grid-cols-12 gap-6">
-                    <div className="col-span-12 lg:col-span-7 bg-white shadow-sm ring-1 ring-slate-100 rounded-3xl overflow-hidden">
-                        <div className="border-b border-slate-100 px-5 py-4">
-                            <h2 className="text-sm font-semibold text-slate-900">Thư mục & Tài liệu cá nhân</h2>
-                            <p className="text-xs text-slate-500 mt-1">Hiển thị các thư mục và tài liệu với access_scope = "Cá nhân".</p>
-                        </div>
-                        <div className="p-4 space-y-2 max-h-[600px] overflow-y-auto">
-                            {organizedData.folders.length === 0 && organizedData.unfoldered_documents.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center py-20 text-center gap-3 text-slate-500">
-                                    <span className="material-symbols-outlined text-5xl">folder_open</span>
-                                    <p className="text-sm font-semibold">Chưa có tài liệu cá nhân</p>
-                                    <p className="text-xs max-w-xs">Bạn có thể tải lên tài liệu mới với access_scope "personal" từ trang Kho tài liệu.</p>
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    {/* Folders with documents */}
-                                    {organizedData.folders.map((folder) => (
-                                        <div key={folder.id} className="border border-slate-200 rounded-lg overflow-hidden">
-                                            <button
-                                                onClick={() => toggleFolder(folder.id)}
-                                                className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition"
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-lg text-[#9d4300]">
-                                                        {expandedFolders.has(folder.id) ? 'folder_open' : 'folder'}
+                    <div className="col-span-12 lg:col-span-7 space-y-6">
+                        <div className="bg-white shadow-sm ring-1 ring-slate-100 rounded-3xl overflow-hidden">
+                            <div className="border-b border-slate-100 px-5 py-4">
+                                <h2 className="text-sm font-semibold text-slate-900">Thư mục & Tài liệu cá nhân</h2>
+                                <p className="text-xs text-slate-500 mt-1">Hiển thị các thư mục và tài liệu với access_scope = "Cá nhân".</p>
+                            </div>
+                            <div className="p-4 space-y-2 max-h-[420px] overflow-y-auto">
+                                {organizedData.folders.length === 0 && organizedData.unfoldered_documents.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center py-20 text-center gap-3 text-slate-500">
+                                        <span className="material-symbols-outlined text-5xl">folder_open</span>
+                                        <p className="text-sm font-semibold">Chưa có tài liệu cá nhân</p>
+                                        <p className="text-xs max-w-xs">Bạn có thể tải lên tài liệu mới với access_scope "personal" từ trang Kho tài liệu.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {organizedData.folders.map((folder) => (
+                                            <div key={folder.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                                                <button
+                                                    onClick={() => toggleFolder(folder.id)}
+                                                    className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-lg text-[#9d4300]">
+                                                            {expandedFolders.has(folder.id) ? 'folder_open' : 'folder'}
+                                                        </span>
+                                                        <div className="text-left">
+                                                            <p className="text-sm font-semibold text-slate-900">{folder.name}</p>
+                                                            <p className="text-xs text-slate-500">{folder.documents.length} tài liệu</p>
+                                                        </div>
+                                                    </div>
+                                                    <span className="material-symbols-outlined text-lg text-slate-400">
+                                                        {expandedFolders.has(folder.id) ? 'expand_less' : 'expand_more'}
                                                     </span>
-                                                    <div className="text-left">
-                                                        <p className="text-sm font-semibold text-slate-900">{folder.name}</p>
-                                                        <p className="text-xs text-slate-500">{folder.documents.length} tài liệu</p>
+                                                </button>
+
+                                                {expandedFolders.has(folder.id) && (
+                                                    <div className="border-t border-slate-200 p-2 bg-white">
+                                                        {folder.documents.length === 0 ? (
+                                                            <div className="text-center py-4 text-slate-400">
+                                                                <p className="text-xs">Thư mục rỗng</p>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="space-y-1">
+                                                                {folder.documents.map((doc) => (
+                                                                    <DocumentRow
+                                                                        key={doc.id}
+                                                                        document={doc}
+                                                                        isSelected={selectedDocument?.id === doc.id}
+                                                                        onSelect={() => handleSelectDocument(doc, folder)}
+                                                                        folderName={folder.name}
+                                                                        departmentName={departmentMap[doc.department || doc.department_id || '']}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                </div>
-                                                <span className="material-symbols-outlined text-lg text-slate-400">
-                                                    {expandedFolders.has(folder.id) ? 'expand_less' : 'expand_more'}
-                                                </span>
-                                            </button>
+                                                )}
+                                            </div>
+                                        ))}
 
-                                            {/* Documents in folder */}
-                                            {expandedFolders.has(folder.id) && (
-                                                <div className="border-t border-slate-200 p-2 bg-white">
-                                                    {folder.documents.length === 0 ? (
-                                                        <div className="text-center py-4 text-slate-400">
-                                                            <p className="text-xs">Thư mục rỗng</p>
+                                        {organizedData.unfoldered_documents.length > 0 && (
+                                            <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                                <button
+                                                    onClick={() => toggleFolder('_unfoldered')}
+                                                    className="w-full flex items-center justify-between p-3 bg-amber-50 hover:bg-amber-100 transition"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-lg text-amber-600">inbox</span>
+                                                        <div className="text-left">
+                                                            <p className="text-sm font-semibold text-slate-900">Tài liệu chưa phân loại</p>
+                                                            <p className="text-xs text-slate-500">{organizedData.unfoldered_documents.length} tài liệu</p>
                                                         </div>
-                                                    ) : (
-                                                        <div className="space-y-1">
-                                                            {folder.documents.map((doc) => (
-                                                                <DocumentRow
-                                                                    key={doc.id}
-                                                                    document={doc}
-                                                                    isSelected={selectedDocument?.id === doc.id}
-                                                                    onSelect={() => handleSelectDocument(doc, folder)}
-                                                                    folderName={folder.name}
-                                                                    departmentName={departmentMap[doc.department || doc.department_id || '']}
-                                                                />
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    ))}
-
-                                    {/* Unfoldered documents */}
-                                    {organizedData.unfoldered_documents.length > 0 && (
-                                        <div className="border border-slate-200 rounded-lg overflow-hidden">
-                                            <button
-                                                onClick={() => toggleFolder('_unfoldered')}
-                                                className="w-full flex items-center justify-between p-3 bg-amber-50 hover:bg-amber-100 transition"
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <span className="material-symbols-outlined text-lg text-amber-600">inbox</span>
-                                                    <div className="text-left">
-                                                        <p className="text-sm font-semibold text-slate-900">Tài liệu chưa phân loại</p>
-                                                        <p className="text-xs text-slate-500">{organizedData.unfoldered_documents.length} tài liệu</p>
                                                     </div>
-                                                </div>
-                                                <span className="material-symbols-outlined text-lg text-slate-400">
-                                                    {expandedFolders.has('_unfoldered') ? 'expand_less' : 'expand_more'}
-                                                </span>
-                                            </button>
+                                                    <span className="material-symbols-outlined text-lg text-slate-400">
+                                                        {expandedFolders.has('_unfoldered') ? 'expand_less' : 'expand_more'}
+                                                    </span>
+                                                </button>
 
-                                            {expandedFolders.has('_unfoldered') && (
-                                                <div className="border-t border-slate-200 p-2 bg-white space-y-1">
-                                                    {organizedData.unfoldered_documents.map((doc) => (
-                                                        <DocumentRow
-                                                            key={doc.id}
-                                                            document={doc}
-                                                            isSelected={selectedDocument?.id === doc.id}
-                                                            onSelect={() => handleSelectDocument(doc, null)}
-                                                            departmentName={departmentMap[doc.department || doc.department_id || '']}
-                                                        />
-                                                    ))}
-                                                </div>
-                                            )}
+                                                {expandedFolders.has('_unfoldered') && (
+                                                    <div className="border-t border-slate-200 p-2 bg-white space-y-1">
+                                                        {organizedData.unfoldered_documents.map((doc) => (
+                                                            <DocumentRow
+                                                                key={doc.id}
+                                                                document={doc}
+                                                                isSelected={selectedDocument?.id === doc.id}
+                                                                onSelect={() => handleSelectDocument(doc, null)}
+                                                                departmentName={departmentMap[doc.department || doc.department_id || '']}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="bg-white shadow-sm ring-1 ring-slate-100 rounded-3xl overflow-hidden">
+                            <div className="border-b border-slate-100 px-5 py-4">
+                                <h2 className="text-sm font-semibold text-slate-900">Được chia sẻ với tôi</h2>
+                                <p className="text-xs text-slate-500 mt-1">FolderPermission và DocumentPermission sẽ ghi đè access_scope để hiển thị dữ liệu chia sẻ.</p>
+                            </div>
+                            <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/60">
+                                <p className="text-xs text-slate-600">
+                                    {totalSharedDocuments} tài liệu được chia sẻ • {sharedData.folders.length} thư mục được chia sẻ
+                                </p>
+                            </div>
+                            <div className="p-4 space-y-2 max-h-[420px] overflow-y-auto">
+                                {isSharedLoading ? (
+                                    <div className="flex items-center justify-center py-12">
+                                        <div className="flex items-center gap-2 text-slate-500 text-sm">
+                                            <div className="w-5 h-5 border-2 border-[#9d4300]/20 border-t-[#9d4300] rounded-full animate-spin" />
+                                            Đang tải dữ liệu chia sẻ...
                                         </div>
-                                    )}
-                                </div>
-                            )}
+                                    </div>
+                                ) : sharedError ? (
+                                    <div className="text-center py-12 text-red-500 text-sm">{sharedError}</div>
+                                ) : sharedData.folders.length === 0 && sharedData.unfoldered_documents.length === 0 ? (
+                                    <div className="flex flex-col items-center justify-center py-14 text-center gap-3 text-slate-500">
+                                        <span className="material-symbols-outlined text-4xl">folder_shared</span>
+                                        <p className="text-sm font-semibold">Chưa có dữ liệu được chia sẻ</p>
+                                        <p className="text-xs max-w-xs">Khi có ai đó share folder hoặc tài liệu cho bạn, dữ liệu sẽ hiển thị ở đây.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {sharedData.folders.map((folder) => (
+                                            <div key={folder.id} className="border border-slate-200 rounded-lg overflow-hidden">
+                                                <button
+                                                    onClick={() => toggleSharedFolder(folder.id)}
+                                                    className="w-full flex items-center justify-between p-3 bg-blue-50 hover:bg-blue-100 transition"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-lg text-blue-700">
+                                                            {expandedSharedFolders.has(folder.id) ? 'folder_open' : 'folder_shared'}
+                                                        </span>
+                                                        <div className="text-left">
+                                                            <p className="text-sm font-semibold text-slate-900">{folder.name}</p>
+                                                            <p className="text-xs text-slate-500">{folder.documents.length} tài liệu được chia sẻ</p>
+                                                        </div>
+                                                    </div>
+                                                    <span className="material-symbols-outlined text-lg text-slate-400">
+                                                        {expandedSharedFolders.has(folder.id) ? 'expand_less' : 'expand_more'}
+                                                    </span>
+                                                </button>
+
+                                                {expandedSharedFolders.has(folder.id) && (
+                                                    <div className="border-t border-slate-200 p-2 bg-white">
+                                                        {folder.documents.length === 0 ? (
+                                                            <div className="text-center py-4 text-slate-400">
+                                                                <p className="text-xs">Thư mục này đang chưa có tài liệu khả dụng</p>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="space-y-1">
+                                                                {folder.documents.map((doc) => (
+                                                                    <DocumentRow
+                                                                        key={doc.id}
+                                                                        document={doc}
+                                                                        isSelected={selectedDocument?.id === doc.id}
+                                                                        onSelect={() => handleSelectDocument(doc, folder)}
+                                                                        folderName={folder.name}
+                                                                        departmentName={departmentMap[doc.department || doc.department_id || '']}
+                                                                    />
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+
+                                        {sharedData.unfoldered_documents.length > 0 && (
+                                            <div className="border border-slate-200 rounded-lg overflow-hidden">
+                                                <button
+                                                    onClick={() => toggleSharedFolder('_shared_unfoldered')}
+                                                    className="w-full flex items-center justify-between p-3 bg-cyan-50 hover:bg-cyan-100 transition"
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="material-symbols-outlined text-lg text-cyan-700">share</span>
+                                                        <div className="text-left">
+                                                            <p className="text-sm font-semibold text-slate-900">Tài liệu chia sẻ trực tiếp</p>
+                                                            <p className="text-xs text-slate-500">{sharedData.unfoldered_documents.length} tài liệu</p>
+                                                        </div>
+                                                    </div>
+                                                    <span className="material-symbols-outlined text-lg text-slate-400">
+                                                        {expandedSharedFolders.has('_shared_unfoldered') ? 'expand_less' : 'expand_more'}
+                                                    </span>
+                                                </button>
+
+                                                {expandedSharedFolders.has('_shared_unfoldered') && (
+                                                    <div className="border-t border-slate-200 p-2 bg-white space-y-1">
+                                                        {sharedData.unfoldered_documents.map((doc) => (
+                                                            <DocumentRow
+                                                                key={doc.id}
+                                                                document={doc}
+                                                                isSelected={selectedDocument?.id === doc.id}
+                                                                onSelect={() => handleSelectDocument(doc, null)}
+                                                                departmentName={departmentMap[doc.department || doc.department_id || '']}
+                                                            />
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
 
@@ -281,14 +442,20 @@ export default function MyDocumentsPage() {
                 <UploadDocumentModal
                     isOpen={isUploadModalOpen}
                     onClose={() => setIsUploadModalOpen(false)}
-                    onSuccess={() => void loadPersonalDocuments()}
+                    onSuccess={() => {
+                        void loadPersonalDocuments()
+                        void loadSharedDocuments()
+                    }}
                     defaultAccessScope="personal"
                     allowedScopes={['personal']}
                 />
                 <CreateFolderModal
                     isOpen={isCreateFolderModalOpen}
                     onClose={() => setIsCreateFolderModalOpen(false)}
-                    onSuccess={() => void loadPersonalDocuments()}
+                    onSuccess={() => {
+                        void loadPersonalDocuments()
+                        void loadSharedDocuments()
+                    }}
                     defaultAccessScope="personal"
                     allowedScopes={['personal']}
                 />

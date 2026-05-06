@@ -149,6 +149,77 @@ class DocumentSerializer(SoftDeleteModelSerializer):
             return 'none'
 
 
+class SharedFolderWithDocumentsSerializer(SoftDeleteModelSerializer):
+    """Serializer for shared folder payload with nested shared documents."""
+
+    documents = serializers.SerializerMethodField()
+    my_permission = serializers.SerializerMethodField()
+    uploader_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Folder
+        fields = [
+            'id',
+            'name',
+            'description',
+            'parent_id',
+            'department_id',
+            'access_scope',
+            'metadata',
+            'created_by_id',
+            'uploader_name',
+            'is_deleted',
+            'deleted_at',
+            'my_permission',
+            'created_at',
+            'updated_at',
+            'documents',
+        ]
+
+    def get_documents(self, obj):
+        folder_documents_map = self.context.get('folder_documents_map', {})
+        docs = folder_documents_map.get(str(obj.id), [])
+        return DocumentSerializer(docs, many=True, context=self.context).data
+
+    def get_my_permission(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return 'none'
+
+        try:
+            from core.permissions.permission_manager import get_permission_manager
+            return get_permission_manager().get_effective_level(request.user.id, obj.id, is_folder=True)
+        except Exception:
+            return 'none'
+
+    def get_uploader_name(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+
+        is_admin = request.user.is_superuser
+        if hasattr(request.user, 'has_role'):
+            try:
+                from core.constants import RoleIds
+                is_admin = is_admin or request.user.has_role(RoleIds.ADMIN)
+            except Exception:
+                pass
+
+        if not is_admin:
+            return None
+
+        creator = getattr(obj, 'created_by', None)
+        if not creator:
+            return None
+
+        profile = getattr(creator, 'user_profile', None)
+        if profile and getattr(profile, 'full_name', None):
+            return profile.full_name
+
+        full_name = creator.get_full_name() if hasattr(creator, 'get_full_name') else ''
+        return full_name or creator.username
+
+
 class DocumentChunkSerializer(serializers.ModelSerializer):
     """Serializer for DocumentChunk model (read-only)"""
 

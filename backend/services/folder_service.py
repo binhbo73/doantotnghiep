@@ -720,10 +720,15 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Check permission - only creator can grant
-            if str(folder.created_by_id) != str(user_id):
+            # Check permission - creator or admin can grant
+            from services.user_service import UserService
+            user_service = UserService()
+            user_permissions = user_service.get_user_permissions(user_id)
+            is_admin = 'system_admin' in user_permissions or 'permission_manage' in user_permissions
+            
+            if str(folder.created_by_id) != str(user_id) and not is_admin:
                 raise PermissionDeniedError(
-                    f"Only folder creator can grant permissions. "
+                    f"Only folder creator or admin can grant permissions. "
                     f"Folder creator: {folder.created_by_id}, Current user: {user_id}"
                 )
             

@@ -53,6 +53,7 @@ from api.serializers.document_serializers import (
     DocumentChunkSerializer,
     DocumentUploadSerializer,
     DocumentPermissionListSerializer,
+    SharedFolderWithDocumentsSerializer,
 )
 from api.serializers.folder_serializers import FolderPermissionSerializer
 
@@ -179,6 +180,62 @@ class DocumentListView(APIView):
             logger.error(f"Error listing documents: {e}", exc_info=True)
             return Response(
                 ResponseBuilder.error("Failed to list documents", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SharedWithMeDocumentsView(APIView):
+    """
+    API Endpoint: GET /api/v1/documents/shared-with-me
+
+    Return folders and documents explicitly shared to current user.
+
+    Rules:
+    - FolderPermission overrides access_scope for folder visibility.
+    - If a folder is shared, documents inside that folder are also shared.
+    - DocumentPermission shares only that specific document.
+    - Explicit document deny still takes precedence.
+    """
+
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request):
+        try:
+            service = DocumentService()
+            shared_data = service.get_shared_with_me_documents(user_id=str(request.user.id))
+
+            folders_payload = SharedFolderWithDocumentsSerializer(
+                shared_data['folders'],
+                many=True,
+                context={
+                    'request': request,
+                    'folder_documents_map': shared_data['folder_documents_map'],
+                },
+            ).data
+
+            unfoldered_payload = DocumentSerializer(
+                shared_data['unfoldered_documents'],
+                many=True,
+                context={'request': request},
+            ).data
+
+            result = {
+                'folders': folders_payload,
+                'unfoldered_documents': unfoldered_payload,
+            }
+
+            return Response(
+                ResponseBuilder.success(
+                    data=result,
+                    message='Shared folders and documents retrieved successfully'
+                ),
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            logger.error(f"Error retrieving shared-with-me documents: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to retrieve shared-with-me documents", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

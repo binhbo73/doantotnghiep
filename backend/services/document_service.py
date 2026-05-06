@@ -24,6 +24,7 @@ import base64
 import subprocess
 import tempfile
 from typing import List, Optional, Tuple, Dict, Any
+from collections import defaultdict
 from django.apps import apps
 from django.db import transaction
 from django.utils import timezone
@@ -449,6 +450,53 @@ class DocumentService(BaseService):
         except Exception as e:
             self.log_error('list_accessible_documents', e, user_id=user_id)
             return [], None
+
+    def get_shared_with_me_documents(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get folders/documents explicitly shared with account.
+
+        Rules:
+        - FolderPermission share => folder visible and documents in that folder are shared.
+        - DocumentPermission share => only that document is shared.
+        - DocumentPermission deny has highest priority and removes document.
+        """
+        try:
+            account_id = str(user_id)
+
+            role_ids = self.document_repo.get_account_role_ids(account_id)
+            shared_folder_ids = self.document_repo.get_shared_folder_ids(account_id, role_ids)
+            shared_document_ids = self.document_repo.get_shared_document_ids(account_id, role_ids)
+            denied_document_ids = set(self.document_repo.get_denied_document_ids(account_id, role_ids))
+
+            shared_folders = list(self.document_repo.get_folders_by_ids(shared_folder_ids))
+            candidate_documents = list(
+                self.document_repo.get_candidate_shared_documents(shared_folder_ids, shared_document_ids)
+            )
+
+            allowed_documents = [
+                doc for doc in candidate_documents
+                if str(doc.id) not in denied_document_ids
+            ]
+
+            shared_folder_id_set = {str(folder_id) for folder_id in shared_folder_ids}
+            folder_documents_map = defaultdict(list)
+            unfoldered_documents = []
+
+            for doc in allowed_documents:
+                folder_id = str(doc.folder_id) if doc.folder_id else None
+                if folder_id and folder_id in shared_folder_id_set:
+                    folder_documents_map[folder_id].append(doc)
+                else:
+                    unfoldered_documents.append(doc)
+
+            return {
+                'folders': shared_folders,
+                'folder_documents_map': dict(folder_documents_map),
+                'unfoldered_documents': unfoldered_documents,
+            }
+        except Exception as e:
+            self.log_error('get_shared_with_me_documents', e, user_id=user_id)
+            raise
     
     # ============================================================================
     # DOCUMENT PROCESSING
