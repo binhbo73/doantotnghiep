@@ -9,7 +9,7 @@
  * - Create Folder: Admin + Manager + Users in their own department
  */
 
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
     DocumentHeader,
     FolderTree,
@@ -22,6 +22,12 @@ import { DocumentsPermissionsWorkspace } from '@/components/features/documents/D
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useRBAC } from '@/hooks/useRBAC'
 import { useAuthContext } from '@/context'
+import {
+    fetchSharedWithMeFoldersAndDocuments,
+    FolderWithDocuments,
+    SharedDocumentsOrganized,
+} from '@/services/folder'
+import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
 
 type DocumentsPageTab = 'browse' | 'permissions'
 
@@ -66,10 +72,71 @@ function PageTabButton({
     )
 }
 
+function collectSharedFolderIds(folders: FolderWithDocuments[]): Set<string> {
+    const folderIds = new Set<string>()
+
+    const walk = (items: FolderWithDocuments[]) => {
+        items.forEach((folder) => {
+            folderIds.add(folder.id)
+            if (Array.isArray(folder.sub_folders) && folder.sub_folders.length > 0) {
+                walk(folder.sub_folders as FolderWithDocuments[])
+            }
+        })
+    }
+
+    walk(folders)
+    return folderIds
+}
+
+function collectSharedDocumentIds(sharedData: SharedDocumentsOrganized): Set<string> {
+    const documentIds = new Set<string>()
+
+    const walk = (items: FolderWithDocuments[]) => {
+        items.forEach((folder) => {
+            folder.documents.forEach((document) => documentIds.add(document.id))
+            if (Array.isArray(folder.sub_folders) && folder.sub_folders.length > 0) {
+                walk(folder.sub_folders as FolderWithDocuments[])
+            }
+        })
+    }
+
+    walk(sharedData.folders)
+    sharedData.unfoldered_documents.forEach((document) => documentIds.add(document.id))
+
+    return documentIds
+}
+
+function filterBrowseTree(
+    nodes: FolderTreeNode[],
+    excludedFolderIds: Set<string>,
+    excludedDocumentIds: Set<string>
+): FolderTreeNode[] {
+    return nodes
+        .filter((node) => !excludedFolderIds.has(node.folder.id))
+        .map((node) => ({
+            ...node,
+            children: filterBrowseTree(node.children, excludedFolderIds, excludedDocumentIds),
+            documents: node.documents.filter((document) => !excludedDocumentIds.has(document.id)),
+        }))
+}
+
+function filterOtherDocuments(
+    otherDocuments: OtherDocumentsNode,
+    excludedDocumentIds: Set<string>
+): OtherDocumentsNode {
+    return {
+        ...otherDocuments,
+        departmentDocs: otherDocuments.departmentDocs.filter((document) => !excludedDocumentIds.has(document.id)),
+        personalDocs: otherDocuments.personalDocs.filter((document) => !excludedDocumentIds.has(document.id)),
+        companyDocs: otherDocuments.companyDocs.filter((document) => !excludedDocumentIds.has(document.id)),
+    }
+}
+
 export default function DocumentsPage() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
+    const [sharedWithMe, setSharedWithMe] = useState<SharedDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
     const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
 
     const { user } = useAuthContext()
@@ -91,6 +158,53 @@ export default function DocumentsPage() {
     } = useDocumentStore()
 
     const stats = getStats()
+
+    const shouldHideSharedItems = isTruongPhong() && !isAdmin()
+
+    useEffect(() => {
+        if (!shouldHideSharedItems) {
+            setSharedWithMe({ folders: [], unfoldered_documents: [] })
+            return
+        }
+
+        let isMounted = true
+
+        void fetchSharedWithMeFoldersAndDocuments()
+            .then((data) => {
+                if (isMounted) {
+                    setSharedWithMe(data)
+                }
+            })
+            .catch((err) => {
+                console.error('❌ Failed to load shared documents for filtering:', err)
+                if (isMounted) {
+                    setSharedWithMe({ folders: [], unfoldered_documents: [] })
+                }
+            })
+
+        return () => {
+            isMounted = false
+        }
+    }, [shouldHideSharedItems])
+
+    const browseTree = useMemo(() => {
+        if (!shouldHideSharedItems) {
+            return tree
+        }
+
+        const excludedFolderIds = collectSharedFolderIds(sharedWithMe.folders)
+        const excludedDocumentIds = collectSharedDocumentIds(sharedWithMe)
+        return filterBrowseTree(tree, excludedFolderIds, excludedDocumentIds)
+    }, [sharedWithMe, shouldHideSharedItems, tree])
+
+    const browseOtherDocuments = useMemo(() => {
+        if (!shouldHideSharedItems) {
+            return otherDocuments
+        }
+
+        const excludedDocumentIds = collectSharedDocumentIds(sharedWithMe)
+        return filterOtherDocuments(otherDocuments, excludedDocumentIds)
+    }, [otherDocuments, sharedWithMe, shouldHideSharedItems])
 
     // Permissions for document page features
     const canManagePermissions = isAdmin()
@@ -173,8 +287,8 @@ export default function DocumentsPage() {
                     <div className="grid grid-cols-12 gap-6">
                         {/* Folder Tree */}
                         <FolderTree
-                            tree={tree}
-                            otherDocuments={otherDocuments}
+                            tree={browseTree}
+                            otherDocuments={browseOtherDocuments}
                             selectedDocId={selectedDocument?.id || null}
                             onToggleFolder={toggleFolder}
                             onToggleOtherDocuments={toggleOtherDocuments}

@@ -58,18 +58,18 @@ export const dashboardNavigation: NavItem[] = [
         href: '/dashboard/roles',
         roles: ['ADMIN'],
     },
-    {
-        id: 'projects',
-        label: 'Dự án',
-        icon: '📋',
-        href: '/dashboard/projects',
-    },
-    {
-        id: 'reports',
-        label: 'Báo cáo',
-        icon: '📈',
-        href: '/dashboard/reports',
-    },
+    // {
+    //     id: 'projects',
+    //     label: 'Dự án',
+    //     icon: '📋',
+    //     href: '/dashboard/projects',
+    // },
+    // {
+    //     id: 'reports',
+    //     label: 'Báo cáo',
+    //     icon: '📈',
+    //     href: '/dashboard/reports',
+    // },
 ]
 
 /**

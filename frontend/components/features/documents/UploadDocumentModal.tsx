@@ -110,22 +110,27 @@ export function UploadDocumentModal({
     const foldersList = flattenTree(tree)
     const selectedFolder = foldersList.find(f => f.id === folderId)
 
-    // Scope-compatible folder filtering for Direction 2 behavior
+    // Scope-compatible folder filtering for upload form
+    // - company: show only company folders
+    // - department: show only folders for the selected department
+    // - personal: show only personal folders
     const displayFoldersList = foldersList.filter(f => {
         if (allowedScopes.length === 1 && allowedScopes[0] === 'personal') {
             return f.access_scope === 'personal'
         }
 
         if (accessScope === 'company') {
-            // company-scoped documents cannot go into department/personal folders
             return f.access_scope === 'company'
         }
+
         if (accessScope === 'department') {
-            // department-scoped documents can go to company or department folders
-            return f.access_scope !== 'personal'
+            return (
+                f.access_scope === 'company' ||
+                (f.access_scope === 'department' && departmentId && f.department_id === departmentId)
+            )
         }
-        // personal docs can exist in any folder type (with backend validation)
-        return true
+
+        return f.access_scope === 'personal'
     })
 
     // Auto-map department when user picks a department folder in department scope.
