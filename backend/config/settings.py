@@ -399,6 +399,14 @@ QDRANT_VECTOR_SIZE = EMBEDDING_DIMENSION
 CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "240"))
 CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "48"))
 
+# File-type-aware chunk profiles that can help reduce embedding input size.
+CHUNK_TOKEN_SIZE_PDF = int(os.environ.get("CHUNK_TOKEN_SIZE_PDF", "100"))
+CHUNK_TOKEN_OVERLAP_PDF = int(os.environ.get("CHUNK_TOKEN_OVERLAP_PDF", "20"))
+CHUNK_TOKEN_SIZE_DOC = int(os.environ.get("CHUNK_TOKEN_SIZE_DOC", "100"))
+CHUNK_TOKEN_OVERLAP_DOC = int(os.environ.get("CHUNK_TOKEN_OVERLAP_DOC", "20"))
+CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "100"))
+CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "20"))
+
 # Legacy aliases used by older code paths.
 CHUNK_SIZE = CHUNK_TOKEN_SIZE
 CHUNK_OVERLAP = CHUNK_TOKEN_OVERLAP

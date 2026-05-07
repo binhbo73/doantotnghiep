@@ -335,6 +335,8 @@ class DocumentUploadView(APIView):
             if folder_id:
                 folder_service = FolderService()
                 try:
+                    is_admin = request.user.is_superuser or request.user.has_role(RoleIds.ADMIN)
+
                     has_perm = folder_service.check_folder_permission(
                         folder_id=folder_id,
                         user_id=request.user.id,
@@ -349,17 +351,19 @@ class DocumentUploadView(APIView):
                             status=status.HTTP_403_FORBIDDEN
                         )
                     
-                    # ── Validation: chỉ cho phép upload vào folder của department user ──
-                    folder = folder_service.repository.get_by_id(folder_id)
-                    if folder and folder.access_scope == 'department':
-                        if not user_department or str(folder.department_id) != str(user_department.id):
-                            return Response(
-                                ResponseBuilder.error(
-                                    "Bạn chỉ được upload tài liệu vào folder của phòng ban mình",
-                                    status_code=403
-                                ),
-                                status=status.HTTP_403_FORBIDDEN
-                            )
+                        # ── Validation: chỉ giới hạn user thường theo đúng department ──
+                        # Admin đã được check_folder_permission() cho phép full quyền.
+                        if not is_admin:
+                            folder = folder_service.repository.get_by_id(folder_id)
+                            if folder and folder.access_scope == 'department':
+                                if not user_department or str(folder.department_id) != str(user_department.id):
+                                    return Response(
+                                        ResponseBuilder.error(
+                                            "Bạn chỉ được upload tài liệu vào folder của phòng ban mình",
+                                            status_code=403
+                                        ),
+                                        status=status.HTTP_403_FORBIDDEN
+                                    )
                             
                 except NotFoundError as e:
                     return Response(

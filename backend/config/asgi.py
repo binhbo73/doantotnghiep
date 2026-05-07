@@ -15,34 +15,23 @@ To run with WebSocket support (django-channels):
 """
 
 import os
-from pathlib import Path
-
-from django.core.asgi import get_asgi_application
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
+from django.core.asgi import get_asgi_application
+from channels.auth import AuthMiddlewareStack
+from channels.routing import ProtocolTypeRouter, URLRouter
 
 # Setup Django
 django_asgi_app = get_asgi_application()
 
-# Optional: Import channels for WebSocket support
-# Only import if channels is installed
-try:
-    from channels.routing import ProtocolTypeRouter, URLRouter
-    from channels.auth import AuthMiddlewareStack
-    from api.routing import websocket_urlpatterns
-    
-    application = ProtocolTypeRouter({
-        # HTTP and WebSocket
-        "http": django_asgi_app,
-        "websocket": AuthMiddlewareStack(
-            URLRouter(
-                websocket_urlpatterns
-            )
-        ),
-    })
-except ImportError:
-    # Fallback to standard Django ASGI if channels is not installed
-    print("WARNING: django-channels not installed. WebSocket support disabled.")
-    print("To enable WebSocket chat, install: pip install django-channels channels-redis daphne")
-    application = django_asgi_app
+from api.routing import websocket_urlpatterns
+
+# Fail fast if websocket stack is not available to avoid silent 404 on /ws/* routes.
+application = ProtocolTypeRouter({
+    "http": django_asgi_app,
+    "websocket": AuthMiddlewareStack(
+        URLRouter(websocket_urlpatterns)
+    ),
+})
 

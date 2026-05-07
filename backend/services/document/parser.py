@@ -232,13 +232,16 @@ class DocumentParser:
             
             # 5. Parse based on type
             if file_type == 'application/pdf':
-                text = self.parse_pdf(file_path)
+                text, page_count = self.parse_pdf(file_path)
             elif file_type in ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'):
                 text = self.parse_docx(file_path)  # ⚡ FAST via python-docx
+                page_count = None
             elif file_type in ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'):
                 text = self.parse_excel(file_path, file_type=file_type)
+                page_count = None
             elif file_type in ('text/plain', 'text/markdown'):
                 text = self.parse_text(file_path)
+                page_count = None
             else:
                 raise DocumentProcessingError(f"Unsupported file type: {file_type}")
 
@@ -246,7 +249,7 @@ class DocumentParser:
             text = self._normalize_extracted_text(text)
             
             # 7. Extract metadata
-            metadata = self._extract_metadata(text, file_path, file_type)
+            metadata = self._extract_metadata(text, file_path, file_type, page_count=page_count)
             metadata['from_cache'] = False
             
             # 8. Cache result
@@ -267,7 +270,7 @@ class DocumentParser:
     # FORMAT-SPECIFIC PARSERS
     # ============================================================================
     
-    def parse_pdf(self, file_path: str) -> str:
+    def parse_pdf(self, file_path: str) -> Tuple[str, int]:
         """
         Parse PDF file and extract text (via opendataloader-pdf - #1 benchmarks)
         
@@ -290,9 +293,17 @@ class DocumentParser:
         import shutil
         
         try:
+            from pypdf import PdfReader
             import opendataloader_pdf
             
             logger.debug(f"Parsing PDF (opendataloader-pdf): {os.path.basename(file_path)}")
+
+            page_count = 0
+            try:
+                with open(file_path, 'rb') as pdf_file:
+                    page_count = len(PdfReader(pdf_file).pages)
+            except Exception as page_err:
+                logger.warning(f"Could not read PDF page count for {file_path}: {page_err}")
             
             # Create temp directory for output
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -319,7 +330,7 @@ class DocumentParser:
                     text = f.read()
                 
                 logger.debug(f"PDF parsing completed: {len(text)} chars")
-                return text
+                return text, page_count or 1
         
         except ImportError as e:
             raise DocumentProcessingError(
@@ -573,7 +584,8 @@ class DocumentParser:
         self,
         text: str,
         file_path: str,
-        file_type: str
+        file_type: str,
+        page_count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Extract metadata from parsed text
@@ -591,8 +603,8 @@ class DocumentParser:
             lines = text.split('\n')
             words = text.split()
             
-            # Estimate pages (avg 300 words per page)
-            pages = max(1, len(words) // 300)
+            # Use actual PDF page count when available; otherwise estimate.
+            pages = page_count if page_count and page_count > 0 else max(1, len(words) // 300)
             
             # Get filename as potential title
             filename = Path(file_path).stem
@@ -686,7 +698,8 @@ class DocumentParser:
         self,
         text: str,
         file_path: str,
-        file_type: str
+        file_type: str,
+        page_count: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Extract metadata from parsed text
@@ -704,8 +717,8 @@ class DocumentParser:
             lines = text.split('\n')
             words = text.split()
             
-            # Estimate pages (avg 300 words per page)
-            pages = max(1, len(words) // 300)
+            # Use actual PDF page count when available; otherwise estimate.
+            pages = page_count if page_count and page_count > 0 else max(1, len(words) // 300)
             
             # Get filename as potential title
             filename = Path(file_path).stem

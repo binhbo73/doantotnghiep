@@ -89,6 +89,31 @@ class DocumentChunker:
             f"strategy={self.strategy_name}, chunk_size={self.chunk_size}, overlap={self.chunk_overlap}"
         )
     
+    def _estimate_token_count(self, text: str) -> int:
+        """
+        Estimate token count for text using heuristics.
+        
+        Since we can't access llama tokenizer directly, use conservative estimation:
+        - Base: word count
+        - Multiplier: 1.5x for Vietnamese/Asian languages and complex text
+        - Add buffer for punctuation and special chars
+        """
+        if not text:
+            return 0
+        
+        word_count = len(text.split())
+        
+        # Conservative estimation: tokens ≈ words * 1.5
+        # This accounts for subword tokenization in multilingual models like Qwen
+        estimated_tokens = int(word_count * 1.5)
+        
+        # Add buffer for punctuation, numbers, special characters
+        # Count non-alphanumeric characters as potential extra tokens
+        special_chars = len(re.findall(r'[^a-zA-Z0-9\s]', text))
+        estimated_tokens += min(special_chars, word_count // 2)  # Cap at 50% of word count
+        
+        return max(1, estimated_tokens)
+    
     # ============================================================================
     # TEXT CHUNKING
     # ============================================================================
@@ -152,7 +177,7 @@ class DocumentChunker:
                     'end_char': end_char,
                     'token_start': start_token,
                     'token_end': end_token,
-                    'token_count': end_token - start_token,
+                    'token_count': self._estimate_token_count(chunk_text),
                     'metadata': merged_metadata,
                     'sequence': seq,
                 })
@@ -213,7 +238,7 @@ class DocumentChunker:
                         document_id=document_id,
                         content=chunk_text,
                         chunk_index=idx,
-                        token_count=chunk_dict.get('token_count', len(chunk_text.split())),
+                        token_count=chunk_dict.get('token_count', self._estimate_token_count(chunk_text)),
                         page_number=1,
                         node_type='detail',
                         metadata={
@@ -296,23 +321,37 @@ class DocumentChunker:
 
     def _apply_chunk_profile(self, file_type: str) -> None:
         """Select a file-type-aware chunk profile, keeping a safe default for unknown inputs."""
-        normalized = (file_type or '').lower()
+        normalized = (file_type or '').lower().strip()
+        
+        # Handle both MIME types and file extensions
+        mime_to_ext = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'application/msword': 'doc',
+            'text/plain': 'txt',
+            'text/markdown': 'md',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.ms-excel': 'xls',
+        }
+        
+        # Convert MIME to extension if needed, or use as-is if already extension
+        if normalized in mime_to_ext:
+            ext = mime_to_ext[normalized]
+        elif normalized in mime_to_ext.values():
+            ext = normalized
+        else:
+            # Try to extract extension
+            ext = normalized.split('.')[-1] if '.' in normalized else normalized
 
-        if normalized in ('application/pdf',):
+        if ext == 'pdf':
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 200)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_PDF', 40)
             profile = 'pdf'
-        elif normalized in (
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/msword',
-            'text/markdown',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
-            'application/vnd.ms-excel',  # .xls
-        ):
+        elif ext in ('docx', 'doc', 'md', 'xlsx', 'xls'):
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_DOC', 240)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_DOC', 48)
             profile = 'doc'
-        elif normalized in ('text/plain',):
+        elif ext in ('txt', 'text'):
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_TEXT', 260)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_TEXT', 52)
             profile = 'text'
@@ -326,7 +365,7 @@ class DocumentChunker:
 
         self.strategy_name = f"hybrid_structural_{profile}_{self.chunk_size}_{self.chunk_overlap}"
         logger.info(
-            f"Chunk profile selected: file_type={normalized or 'unknown'}, strategy={self.strategy_name}"
+            f"Chunk profile selected: file_type={normalized} (ext={ext}), strategy={self.strategy_name}"
         )
     
     def _build_word_spans(self, text: str) -> List[tuple[int, int]]:
@@ -423,7 +462,7 @@ class DocumentChunker:
                     'end_char': end_char,
                     'token_start': start_char,
                     'token_end': end_char,
-                    'token_count': max(1, len(chunk_text.split())),
+                    'token_count': self._estimate_token_count(chunk_text),
                     'metadata': metadata,
                     'sequence': seq,
                 })

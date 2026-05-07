@@ -87,6 +87,14 @@ services:
       EMBEDDING_BASE_URL: http://llama-server:8080/v1
       EMBEDDING_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf # llama.cpp server có thể dùng chung 1 model cho cả chat và embed
       
+      # Embedding chunk configuration to fit llama.cpp token limits
+      CHUNK_TOKEN_SIZE_PDF: "100"
+      CHUNK_TOKEN_OVERLAP_PDF: "20"
+      CHUNK_TOKEN_SIZE_DOC: "100"
+      CHUNK_TOKEN_OVERLAP_DOC: "20"
+      CHUNK_TOKEN_SIZE_TEXT: "100"
+      CHUNK_TOKEN_OVERLAP_TEXT: "20"
+      
       # Email Configuration (Gmail SMTP)
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       SMTP_HOST: smtp.gmail.com
@@ -158,7 +166,9 @@ services:
       LLAMA_ARG_N_GPU_LAYERS: 35
       LLAMA_ARG_EMBEDDING: "true"
       LLAMA_ARG_POOLING: "mean"
-    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 8192 --embedding --pooling mean
+      LLAMA_ARG_BATCH: "1024"
+      LLAMA_ARG_UBATCH: "1024"
+    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 8192 --embedding --pooling mean --batch-size 1024 --ubatch-size 1024
     networks:
       - rag_network
 

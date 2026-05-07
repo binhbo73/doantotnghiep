@@ -17,6 +17,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    default-jre-headless \
     libreoffice-writer \
     libgl1 \
     libglib2.0-0 \
@@ -29,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /root/.local /root/.local
 
 # Set PATH để dùng packages từ /root/.local
-ENV PATH=/root/.local/bin:$PATH \
+ENV PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
@@ -47,4 +48,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Run Django with ASGI server for Channels support
-CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["uvicorn", "config.asgi:application", "--host", "0.0.0.0", "--port", "8000", "--ws", "websockets", "--log-level", "info"]

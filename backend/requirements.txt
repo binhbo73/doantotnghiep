@@ -20,7 +20,9 @@ psycopg2-binary>=2.9.9               # Kết nối PostgreSQL
 # SERVER
 # ============================================================
 gunicorn>=21.2.0                     # Production server (WSGI)
-uvicorn>=0.24.0                      # ASGI server for WebSocket support
+uvicorn[standard]>=0.24.0            # ASGI server + WebSocket runtime deps
+websockets>=12.0                     # Explicit WebSocket protocol implementation
+wsproto>=1.2.0                       # Alternative WebSocket protocol implementation
 python-dotenv>=1.0.0                 # Load biến môi trường từ .env
 channels>=4.0.0                      # Django Channels for WebSocket support
 channels-redis>=4.0.0                # Redis channel layer for Django Channels
@@ -36,6 +38,7 @@ openai>=1.0.0                        # Gọi llama.cpp qua API chuẩn OpenAI
 # DOCUMENT PROCESSING (RAG Pipeline)
 # ============================================================
 opendataloader-pdf>=2.0.0              # Trích xuất text từ PDF (quality cao hơn docling, #1 benchmarks)
+pypdf>=5.0.0                            # Read PDF page counts accurately
 flashrank>=0.2.0                     # Re-ranking kết quả RAG
 langgraph>=0.0.10                    # Workflow AI (RAG orchestration)
 python-docx>=0.8.11                  # Parse DOCX nhanh (5-10x so với docling)
