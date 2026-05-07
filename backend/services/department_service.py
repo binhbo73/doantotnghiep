@@ -28,12 +28,14 @@ from uuid import UUID
 
 from django.db import transaction, models
 from django.utils import timezone
+from django.db.models import Q
 
 from repositories.department_repository import DepartmentRepository
 from repositories.user_repository import UserRepository
 from services.audit_service import AuditService
 from services.base_service import BaseService
 from apps.users.models import Department
+from core.constants import RoleIds
 from core.exceptions import (
     ValidationError,
     BusinessLogicError,
@@ -70,6 +72,9 @@ class DepartmentService(BaseService):
         self.department_repo = self.repository
         self.user_repo = UserRepository()
         self.audit_service = AuditService()
+        # Profile repository to update user's department when assigned as manager
+        from repositories.user_profile_repository import UserProfileRepository
+        self.profile_repository = UserProfileRepository()
     
     # ============================================================================
     # TREE STRUCTURE
@@ -150,6 +155,71 @@ class DepartmentService(BaseService):
         except Exception as e:
             logger.error(f"Error building dept tree node for {dept.id}: {e}", exc_info=True)
             raise
+
+    def get_accessible_department_ids(self, user) -> set:
+        """Return department IDs the given user can view."""
+        if not user:
+            return set()
+
+        if user.is_superuser or user.has_role(RoleIds.ADMIN):
+            return set(
+                str(dept_id)
+                for dept_id in self.department_repo.get_base_queryset()
+                .filter(is_deleted=False)
+                .values_list('id', flat=True)
+            )
+
+        base_qs = self.department_repo.get_base_queryset().filter(is_deleted=False)
+
+        if user.has_role(RoleIds.MANAGER):
+            managed_ids = set(
+                str(dept_id)
+                for dept_id in base_qs.filter(
+                    Q(manager_id=user.id) | Q(managers__id=user.id)
+                ).values_list('id', flat=True).distinct()
+            )
+            if not managed_ids:
+                return set()
+
+            children_map: dict[str, list[str]] = {}
+            for dept_id, parent_id in base_qs.values_list('id', 'parent_id'):
+                if parent_id:
+                    children_map.setdefault(str(parent_id), []).append(str(dept_id))
+
+            visible_ids = set()
+            stack = list(managed_ids)
+            while stack:
+                current_id = stack.pop()
+                if current_id in visible_ids:
+                    continue
+                visible_ids.add(current_id)
+                stack.extend(children_map.get(current_id, []))
+
+            return visible_ids
+
+        try:
+            department_id = user.user_profile.department_id if hasattr(user, 'user_profile') else None
+            return {str(department_id)} if department_id else set()
+        except Exception:
+            return set()
+
+    def can_access_department(self, user, dept_id: str) -> bool:
+        return str(dept_id) in self.get_accessible_department_ids(user)
+
+    def can_edit_department(self, user, dept_id: str) -> bool:
+        if not user or not (user.is_superuser or user.has_role(RoleIds.ADMIN) or user.has_role(RoleIds.MANAGER)):
+            return False
+        return self.can_access_department(user, dept_id)
+
+    def get_accessible_departments_queryset(self, user, include_deleted: bool = False):
+        """Return departments visible to the given user."""
+        dept_ids = self.get_accessible_department_ids(user)
+        qs = self.department_repo.get_base_queryset()
+        if not include_deleted:
+            qs = qs.filter(is_deleted=False)
+        if not dept_ids:
+            return qs.none()
+        return qs.filter(id__in=dept_ids)
     
     # ============================================================================
     # CREATE
@@ -250,6 +320,15 @@ class DepartmentService(BaseService):
                 query_text=f"Created department: {name}",
                 details={'name': name, 'parent_id': parent_id, 'manager_id': manager_id}
             )
+            # Keep the legacy manager FK and the new M2M relation in sync.
+            if manager is not None:
+                try:
+                    dept.managers.add(manager)
+                    logger.info(f"Added manager to department.managers: {manager.id} -> {dept.id}")
+                    self.profile_repository.update_department(manager.id, dept.id)
+                    logger.info(f"Assigned manager's profile department updated: {manager.id} → {dept.id}")
+                except Exception as e:
+                    logger.warning(f"Failed to update manager's profile department for {manager.id}: {e}")
             
             return dept
         
@@ -326,6 +405,7 @@ class DepartmentService(BaseService):
                     updates['manager_id'] = None
             
             # ========== STEP 3: UPDATE ==========
+                    previous_manager_id = str(dept.manager_id) if dept.manager_id else None
             dept = self.department_repo.update(dept_id, **updates)
             
             logger.info(f"Department updated: {dept_id} with updates: {updates}")
@@ -339,6 +419,29 @@ class DepartmentService(BaseService):
                 query_text=f"Updated department: {dept.name}",
                 details={'updates': updates}
             )
+
+            # If manager changed to a specific user, update their profile.department
+            if 'manager_id' in updates:
+                try:
+                    new_manager_id = updates.get('manager_id')
+                    if previous_manager_id:
+                        try:
+                            dept.managers.remove(previous_manager_id)
+                        except Exception:
+                            logger.debug("Could not remove prior manager from dept.managers")
+
+                    if new_manager_id:
+                        try:
+                            new_manager = self.user_repo.get_by_id(new_manager_id)
+                            if new_manager:
+                                dept.managers.add(new_manager)
+                        except Exception:
+                            logger.debug("Could not add to dept.managers during update (maybe migrations not applied yet)")
+
+                        self.profile_repository.update_department(new_manager_id, dept.id)
+                        logger.info(f"Updated manager's profile department: {new_manager_id} → {dept.id}")
+                except Exception as e:
+                    logger.warning(f"Failed to update manager's profile department for {updates.get('manager_id')}: {e}")
             
             return dept
         

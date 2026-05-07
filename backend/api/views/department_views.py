@@ -103,8 +103,10 @@ class DepartmentListTreeView(APIView):
     def get(self, request):
         """GET: Get all departments with pagination"""
         try:
-            # Get all non-deleted departments from ORM (not tree structure for pagination)
-            departments = Department.objects.filter(is_deleted=False).order_by('name')
+            service = DepartmentService()
+
+            # Restrict the list to departments the current user is allowed to see.
+            departments = service.get_accessible_departments_queryset(request.user).order_by('name')
             
             # Apply pagination
             paginator = self.pagination_class()
@@ -242,7 +244,7 @@ class DepartmentDetailView(APIView):
     - 409: Cannot delete - has users assigned
     """
     
-    permission_classes = [IsAuthenticatedUser, IsAdmin]
+    permission_classes = [IsAuthenticatedUser]
     
     def get(self, request, dept_id):
         """
@@ -272,6 +274,11 @@ class DepartmentDetailView(APIView):
         """
         try:
             service = DepartmentService()
+            if not service.can_access_department(request.user, dept_id):
+                return Response(
+                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
             dept = service.get_department_detail_with_counts(dept_id)
             
             # Serialize with counts
@@ -310,6 +317,13 @@ class DepartmentDetailView(APIView):
     def put(self, request, dept_id):
         """PUT: Update department"""
         try:
+            service = DepartmentService()
+            if not service.can_edit_department(request.user, dept_id):
+                return Response(
+                    ResponseBuilder.error("You don't have permission to update this department", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             # Validate input
             serializer = DepartmentCreateUpdateSerializer(data=request.data)
             
@@ -324,7 +338,6 @@ class DepartmentDetailView(APIView):
                 )
             
             # Call service
-            service = DepartmentService()
             dept = service.update_department(
                 dept_id=dept_id,
                 name=serializer.validated_data.get('name'),
@@ -374,6 +387,12 @@ class DepartmentDetailView(APIView):
     def delete(self, request, dept_id):
         """DELETE: Soft delete department"""
         try:
+            if not (request.user and (request.user.is_superuser or request.user.has_role(RoleIds.ADMIN))):
+                return Response(
+                    ResponseBuilder.error("Admin access required", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             # Get department (for response)
             service = DepartmentService()
             dept = service.get_department(dept_id)
@@ -475,6 +494,13 @@ class DepartmentDetailExpandView(APIView):
     def get(self, request, dept_id):
         """GET: Get department detail with expanded data"""
         try:
+            service = DepartmentService()
+            if not service.can_access_department(request.user, dept_id):
+                return Response(
+                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             # Parse query parameters
             expand_str = request.query_params.get('expand', '')
             page = int(request.query_params.get('page', 1))
@@ -487,7 +513,6 @@ class DepartmentDetailExpandView(APIView):
             valid_fields = {'users', 'folders', 'documents'}
             expand_fields = [f for f in expand_fields if f in valid_fields]
             
-            service = DepartmentService()
             data = service.get_department_with_expanded_data(
                 dept_id=dept_id,
                 expand_fields=expand_fields,
@@ -575,11 +600,17 @@ class DepartmentUsersView(APIView):
     def get(self, request, dept_id):
         """GET: Get users in department with pagination"""
         try:
+            service = DepartmentService()
+            if not service.can_access_department(request.user, dept_id):
+                return Response(
+                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
             page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
-            
-            service = DepartmentService()
+
             data = service._get_department_users_paginated(
                 dept_id=dept_id,
                 page=page,
@@ -661,11 +692,17 @@ class DepartmentFoldersView(APIView):
     def get(self, request, dept_id):
         """GET: Get folders in department with pagination"""
         try:
+            service = DepartmentService()
+            if not service.can_access_department(request.user, dept_id):
+                return Response(
+                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
             page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
-            
-            service = DepartmentService()
+
             data = service._get_department_folders_paginated(
                 dept_id=dept_id,
                 page=page,
@@ -750,11 +787,17 @@ class DepartmentDocumentsView(APIView):
     def get(self, request, dept_id):
         """GET: Get documents in department with pagination"""
         try:
+            service = DepartmentService()
+            if not service.can_access_department(request.user, dept_id):
+                return Response(
+                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
             page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
-            
-            service = DepartmentService()
+
             data = service._get_department_documents_paginated(
                 dept_id=dept_id,
                 page=page,

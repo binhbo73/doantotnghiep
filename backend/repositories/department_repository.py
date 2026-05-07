@@ -23,7 +23,7 @@ class DepartmentRepository(BaseRepository):
     
     model_class = Department
     default_select_related = ['parent', 'manager']
-    default_prefetch_related = []
+    default_prefetch_related = ['managers']
     
     def get_by_code(self, code: str) -> Optional[Department]:
         """
@@ -100,7 +100,11 @@ class DepartmentRepository(BaseRepository):
             List of managed departments
         """
         try:
-            return list(self.get_base_queryset().filter(manager_id=manager_id))
+            # Include departments where manager FK matches OR user is in managers M2M
+            qs = self.get_base_queryset().filter(
+                Q(manager_id=manager_id) | Q(managers__id=manager_id)
+            ).distinct()
+            return list(qs)
         except Exception as e:
             logger.error(f"Error listing departments by manager: {e}")
             return []

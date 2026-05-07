@@ -134,6 +134,13 @@ class Department(BaseModel):
         related_name='managed_departments',
         help_text="Department manager"
     )
+    # Many-to-many for multiple managers (new, optional)
+    managers = models.ManyToManyField(
+        Account,
+        related_name='managed_departments_m2m',
+        blank=True,
+        help_text="Additional department managers (supports multiple managers)"
+    )
     description = models.TextField(max_length=500, null=True, blank=True)
     
     class Meta:

@@ -30,6 +30,7 @@ class DepartmentTreeSerializer(serializers.ModelSerializer):
     """
     
     manager_name = serializers.SerializerMethodField()
+    manager_ids = serializers.SerializerMethodField()
     member_count = serializers.SerializerMethodField()
     sub_departments = serializers.SerializerMethodField()
     parent_id = serializers.CharField(source='parent.id', allow_null=True, required=False)
@@ -38,6 +39,7 @@ class DepartmentTreeSerializer(serializers.ModelSerializer):
         model = Department
         fields = [
             'id', 'name', 'description', 'parent_id', 'manager_id',
+            'manager_ids',
             'manager_name', 'member_count', 'created_at', 'updated_at',
             'sub_departments'
         ]
@@ -56,6 +58,18 @@ class DepartmentTreeSerializer(serializers.ModelSerializer):
         sub_depts = obj.sub_departments.filter(is_deleted=False)
         return DepartmentTreeSerializer(sub_depts, many=True).data
 
+    def get_manager_ids(self, obj):
+        try:
+            ids = []
+            if obj.manager_id:
+                ids.append(str(obj.manager_id))
+            # include M2M managers
+            ids.extend([str(m.id) for m in obj.managers.all()])
+            # dedupe
+            return list(dict.fromkeys(ids))
+        except Exception:
+            return []
+
 
 class DepartmentDetailSerializer(serializers.ModelSerializer):
     """
@@ -73,6 +87,7 @@ class DepartmentDetailSerializer(serializers.ModelSerializer):
     """
     
     manager = serializers.SerializerMethodField()
+    manager_ids = serializers.SerializerMethodField()
     parent = serializers.SerializerMethodField()
     member_count = serializers.SerializerMethodField()
     sub_department_count = serializers.SerializerMethodField()
@@ -81,7 +96,7 @@ class DepartmentDetailSerializer(serializers.ModelSerializer):
         model = Department
         fields = [
             'id', 'name', 'description', 'parent', 'parent_id',
-            'manager', 'manager_id', 'member_count',
+            'manager', 'manager_id', 'manager_ids', 'member_count',
             'sub_department_count', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -96,6 +111,16 @@ class DepartmentDetailSerializer(serializers.ModelSerializer):
             'email': obj.manager.email,
             'full_name': obj.manager.get_full_name()
         }
+
+    def get_manager_ids(self, obj):
+        try:
+            ids = []
+            if obj.manager_id:
+                ids.append(str(obj.manager_id))
+            ids.extend([str(m.id) for m in obj.managers.all()])
+            return list(dict.fromkeys(ids))
+        except Exception:
+            return []
     
     def get_parent(self, obj):
         """Return parent department info"""
@@ -226,6 +251,7 @@ class DepartmentListSerializer(serializers.ModelSerializer):
         allow_null=True,
         read_only=True
     )
+    manager_ids = serializers.SerializerMethodField()
     
     parent_name = serializers.CharField(
         source='parent.name',
@@ -237,7 +263,7 @@ class DepartmentListSerializer(serializers.ModelSerializer):
         model = Department
         fields = [
             'id', 'name', 'parent_id', 'parent_name',
-            'manager_id', 'manager_name', 'created_at'
+            'manager_id', 'manager_name', 'manager_ids', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
 

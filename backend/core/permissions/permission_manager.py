@@ -302,7 +302,7 @@ class PermissionManager:
                 user_department = None
             
             # Department check: can access own or sub-departments
-            if not self._check_department_hierarchy(user_department, folder.department):
+            if not self._check_department_hierarchy(user, user_department, folder.department):
                 logger.info(
                     f"Account {account_id} (dept {getattr(user_department, 'id', None)}) cannot access "
                     f"folder {folder_id} (dept {folder.department_id})"
@@ -415,6 +415,7 @@ class PermissionManager:
                     return True
 
                 if document.access_scope == 'department' and self._check_department_hierarchy(
+                    user,
                     user_department,
                     document.department,
                 ):
@@ -560,7 +561,8 @@ class PermissionManager:
         return best_permission
     
     def _check_department_hierarchy(
-        self, 
+        self,
+        user: Optional['Account'],
         user_dept: Optional['Department'], 
         target_dept: Optional['Department']
     ) -> bool:
@@ -585,7 +587,27 @@ class PermissionManager:
             # No department restriction - company-wide access
             logger.debug("No department restriction on target, allowing access")
             return True
-        
+
+        # Managers can access their managed department(s) and all descendants.
+        # Regular users can only access their exact own department.
+        try:
+            if user is not None and user.has_role(RoleIds.MANAGER):
+                from django.apps import apps as _apps
+                Department = _apps.get_model('users', 'Department')
+                parent_chain = self._get_department_parent_chain(target_dept)
+                # Check if any department in the target chain is managed by this user
+                from django.db.models import Q as _Q
+                if Department.objects.filter(
+                    _Q(id__in=parent_chain),
+                    _Q(is_deleted=False),
+                ).filter(
+                    _Q(manager_id=user.id) | _Q(managers__id=user.id)
+                ).exists():
+                    logger.debug(f"User {getattr(user, 'id', None)} is manager for target chain, allowing access")
+                    return True
+        except Exception as e:
+            logger.debug(f"Manager check failed: {e}")
+
         if not user_dept:
             # User has no department - cannot access department-scoped content
             logger.debug("User has no department, denying access to department-scoped content")
@@ -597,26 +619,11 @@ class PermissionManager:
             logger.debug(f"User and target in same department: {user_dept.id}")
             return True
         
-        # Check if target is sub-department of user's dept (user can see own + children)
-        try:
-            parent_chain = self._get_department_parent_chain(target_dept)
-            parent_chain_strs = [str(p_id) for p_id in parent_chain]
-            
-            if str(user_dept.id) in parent_chain_strs:
-                logger.debug(
-                    f"Target department {target_dept.id} is sub-department of user's {user_dept.id}"
-                )
-                return True
-            
-            logger.debug(
-                f"User dept {user_dept.id} not in target's parent chain {parent_chain_strs}, denying access"
-            )
-            return False
-            
-        except Exception as e:
-            logger.error(f"Error checking department hierarchy: {str(e)}", exc_info=True)
-            # Fail secure - deny access if error
-            return False
+        # Regular users only see their exact own department.
+        logger.debug(
+            f"User dept {user_dept.id} does not match target {target_dept.id}, denying access"
+        )
+        return False
     
     def _get_department_parent_chain(self, dept: 'Department') -> List:
         """

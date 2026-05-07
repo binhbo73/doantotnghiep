@@ -43,9 +43,9 @@ export function useDepartments(initialParams?: DepartmentQueryParams) {
     useEffect(() => {
         if (!hasLoadedRef.current) {
             hasLoadedRef.current = true
-            loadDepartments()
+            loadDepartments(initialParams)
         }
-    }, [loadDepartments]) // loadDepartments won't change because no dependencies
+    }, [loadDepartments, initialParams]) // loadDepartments won't change because no dependencies
 
     const addDepartment = useCallback(async (data: {
         name: string

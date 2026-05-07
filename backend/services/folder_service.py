@@ -224,7 +224,15 @@ class FolderService(BaseService):
     ) -> bool:
         """
         Check if user has specific permission on a folder.
-        Checks: Admin status, Ownership, and FolderPermission table.
+        Checks: Admin status, Ownership, Department Manager status, and FolderPermission table.
+        
+        Permission hierarchy:
+        1. Admin → All permissions
+        2. Creator → All permissions
+        3. Department Manager of folder's dept → Write + Read on dept-scoped folders
+        4. Same Department → Read on dept-scoped folders
+        5. Company-wide access → Read on company-scoped folders
+        6. Explicit FolderPermission → As specified
         """
         try:
             folder = self.repository.get_by_id(folder_id)
@@ -254,11 +262,30 @@ class FolderService(BaseService):
             if not self._is_folder_accessible(folder, user_id, user_department_id):
                 return False
             
-            # 4. Check specific FolderPermission table (Account or Role)
-            # Permission levels: delete > write > read
+            # 4. Check if user is manager of the folder's department
             perm_levels = {'read': 1, 'write': 2, 'delete': 3}
             req_level = perm_levels.get(permission, 1)
             
+            if folder.access_scope == 'department' and folder.department_id:
+                # Check if user is a manager of this department
+                try:
+                    Department = self.UserProfile.department.field.related_model
+                    dept = Department.objects.get(id=folder.department_id)
+                    
+                    # Check if user is the main manager or in managers M2M
+                    is_manager = (
+                        str(dept.manager_id) == str(user_id) or
+                        dept.managers.filter(id=user_id).exists()
+                    )
+                    
+                    if is_manager:
+                        # Department managers get 'write' permission on their dept's folders
+                        if req_level <= perm_levels['write']:
+                            return True
+                except Exception as e:
+                    logger.debug(f"Could not check department manager status: {e}")
+            
+            # 5. Check specific FolderPermission table (Account or Role)
             FolderPermission = apps.get_model('documents', 'FolderPermission')
             
             # Get user's roles
@@ -278,13 +305,13 @@ class FolderService(BaseService):
                 if perm_levels.get(p.permission, 0) >= req_level:
                     return True
             
-            # Default: If scope is company/department, user has 'read' but maybe not 'write'
+            # 6. Default: If scope is company/department, user has 'read'
             if permission == 'read':
                 return True
                 
             return False
         except Exception as e:
-            logger.error(f"Error checking folder permission: {e}")
+            logger.error(f"Error checking folder permission: {e}", exc_info=True)
             return False
     
     # ============================================================

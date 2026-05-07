@@ -54,6 +54,7 @@ export const DepartmentSchema = z.object({
         name: z.string(),
     }).nullable().optional(),
     manager_id: UUIDSchema.nullable(),
+    manager_ids: z.array(UUIDSchema).default([]),
     manager: z.object({
         id: UUIDSchema,
         username: z.string(),

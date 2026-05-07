@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useRBAC } from '@/hooks/useRBAC'
 import { useAuthContext } from '@/context'
 import { Department } from '@/types/api'
+import { canEditDepartment } from '@/lib/departmentAccess'
 
 interface DepartmentListProps {
     departments: Department[]
@@ -39,6 +40,14 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
         }
         router.push(`/dashboard/departments/${deptId}`)
     }
+
+    const canEditDept = (dept: Department) => canEditDepartment({
+        user,
+        targetDeptId: dept.id,
+        departments,
+        isAdmin: isAdmin(),
+        isTruongPhong: isTruongPhong(),
+    })
 
     const getColorClass = (idx: number) => {
         const colors = [
@@ -164,7 +173,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
                                                 >
                                                     <span className="material-symbols-outlined text-base">open_in_new</span>
                                                 </button>
-                                                {(isAdmin() || (isTruongPhong() && dept.id === user?.department_id)) && (
+                                                {onEdit && canEditDept(dept) && (
                                                     <button
                                                         onClick={() => onEdit?.(dept)}
                                                         className="p-1.5 text-slate-400 hover:text-blue-600 bg-white hover:bg-blue-50 rounded shadow-sm border border-transparent transition-all"

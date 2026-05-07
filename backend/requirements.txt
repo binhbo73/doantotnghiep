@@ -35,7 +35,7 @@ openai>=1.0.0                        # Gọi llama.cpp qua API chuẩn OpenAI
 # ============================================================
 # DOCUMENT PROCESSING (RAG Pipeline)
 # ============================================================
-docling>=1.0.0                       # Trích xuất text từ PDF (quality cao)
+opendataloader-pdf>=2.0.0              # Trích xuất text từ PDF (quality cao hơn docling, #1 benchmarks)
 flashrank>=0.2.0                     # Re-ranking kết quả RAG
 langgraph>=0.0.10                    # Workflow AI (RAG orchestration)
 python-docx>=0.8.11                  # Parse DOCX nhanh (5-10x so với docling)

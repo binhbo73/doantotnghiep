@@ -46,10 +46,10 @@ export const dashboardNavigation: NavItem[] = [
     },
     {
         id: 'departments',
-        label: 'Quản lý Phòng ban',
+        label: 'Phòng ban',
         icon: '🏢',
         href: '/dashboard/departments',
-        roles: ['ADMIN', 'MANAGER'],
+        roles: ['ADMIN', 'MANAGER', 'TRUONG_PHONG', 'USER', 'NHAN_VIEN', 'EMPLOYEE'],
     },
     {
         id: 'roles',

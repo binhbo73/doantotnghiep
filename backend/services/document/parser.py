@@ -269,39 +269,62 @@ class DocumentParser:
     
     def parse_pdf(self, file_path: str) -> str:
         """
-        Parse PDF file and extract text (via docling - QUALITY)
+        Parse PDF file and extract text (via opendataloader-pdf - #1 benchmarks)
         
-        Uses docling library for robust PDF parsing
+        Uses opendataloader-pdf library for superior PDF parsing (better than docling)
+        - #1 overall accuracy (0.907 vs docling 0.882)
+        - Better table extraction (0.928 TEDS vs docling 0.887)
+        - Bounding boxes for citations
+        - Hybrid AI mode for complex pages
         
         Args:
             file_path: Path to PDF file
         
         Returns:
-            Extracted text
+            Extracted text (Markdown format for RAG)
         
         Raises:
             DocumentProcessingError: If parsing fails
         """
+        import tempfile
+        import shutil
+        
         try:
-            from docling.document_converter import DocumentConverter
+            import opendataloader_pdf
             
-            logger.debug(f"Parsing PDF (docling): {os.path.basename(file_path)}")
+            logger.debug(f"Parsing PDF (opendataloader-pdf): {os.path.basename(file_path)}")
             
-            # Convert PDF to document
-            converter = DocumentConverter()
-            result = converter.convert(file_path)
-            
-            # Extract text
-            text = result.document.export_to_markdown()
-            
-            logger.debug(f"PDF parsing completed: {len(text)} chars")
-            return text
+            # Create temp directory for output
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Convert PDF using opendataloader-pdf
+                # Use markdown-with-images + embedded images so extracted image data is preserved
+                opendataloader_pdf.convert(
+                    input_path=[file_path],
+                    output_dir=temp_dir,
+                    format="markdown-with-images",
+                    image_output="embedded",
+                    image_format="png"
+                )
+                
+                # Find the output markdown file
+                # opendataloader-pdf names output as {original_name}.md
+                base_name = os.path.splitext(os.path.basename(file_path))[0]
+                md_file = os.path.join(temp_dir, f"{base_name}.md")
+                
+                if not os.path.exists(md_file):
+                    raise DocumentProcessingError(f"Output markdown file not found: {md_file}")
+                
+                # Read the extracted text
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    text = f.read()
+                
+                logger.debug(f"PDF parsing completed: {len(text)} chars")
+                return text
         
         except ImportError as e:
-            # docling may be installed but fail to import optional/native deps (e.g. libGL for cv2)
             raise DocumentProcessingError(
-                f"PDF parser dependency missing: {str(e)}. "
-                "Install Python deps (docling) and required system libs in Docker image."
+                f"opendataloader-pdf dependency missing: {str(e)}. "
+                "Install with: pip install opendataloader-pdf"
             )
         except Exception as e:
             logger.error(f"PDF parsing error: {str(e)}", exc_info=True)

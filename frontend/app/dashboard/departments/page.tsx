@@ -2,12 +2,13 @@
 
 /**
  * Departments Management Page
- * RBAC: Admin + Manager can access. Regular users see access denied.
- * - Admin: Full CRUD (create, edit, delete departments)
- * - Manager: View-only (can see department tree and details)
+ * RBAC: 
+ * - Admin: Full CRUD (create, edit, delete departments) with access to all departments
+ * - Manager (Trưởng phòng): View-only access, can see department tree and their own department details
+ * - Regular users: Can see the tree view of their own department only
  */
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
     DepartmentHeader,
     DepartmentTree,
@@ -21,11 +22,15 @@ import { useRBAC } from '@/hooks/useRBAC'
 import { useAuthContext } from '@/context'
 import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 import { useRouter } from 'next/navigation'
+import { canEditDepartment, filterVisibleDepartments } from '@/lib/departmentAccess'
+import type { Department } from '@/types/api'
 
-export default function DepartmentsPage() {
-    const { isAdmin, isTruongPhong } = useRBAC()
+function DepartmentManagementContent() {
+    const { isAdmin, isTruongPhong, isNhanVien } = useRBAC()
     const { user } = useAuthContext()
-    const router = useRouter()
+    const isAdminUser = isAdmin()
+    const isManagerUser = isTruongPhong()
+    const isRegularUser = isNhanVien() && !isManagerUser && !isAdminUser
 
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
@@ -38,46 +43,53 @@ export default function DepartmentsPage() {
         isLoading,
         addDepartment,
         updateDepartment,
-        refetch,
-    } = useDepartments()
+    } = useDepartments({ page_size: 100 })
 
-    // RBAC Guard - Only admin and manager can access
-    if (!isAdmin() && !isTruongPhong()) {
-        return (
-            <AccessDeniedPage
-                title="Truy cập bị hạn chế"
-                message="Bạn cần quyền Quản trị viên hoặc Trưởng phòng để truy cập trang Quản lý Phòng ban."
-                icon="🏢"
-                showBackButton={true}
-                onGoBack={() => router.push('/dashboard')}
-            />
-        )
-    }
+    // Determine if user can edit/create/delete departments
+    const canCreateOrDelete = isAdminUser
 
-    // Determine if user can edit (only admin can add/edit/delete departments)
-    const canEdit = isAdmin()
+    const displayedDepartments: Department[] = filterVisibleDepartments({
+        user,
+        departments,
+        isAdmin: isAdminUser,
+        isTruongPhong: isManagerUser,
+    })
 
     // Auto-select department when data loads
-    React.useEffect(() => {
-        if (!Array.isArray(departments) || departments.length === 0 || selectedDepartmentId) return
+    useEffect(() => {
+        if (!Array.isArray(displayedDepartments) || displayedDepartments.length === 0 || selectedDepartmentId) return
 
-        // Managers auto-select their own department only
-        if (isTruongPhong()) {
-            const myDept = departments.find((d) => d.id === user?.department_id)
-            if (myDept) {
-                setSelectedDepartmentId(myDept.id)
-            } else {
-                // If manager isn't mapped to any department in list, don't auto-select a different one
-                setSelectedDepartmentId(null)
-            }
+        if (isManagerUser) {
+            const myManaged = displayedDepartments.find((d) => canEditDepartment({
+                user,
+                targetDeptId: d.id,
+                departments: displayedDepartments,
+                isAdmin: isAdminUser,
+                isTruongPhong: isManagerUser,
+            }))
+            setSelectedDepartmentId(myManaged?.id ?? null)
             return
         }
 
-        // Admins and others: default to first
-        setSelectedDepartmentId(departments[0].id)
-    }, [departments, selectedDepartmentId, isTruongPhong, user])
+        setSelectedDepartmentId(displayedDepartments[0].id)
+    }, [displayedDepartments, selectedDepartmentId, isAdminUser, isManagerUser, user])
 
-    const selectedDepartment = (Array.isArray(departments) ? departments : []).find((d) => d.id === selectedDepartmentId) ?? null
+    const selectedDepartment: Department | null = (Array.isArray(displayedDepartments) ? displayedDepartments : []).find((d) => d.id === selectedDepartmentId) ?? null
+    const canEditSelectedDepartment: boolean = selectedDepartment ? canEditDepartment({
+        user,
+        targetDeptId: selectedDepartment.id,
+        departments: displayedDepartments,
+        isAdmin: isAdminUser,
+        isTruongPhong: isManagerUser,
+    }) : false
+
+    const handleSelectDepartment = (deptId: string) => {
+        // Regular users can only select their own department
+        if (isRegularUser && deptId !== user?.department_id) {
+            return
+        }
+        setSelectedDepartmentId(deptId)
+    }
 
     const handleAddDepartment = async (data: {
         name: string
@@ -143,9 +155,7 @@ export default function DepartmentsPage() {
 
     return (
         <div className="min-h-screen bg-[#f8f9ff]">
-            {/* Main Content Area */}
             <main className="p-6 max-w-7xl mx-auto">
-                {/* Header Section */}
                 <DepartmentHeader
                     title="Quản lý Phòng ban"
                     subtitle="Kiến trúc hóa sơ đồ tổ chức và quản trị luồng tri thức giữa các đơn vị nghiệp vụ."
@@ -153,8 +163,7 @@ export default function DepartmentsPage() {
                     onViewModeChange={setViewMode}
                 />
 
-                {/* Manager notice badge */}
-                {!canEdit && (
+                {!canCreateOrDelete && (
                     <div
                         className="mb-4 px-4 py-2 rounded-lg text-sm flex items-center gap-2"
                         style={{
@@ -164,25 +173,31 @@ export default function DepartmentsPage() {
                         }}
                     >
                         <span>ℹ️</span>
-                        <span>Bạn đang xem với quyền <strong>Trưởng phòng</strong> — chỉ có thể xem, không thể chỉnh sửa cấu trúc phòng ban.</span>
+                        <span>
+                            {isRegularUser
+                                ? 'Bạn đang xem phòng ban của mình — chỉ có thể xem chi tiết cho phòng ban này.'
+                                : 'Bạn đang xem với quyền Trưởng phòng — chỉ có thể xem và chỉnh sửa trong phạm vi cây phòng ban được giao.'}
+                        </span>
                     </div>
                 )}
 
                 {viewMode === 'tree' ? (
                     <div className="grid grid-cols-12 gap-6 relative">
-                        {/* Org Tree Section */}
                         <DepartmentTree
-                            departments={departments}
+                            departments={displayedDepartments}
                             selectedId={selectedDepartmentId}
-                            onSelect={setSelectedDepartmentId}
+                            onSelect={handleSelectDepartment}
+                            onEdit={(deptId) => {
+                                setSelectedDepartmentId(deptId)
+                                setIsEditDialogOpen(true)
+                            }}
                         />
 
-                        {/* Right Sidebar Details */}
                         <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
-                            {isAdmin() || (isTruongPhong() && selectedDepartment?.id === user?.department_id) ? (
+                            {selectedDepartment ? (
                                 <DepartmentSidebar
                                     department={selectedDepartment}
-                                    onEdit={canEdit ? () => setIsEditDialogOpen(true) : undefined}
+                                    onEdit={canEditSelectedDepartment ? () => setIsEditDialogOpen(true) : undefined}
                                 />
                             ) : (
                                 <div className="rounded-xl border border-slate-100 bg-white p-6">
@@ -195,22 +210,18 @@ export default function DepartmentsPage() {
                         </div>
                     </div>
                 ) : (
-                    <>
-                        {/* List View */}
-                        <DepartmentList
-                            departments={departments}
-                            onAdd={canEdit ? () => setIsDialogOpen(true) : undefined}
-                            onEdit={canEdit ? (dept) => {
-                                setSelectedDepartmentId(dept.id)
-                                setIsEditDialogOpen(true)
-                            } : undefined}
-                            onExport={handleExport}
-                        />
-                    </>
+                    <DepartmentList
+                        departments={displayedDepartments}
+                        onAdd={canCreateOrDelete ? () => setIsDialogOpen(true) : undefined}
+                        onEdit={(dept) => {
+                            setSelectedDepartmentId(dept.id)
+                            setIsEditDialogOpen(true)
+                        }}
+                        onExport={handleExport}
+                    />
                 )}
 
-                {/* Add Department Dialog - Admin only */}
-                {canEdit && (
+                {canCreateOrDelete && (
                     <AddDepartmentDialog
                         isOpen={isDialogOpen}
                         onClose={() => setIsDialogOpen(false)}
@@ -220,8 +231,7 @@ export default function DepartmentsPage() {
                     />
                 )}
 
-                {/* Edit Department Dialog - Admin only */}
-                {canEdit && (
+                {canCreateOrDelete && (
                     <EditDepartmentDialog
                         isOpen={isEditDialogOpen}
                         onClose={() => setIsEditDialogOpen(false)}
@@ -232,8 +242,7 @@ export default function DepartmentsPage() {
                 )}
             </main>
 
-            {/* Floating Action Button - Admin only */}
-            {canEdit && (
+            {canCreateOrDelete && (
                 <button
                     onClick={() => setIsDialogOpen(true)}
                     className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
@@ -244,4 +253,36 @@ export default function DepartmentsPage() {
             )}
         </div>
     )
+}
+
+export default function DepartmentsPage() {
+    const { isAdmin, isTruongPhong } = useRBAC()
+    const { user, isLoading } = useAuthContext()
+    const router = useRouter()
+    const isAdminUser = isAdmin()
+    const isManagerUser = isTruongPhong()
+
+    if (isLoading) {
+        return (
+            <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center">
+                <div className="rounded-2xl bg-white p-8 shadow-sm border border-slate-200 text-center">
+                    <p className="text-sm text-slate-600">Đang xác thực quyền truy cập...</p>
+                </div>
+            </div>
+        )
+    }
+
+    if (!isAdminUser && !isManagerUser && !user?.department_id) {
+        return (
+            <AccessDeniedPage
+                title="Truy cập bị hạn chế"
+                message="Bạn cần được gán cho một phòng ban để truy cập trang này."
+                icon="🏢"
+                showBackButton={true}
+                onGoBack={() => router.push('/dashboard')}
+            />
+        )
+    }
+
+    return <DepartmentManagementContent />
 }

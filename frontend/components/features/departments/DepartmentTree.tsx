@@ -4,11 +4,13 @@ import React, { useMemo } from 'react'
 import { useRBAC } from '@/hooks/useRBAC'
 import { useAuthContext } from '@/context'
 import { Department } from '@/types/api'
+import { canEditDepartment } from '@/lib/departmentAccess'
 
 interface DepartmentTreeProps {
     departments: Department[]
     selectedId?: string | null
     onSelect?: (id: string) => void
+    onEdit?: (id: string) => void
 }
 
 const getIconForName = (name: string) => {
@@ -21,7 +23,7 @@ const getIconForName = (name: string) => {
     return { icon: 'business', color: 'text-slate-600', bg: 'bg-slate-100' }
 }
 
-export function DepartmentTree({ departments, selectedId, onSelect }: DepartmentTreeProps) {
+export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: DepartmentTreeProps) {
     const { isAdmin, isTruongPhong } = useRBAC()
     const { user } = useAuthContext()
 
@@ -41,6 +43,14 @@ export function DepartmentTree({ departments, selectedId, onSelect }: Department
         // Chỉ cập nhật state để hiện thông tin ở sidebar
         onSelect?.(id)
     }
+
+    const canEditNode = (node: Department) => canEditDepartment({
+        user,
+        targetDeptId: node.id,
+        departments: visibleDepartments,
+        isAdmin: isAdmin(),
+        isTruongPhong: isTruongPhong(),
+    })
 
     const renderNode = (node: Department, depth: number = 0) => {
         const children = getChildren(node.id)
@@ -84,20 +94,29 @@ export function DepartmentTree({ departments, selectedId, onSelect }: Department
                                 </div>
                             </div>
 
-                            {isRoot ? (
-                                <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                                    {(isAdmin() || (isTruongPhong() && node.id === user?.department_id)) && (
-                                        <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-[#9d4300] transition-colors"><span className="material-symbols-outlined text-sm">edit</span></button>
-                                    )}
-                                    {isAdmin() ? (
-                                        <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-500 transition-colors"><span className="material-symbols-outlined text-sm">delete</span></button>
-                                    ) : null}
-                                </div>
-                            ) : (
-                                <span className={`material-symbols-outlined text-lg ${isSelected ? 'text-[#9d4300]' : 'text-slate-300'}`}>
-                                    {isSelected ? 'radio_button_checked' : 'chevron_right'}
-                                </span>
-                            )}
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                {canEditNode(node) && onEdit && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            onEdit(node.id)
+                                        }}
+                                        className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-[#9d4300] transition-colors"
+                                        title="Chỉnh sửa phòng ban"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">edit</span>
+                                    </button>
+                                )}
+                                {isAdmin() && isRoot && (
+                                    <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-500 transition-colors"><span className="material-symbols-outlined text-sm">delete</span></button>
+                                )}
+                                {!isRoot && (
+                                    <span className={`material-symbols-outlined text-lg ${isSelected ? 'text-[#9d4300]' : 'text-slate-300'}`}>
+                                        {isSelected ? 'radio_button_checked' : 'chevron_right'}
+                                    </span>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
