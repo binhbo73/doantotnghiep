@@ -2,18 +2,37 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Paperclip, X, FolderOpen, Search, Check } from 'lucide-react'
-import { fetchAllDocuments, fetchAllFolders, FolderDocumentResponse, FolderResponse } from '@/services/folder'
+import { fetchAvailableAttachments } from '@/services/chatAttachments'
+import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { ConversationAttachmentPayload } from '@/services/chatService'
 
-interface Attachment {
+export interface ChatUploadAttachment {
     id: string
     name: string
     size: number
     type: string
 }
 
+export interface ChatSelectedResourceItem {
+    id: string
+    name: string
+    detail?: string
+}
+
+export interface ChatAttachmentState {
+    uploads: ChatUploadAttachment[]
+    selectedDocuments: ChatSelectedResourceItem[]
+    selectedFolders: ChatSelectedResourceItem[]
+    totalSelected: number
+    removeUpload?: (id: string) => void
+    removeDocument?: (id: string) => void
+    removeFolder?: (id: string) => void
+    clearAll?: () => void
+}
+
 interface ChatInputProps {
     onSendMessage?: (message: string, attachments?: ConversationAttachmentPayload) => void
+    onAttachmentStateChange?: (state: ChatAttachmentState) => void
     placeholder?: string
     isLoading?: boolean
     disabled?: boolean
@@ -21,13 +40,13 @@ interface ChatInputProps {
 
 export const ChatInput: React.FC<ChatInputProps> = ({
     onSendMessage,
+    onAttachmentStateChange,
     placeholder = 'Hỏi tôi bất cứ điều gì về tài liệu và tri thức nội bộ...',
     isLoading = false,
     disabled = false,
 }) => {
     const [message, setMessage] = useState('')
-    const [attachments, setAttachments] = useState<Attachment[]>([])
-    const [showAttachments, setShowAttachments] = useState(false)
+    const [attachments, setAttachments] = useState<ChatUploadAttachment[]>([])
     const [showSystemPicker, setShowSystemPicker] = useState(false)
     const [systemSearch, setSystemSearch] = useState('')
     const [systemLoading, setSystemLoading] = useState(false)
@@ -61,24 +80,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             setSystemLoading(true)
             setSystemError(null)
 
-            const [folderData, documentData] = await Promise.all([
-                fetchAllFolders(),
-                fetchAllDocuments({ page_size: 100 }),
-            ])
+            // ✅ Call endpoint that filters by user role & permissions
+            // Only runs on client-side
+            const data = await fetchAvailableAttachments()
 
-            setSystemFolders(flattenFolders(folderData))
-            setSystemDocuments(documentData.items)
+            setSystemFolders(flattenFolders(data.folders))
+            setSystemDocuments(data.documents)
+
+            console.log(`📎 Loaded ${data.documents.length} accessible documents and ${data.folders.length} accessible folders`)
         } catch (error) {
-            console.error('Failed to load system attachments:', error)
-            setSystemError('Không thể tải danh sách tài liệu/thư mục trong hệ thống')
+            console.error('Failed to load available attachments:', error)
+            setSystemError('Không thể tải danh sách tài liệu/thư mục có quyền truy cập')
         } finally {
             setSystemLoading(false)
         }
     }, [flattenFolders])
 
+    // Only load attachments when picker is shown (lazy load, client-side only)
     useEffect(() => {
         if (showSystemPicker && systemDocuments.length === 0 && systemFolders.length === 0) {
-            loadSystemAttachments()
+            // Use setTimeout to ensure running after hydration
+            const timer = setTimeout(() => {
+                loadSystemAttachments()
+            }, 0)
+            return () => clearTimeout(timer)
         }
     }, [showSystemPicker, loadSystemAttachments, systemDocuments.length, systemFolders.length])
 
@@ -98,7 +123,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         })
         setMessage('')
         setAttachments([])
-        setShowAttachments(false)
         setShowSystemPicker(false)
         setSystemSearch('')
 
@@ -111,7 +135,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         const files = e.currentTarget.files
         if (!files) return
 
-        const newAttachments: Attachment[] = []
+        const newAttachments: ChatUploadAttachment[] = []
         for (let i = 0; i < files.length; i++) {
             const file = files[i]
             newAttachments.push({
@@ -123,12 +147,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         }
 
         setAttachments((prev) => [...prev, ...newAttachments].slice(0, 5)) // Max 5 files
-        setShowAttachments(true)
     }
 
-    const removeAttachment = (id: string) => {
+    const removeAttachment = useCallback((id: string) => {
         setAttachments((prev) => prev.filter((att) => att.id !== id))
-    }
+    }, [])
 
     const toggleDocument = (documentId: string) => {
         setSelectedDocumentIds((prev) =>
@@ -146,10 +169,54 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         )
     }
 
-    const clearSystemAttachments = () => {
+    const clearSystemAttachments = useCallback(() => {
         setSelectedDocumentIds([])
         setSelectedFolderIds([])
-    }
+    }, [])
+
+    useEffect(() => {
+        const selectedDocuments: ChatSelectedResourceItem[] = selectedDocumentIds.map((id) => {
+            const doc = systemDocuments.find((item) => item.id === id)
+            return {
+                id,
+                name: doc?.original_name || doc?.filename || 'Tài liệu không xác định',
+                detail: doc?.file_type,
+            }
+        })
+
+        const selectedFolders: ChatSelectedResourceItem[] = selectedFolderIds.map((id) => {
+            const folder = systemFolders.find((item) => item.id === id)
+            return {
+                id,
+                name: folder?.name || 'Thư mục không xác định',
+                detail: folder?.access_scope,
+            }
+        })
+
+        onAttachmentStateChange?.({
+            uploads: attachments,
+            selectedDocuments,
+            selectedFolders,
+            totalSelected: attachments.length + selectedDocuments.length + selectedFolders.length,
+            removeUpload: removeAttachment,
+            removeDocument: (id: string) => {
+                setSelectedDocumentIds((prev) => prev.filter((item) => item !== id))
+            },
+            removeFolder: (id: string) => {
+                setSelectedFolderIds((prev) => prev.filter((item) => item !== id))
+            },
+            clearAll: clearSystemAttachments,
+        })
+    }, [
+        attachments,
+        clearSystemAttachments,
+        onAttachmentStateChange,
+        removeAttachment,
+        selectedDocumentIds,
+        selectedFolderIds,
+        systemDocuments,
+        systemFolders,
+    ])
 
     const formatFileSize = (bytes: number) => {
         if (bytes === 0) return '0 Bytes'
@@ -162,29 +229,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     return (
         <div className="p-6 md:p-8 bg-gradient-to-t from-surface via-surface to-transparent border-t border-outline-variant/10">
             <div className="max-w-4xl mx-auto relative group">
-                {/* Attachments Preview */}
-                {showAttachments && attachments.length > 0 && (
-                    <div className="absolute -top-12 left-0 flex gap-2 flex-wrap">
-                        {attachments.map((att) => (
-                            <div
-                                key={att.id}
-                                className="bg-white/90 dark:bg-slate-800/90 backdrop-blur shadow-sm border border-orange-100 dark:border-orange-900/30 px-3 py-1.5 rounded-full flex items-center gap-2 text-xs font-bold text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 transition-colors"
-                            >
-                                <Paperclip size={14} className="shrink-0" />
-                                <span className="truncate max-w-[120px]" title={att.name}>
-                                    {att.name}
-                                </span>
-                                <button
-                                    onClick={() => removeAttachment(att.id)}
-                                    className="text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300 transition-colors"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                )}
-
                 {/* Input Container */}
                 <div className="relative bg-white dark:bg-slate-800 shadow-2xl shadow-slate-200/50 dark:shadow-slate-950/50 rounded-2xl border border-outline-variant/10 dark:border-slate-700/30 p-2 flex items-end gap-2 focus-within:ring-2 focus-within:ring-primary/10 focus-within:border-primary/20 transition-all">
                     {/* Local file upload */}

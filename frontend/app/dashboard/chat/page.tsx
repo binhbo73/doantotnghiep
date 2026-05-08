@@ -1,13 +1,15 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { FolderOpen } from 'lucide-react'
 import {
     ChatHeader,
     ChatSidebar,
     ChatMessages,
     ChatInput,
 } from '@/components/features/chat'
+import { ChatAttachmentState } from '@/components/features/chat/ChatInput'
 import { useChat } from '@/hooks/useChat'
 import { useAuthContext } from '@/context'
 import { useToast } from '@/hooks/useToast'
@@ -16,6 +18,13 @@ export default function ChatPage() {
     const router = useRouter()
     const { user, logout, isLoading: authLoading } = useAuthContext()
     const { showError } = useToast()
+    const [mobileFileDrawerOpen, setMobileFileDrawerOpen] = useState(false)
+    const [attachmentState, setAttachmentState] = useState<ChatAttachmentState>({
+        uploads: [],
+        selectedDocuments: [],
+        selectedFolders: [],
+        totalSelected: 0,
+    })
 
     // Chat hook for managing chat state
     const {
@@ -82,6 +91,9 @@ export default function ChatPage() {
                 <ChatSidebar
                     conversations={conversations}
                     selectedConversationId={currentConversationId || undefined}
+                    attachmentState={attachmentState}
+                    mobileFileDrawerOpen={mobileFileDrawerOpen}
+                    onCloseMobileFileDrawer={() => setMobileFileDrawerOpen(false)}
                     isLoading={isFetchingConversations}
                     onNewChat={() => createConversation()}
                     onSelectConversation={selectConversation}
@@ -90,6 +102,17 @@ export default function ChatPage() {
 
                 {/* Main Chat Area */}
                 <main className="flex-1 flex flex-col overflow-hidden bg-surface dark:bg-slate-950">
+                    <div className="md:hidden px-4 pt-3 pb-1">
+                        <button
+                            type="button"
+                            onClick={() => setMobileFileDrawerOpen(true)}
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200"
+                        >
+                            <FolderOpen size={16} className="text-amber-600" />
+                            File đính kèm {attachmentState.totalSelected > 0 ? `(${attachmentState.totalSelected})` : ''}
+                        </button>
+                    </div>
+
                     {/* Messages */}
                     <ChatMessages
                         messages={messages}
@@ -105,6 +128,7 @@ export default function ChatPage() {
                     {/* Input */}
                     <ChatInput
                         isLoading={isLoading}
+                        onAttachmentStateChange={setAttachmentState}
                         onSendMessage={(content, attachments) => {
                             sendMessage(content, attachments)
                         }}

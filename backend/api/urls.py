@@ -77,6 +77,7 @@ from api.views.chat_views import (
     MessageDetailView,
     MessageFeedbackView,
 )
+from api.views import AvailableAttachmentsView
 from api.views.audit_views import (
     AuditLogListView,
     AuditLogDetailView,
@@ -335,6 +336,10 @@ urlpatterns = [
         'get': 'retrieve',
         'delete': 'destroy'
     }), name="chat_message_feedback"),
+    
+    # Available Attachments for Chat
+    # GET /api/v1/chat/available-attachments - Get accessible documents/folders for attaching to conversations
+    re_path(r"^chat/available-attachments/?$", AvailableAttachmentsView.as_view(), name="chat_available_attachments"),
     
     # ============================================================
     # AUDIT LOG ENDPOINTS (Phase 6 - Compliance & Activity Tracking)
