@@ -1,6 +1,7 @@
 // types/index.ts - TypeScript types/interfaces
 export interface User {
     id: string
+    account_id?: string
     email: string
     name: string
     username?: string

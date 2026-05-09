@@ -281,11 +281,17 @@ class DocumentPermissionListItemSerializer(serializers.Serializer):
     permission = serializers.CharField()
     permission_precedence = serializers.CharField(required=False)
     is_active = serializers.BooleanField()
+    granted_by_id = serializers.UUIDField(allow_null=True, required=False)
+    granted_by_username = serializers.CharField(allow_null=True, required=False)
     created_at = serializers.DateTimeField(allow_null=True, required=False)
 
 
 class DocumentPermissionListSerializer(serializers.Serializer):
-    """Serializer for document permission overview rows."""
+    """
+    Serializer for document permission overview rows.
+    
+    Includes granted_by information to track who granted each permission.
+    """
 
     document_id = serializers.UUIDField()
     document_name = serializers.CharField()

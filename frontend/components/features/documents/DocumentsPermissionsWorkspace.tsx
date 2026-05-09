@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { DocumentPermissionsPanel } from './DocumentPermissionsPanel'
 import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
-import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
+import { FolderDocumentResponse, FolderResponse, FolderWithDocuments, SharedDocumentsOrganized } from '@/services/folder'
 import { DocumentRow } from './DocumentRow'
 import {
     fetchAllDocumentPermissions,
@@ -12,10 +12,13 @@ import {
     FolderPermissionsListEntry,
     PermissionItem,
 } from '@/services/documentAcl'
+import { useAuthContext } from '@/context'
 
 interface DocumentsPermissionsWorkspaceProps {
     tree: FolderTreeNode[]
     otherDocuments: OtherDocumentsNode
+    allDocuments: FolderDocumentResponse[]
+    sharedWithMe: SharedDocumentsOrganized
     selectedDocument: FolderDocumentResponse | null
     selectedFolder: FolderResponse | null
     onSelectDocument: (doc: FolderDocumentResponse, folder?: FolderResponse) => void
@@ -88,6 +91,54 @@ function collectTreeDocuments(nodes: FolderTreeNode[]): FlatDocumentItem[] {
         }
     })
 
+    return result
+}
+
+function flattenSharedFolders(nodes: FolderWithDocuments[]): FolderWithDocuments[] {
+    const result: FolderWithDocuments[] = []
+    const seen = new Set<string>()
+
+    const walk = (items: FolderWithDocuments[]) => {
+        items.forEach((folder) => {
+            if (!folder?.id || seen.has(folder.id)) return
+            seen.add(folder.id)
+            result.push(folder)
+
+            if (Array.isArray(folder.sub_folders) && folder.sub_folders.length > 0) {
+                walk(folder.sub_folders as FolderWithDocuments[])
+            }
+        })
+    }
+
+    walk(nodes)
+    return result
+}
+
+function flattenSharedDocuments(
+    sharedWithMe: SharedDocumentsOrganized,
+    folderMap: Map<string, FolderResponse>
+): FlatDocumentItem[] {
+    const result: FlatDocumentItem[] = []
+    const seen = new Set<string>()
+
+    const addDocument = (document: FolderDocumentResponse, folder: FolderResponse | null) => {
+        if (!document?.id || seen.has(document.id)) return
+        seen.add(document.id)
+        result.push({ document, folder })
+    }
+
+    const walk = (folders: FolderWithDocuments[]) => {
+        folders.forEach((folder) => {
+            const mappedFolder = folderMap.get(folder.id) ?? folder
+            folder.documents?.forEach((document) => addDocument(document, mappedFolder))
+            if (Array.isArray(folder.sub_folders) && folder.sub_folders.length > 0) {
+                walk(folder.sub_folders as FolderWithDocuments[])
+            }
+        })
+    }
+
+    walk(sharedWithMe.folders)
+    sharedWithMe.unfoldered_documents.forEach((document) => addDocument(document, null))
     return result
 }
 
@@ -296,6 +347,8 @@ function PermissionOverviewCard({
 export function DocumentsPermissionsWorkspace({
     tree,
     otherDocuments,
+    allDocuments,
+    sharedWithMe,
     selectedDocument,
     selectedFolder,
     onSelectDocument,
@@ -312,26 +365,36 @@ export function DocumentsPermissionsWorkspace({
         folderItems: [],
         documentItems: [],
     })
+    const { user } = useAuthContext()
 
     const folders = useMemo(() => flattenFolders(tree), [tree])
-    const treeDocuments = useMemo(() => collectTreeDocuments(tree), [tree])
-    const otherDocumentsList = useMemo(() => {
-        return [
-            ...otherDocuments.departmentDocs.map((document) => ({ document, folder: null })),
-            ...otherDocuments.personalDocs.map((document) => ({ document, folder: null })),
-            ...otherDocuments.companyDocs.map((document) => ({ document, folder: null })),
-        ]
-    }, [otherDocuments])
+    const folderMap = useMemo(() => {
+        const map = new Map<string, FolderResponse>()
+        folders.forEach((item) => {
+            map.set(item.folder.id, item.folder)
+        })
+        return map
+    }, [folders])
 
     const documents = useMemo(() => {
         const seen = new Set<string>()
-        const allDocuments = [...treeDocuments, ...otherDocumentsList]
-        return allDocuments.filter((entry) => {
-            if (seen.has(entry.document.id)) return false
-            seen.add(entry.document.id)
-            return true
-        })
-    }, [treeDocuments, otherDocumentsList])
+
+        return allDocuments
+            .map((document) => {
+                const folderId = document.folder || document.folder_id || null
+                const folder = folderId ? folderMap.get(folderId) ?? null : null
+                return { document, folder }
+            })
+            .filter((entry) => {
+                if (!entry.document?.id) return false
+                if (seen.has(entry.document.id)) return false
+                seen.add(entry.document.id)
+                return true
+            })
+    }, [allDocuments, folderMap])
+
+    const sharedFolders = useMemo(() => flattenSharedFolders(sharedWithMe.folders), [sharedWithMe.folders])
+    const sharedDocuments = useMemo(() => flattenSharedDocuments(sharedWithMe, folderMap), [sharedWithMe, folderMap])
 
     const allPermissionResources = useMemo<PermissionResourceOption[]>(() => {
         const folderOptions = folders.map((item) => ({
@@ -339,6 +402,14 @@ export function DocumentsPermissionsWorkspace({
             kind: 'folder' as const,
             label: `${item.folder.name} · Folder`,
             folder: item.folder,
+            document: null,
+        }))
+
+        const sharedFolderOptions = sharedFolders.map((folder) => ({
+            key: `folder:${folder.id}` as PermissionResourceKey,
+            kind: 'folder' as const,
+            label: `${folder.name} · Folder`,
+            folder,
             document: null,
         }))
 
@@ -350,8 +421,23 @@ export function DocumentsPermissionsWorkspace({
             document: item.document,
         }))
 
-        return [...folderOptions, ...documentOptions]
-    }, [documents, folders])
+        const sharedDocumentOptions = sharedDocuments.map((item) => ({
+            key: `document:${item.document.id}` as PermissionResourceKey,
+            kind: 'document' as const,
+            label: `${item.document.original_name || item.document.filename} · Document`,
+            folder: item.folder,
+            document: item.document,
+        }))
+
+        const uniqueResources = new Map<string, PermissionResourceOption>()
+            ;[...folderOptions, ...sharedFolderOptions, ...documentOptions, ...sharedDocumentOptions].forEach((resource) => {
+                if (!uniqueResources.has(resource.key)) {
+                    uniqueResources.set(resource.key, resource)
+                }
+            })
+
+        return Array.from(uniqueResources.values())
+    }, [documents, folders, sharedDocuments, sharedFolders])
 
     const currentFolder = useMemo(
         () => folders.find((item) => item.folder.id === selectedFolderId)?.folder || null,
@@ -424,9 +510,10 @@ export function DocumentsPermissionsWorkspace({
         setOverview((prev) => ({ ...prev, loading: true, error: null }))
 
         try {
+            const grantedById = user?.account_id || user?.id
             const [folderItems, documentItems] = await Promise.all([
-                loadAllPages((page, pageSize) => fetchAllFolderPermissions(page, pageSize)),
-                loadAllPages((page, pageSize) => fetchAllDocumentPermissions(page, pageSize)),
+                loadAllPages((page, pageSize) => fetchAllFolderPermissions(page, pageSize, '', grantedById)),
+                loadAllPages((page, pageSize) => fetchAllDocumentPermissions(page, pageSize, '', grantedById)),
             ])
 
             setOverview({

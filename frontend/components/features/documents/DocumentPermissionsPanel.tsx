@@ -16,6 +16,7 @@ import {
     PermissionSubjectType,
 } from '@/services/documentAcl'
 import { useRBAC } from '@/hooks/useRBAC'
+import { useAuthContext } from '@/context'
 
 interface DocumentPermissionsPanelProps {
     document?: FolderDocumentResponse | null
@@ -153,6 +154,7 @@ function EmptyPermissionState({ label }: { label: string }) {
 export function DocumentPermissionsPanel({ document, folder, title, mode = 'create', onPermissionChanged, onPermissionGranted }: DocumentPermissionsPanelProps) {
     const effectiveDocument = document || null
     const effectiveFolder = folder || null
+    const { user } = useAuthContext()
     const [state, setState] = useState<PermissionViewState>({
         folderName: effectiveFolder?.name || '',
         folderScope: effectiveFolder?.access_scope || '',
@@ -172,10 +174,10 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         error: null,
     })
     const subjectOptionsLoadedRef = useRef(false)
-    const { isAdmin, can } = useRBAC()
+    const { isAdmin, isTruongPhong, can } = useRBAC()
 
     // Check if user can manage permissions for this resource
-    const canManagePermissions = isAdmin() ||
+    const canManagePermissions = isAdmin() || isTruongPhong() ||
         (effectiveDocument && can('delete', effectiveDocument.my_permission)) ||
         (effectiveFolder && can('delete', effectiveFolder.my_permission))
 
@@ -297,9 +299,10 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
 
         setState((prev) => ({ ...prev, loading: true, error: null }))
         try {
+            const grantedById = user?.account_id || user?.id
             const [folderResponse, documentResponse] = await Promise.all([
-                folderId ? fetchFolderPermissions(folderId) : Promise.resolve(null),
-                documentId ? fetchDocumentPermissions(documentId) : Promise.resolve({ document_id: '', permissions: [] }),
+                folderId ? fetchFolderPermissions(folderId, grantedById) : Promise.resolve(null),
+                documentId ? fetchDocumentPermissions(documentId, grantedById) : Promise.resolve({ document_id: '', permissions: [] }),
             ])
 
             setState({

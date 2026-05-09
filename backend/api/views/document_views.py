@@ -917,6 +917,7 @@ class DocumentPermissionsListView(APIView):
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
             search = request.query_params.get('search')
+            granted_by_id = request.query_params.get('granted_by_id')
 
             if page < 1 or page_size < 1 or page_size > 100:
                 return Response(
@@ -933,6 +934,7 @@ class DocumentPermissionsListView(APIView):
                 page=page,
                 page_size=page_size,
                 search=search,
+                granted_by_id=granted_by_id,
             )
 
             serialized_items = DocumentPermissionListSerializer(result['items'], many=True).data
@@ -995,10 +997,12 @@ class DocumentPermissionsView(APIView):
         """
         try:
             service = DocumentService()
+            granted_by_id = request.query_params.get('granted_by_id')
             
             permissions = service.get_document_permissions(
                 doc_id=doc_id,
                 user_id=request.user.id,
+                granted_by_id=granted_by_id,
             )
             
             serializer = FolderPermissionSerializer(permissions, many=True)

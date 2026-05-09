@@ -293,8 +293,8 @@ class FolderService(BaseService):
             # 6. Check specific FolderPermission table (Account or Role)
             FolderPermission = apps.get_model('documents', 'FolderPermission')
             
-            # Get user's roles
-            user_role_ids = [str(r.id) for r in user.roles.all()]
+            # Get user's roles via Account helper
+            user_role_ids = [str(role_id) for role_id in user.get_roles().values_list('role_id', flat=True)]
             
             # Query permissions for this account OR any of user's roles
             perms = FolderPermission.objects.filter(
@@ -822,22 +822,23 @@ class FolderService(BaseService):
             
             # Create or update permission
             FolderPermission = apps.get_model('documents', 'FolderPermission')
+            user_account = self.Account.objects.get(id=user_id)
             perm, created = FolderPermission.objects.get_or_create(
                 folder_id=folder_id,
                 subject_type=subject_type,
                 subject_id=subject_id,
-                defaults={'permission': permission, 'is_active': True}
+                defaults={'permission': permission, 'is_active': True, 'granted_by': user_account}
             )
             
             if not created:
                 # Update existing permission
                 perm.permission = permission
                 perm.is_active = True
+                perm.granted_by = user_account
                 perm.save()
             
             # Audit log
             try:
-                user_account = self.Account.objects.get(id=user_id)
                 self.AuditLog.objects.create(
                     account=user_account,
                     action='GRANT_PERMISSION',
@@ -860,6 +861,8 @@ class FolderService(BaseService):
                 'subject_name': subject.username if subject_type == 'account' else subject.name,
                 'permission': perm.permission,
                 'is_active': perm.is_active,
+                'granted_by_id': str(perm.granted_by_id) if perm.granted_by_id else None,
+                'granted_by_username': perm.granted_by.username if perm.granted_by else None,
                 'created': created,
                 'created_at': perm.created_at.isoformat() if perm.created_at else None,
             }
@@ -956,12 +959,13 @@ class FolderService(BaseService):
             logger.error(f"Error revoking permission: {str(e)}")
             raise BusinessLogicError(f"Failed to revoke permission: {str(e)}")
     
-    def get_folder_permissions(self, folder_id: str) -> Dict[str, Any]:
+    def get_folder_permissions(self, folder_id: str, granted_by_id: str = None) -> Dict[str, Any]:
         """
         Get all active permissions for a folder.
         
         Args:
             folder_id: Target folder UUID
+            granted_by_id: Optional user ID who granted the permission
         
         Returns:
             Dict with folder info and list of permissions
@@ -980,8 +984,11 @@ class FolderService(BaseService):
             permissions = FolderPermission.objects.filter(
                 folder_id=folder_id,
                 is_deleted=False,
-                is_active=True
-            ).order_by('created_at')
+                is_active=True,
+            )
+            if granted_by_id:
+                permissions = permissions.filter(granted_by_id=granted_by_id)
+            permissions = permissions.order_by('created_at')
             
             # Build response
             perm_list = []
@@ -996,6 +1003,8 @@ class FolderService(BaseService):
                     role = Role.objects.filter(id=perm.subject_id).first()
                     subject_name = role.name if role else 'Unknown'
                 
+                granted_by_username = perm.granted_by.username if perm.granted_by else None
+                
                 perm_list.append({
                     'id': str(perm.id),
                     'subject_type': perm.subject_type,
@@ -1003,6 +1012,8 @@ class FolderService(BaseService):
                     'subject_name': subject_name,
                     'permission': perm.permission,
                     'is_active': perm.is_active,
+                    'granted_by_id': str(perm.granted_by_id) if perm.granted_by_id else None,
+                    'granted_by_username': granted_by_username,
                     'created_at': perm.created_at.isoformat() if perm.created_at else None,
                 })
             
@@ -1026,6 +1037,7 @@ class FolderService(BaseService):
         page: int = 1,
         page_size: int = 20,
         search: str = None,
+        granted_by_id: str = None,
     ) -> Dict[str, Any]:
         """
         Get a paginated list of folders with their active permissions.
@@ -1034,40 +1046,63 @@ class FolderService(BaseService):
         """
         try:
             Account = apps.get_model('users', 'Account')
+            Folder = apps.get_model('documents', 'Folder')
+            FolderPermission = apps.get_model('documents', 'FolderPermission')
+            Role = apps.get_model('users', 'Role')
+            
             user = self.Account.objects.filter(id=user_id).first()
             if not user:
                 raise NotFoundError(f"User {user_id} not found")
 
-            accessible_folders = self.repository.get_accessible_folders(
-                user_id=user_id,
-                user_department_id=user.department_id if hasattr(user, 'department_id') else None,
-                is_admin=getattr(user, 'is_superuser', False),
-            )
-
             managed_folders = []
-            for folder in accessible_folders:
-                if str(folder.created_by_id) == str(user_id) or self.check_folder_permission(folder.id, user_id, 'write'):
-                    if search and search.strip():
-                        if search.lower() not in (folder.name or '').lower():
-                            continue
-                    managed_folders.append(folder)
+
+            # When granted_by_id is provided, get all folders where user has granted permissions
+            if granted_by_id:
+                folder_ids_with_perms = FolderPermission.objects.filter(
+                    granted_by_id=granted_by_id,
+                    is_deleted=False,
+                    is_active=True,
+                ).values_list('folder_id', flat=True).distinct()
+                
+                folders_query = Folder.objects.filter(
+                    id__in=folder_ids_with_perms,
+                    is_deleted=False
+                ).order_by('-created_at')
+                
+                if search and search.strip():
+                    folders_query = folders_query.filter(name__icontains=search)
+                
+                managed_folders = list(folders_query)
+            else:
+                # Without granted_by_id, show only accessible folders
+                accessible_folders = self.repository.get_accessible_folders(
+                    user_id=user_id,
+                    user_department_id=user.department_id if hasattr(user, 'department_id') else None,
+                    is_admin=getattr(user, 'is_superuser', False),
+                )
+
+                for folder in accessible_folders:
+                    if search and search.strip() and search.lower() not in (folder.name or '').lower():
+                        continue
+
+                    if str(folder.created_by_id) == str(user_id) or self.check_folder_permission(folder.id, user_id, 'write'):
+                        managed_folders.append(folder)
 
             # Filter managed folders to only those that have active permission rows
-            FolderPermission = apps.get_model('documents', 'FolderPermission')
-            Role = apps.get_model('users', 'Role')
-
             managed_with_perms = []
             for folder in managed_folders:
-                perm_exists = FolderPermission.objects.filter(
+                permissions_query = FolderPermission.objects.filter(
                     folder_id=folder.id,
                     is_deleted=False,
                     is_active=True,
-                ).exists()
-                if perm_exists:
-                    if search and search.strip():
-                        if search.lower() not in (folder.name or '').lower():
-                            continue
-                    managed_with_perms.append(folder)
+                )
+                if granted_by_id:
+                    permissions_query = permissions_query.filter(granted_by_id=granted_by_id)
+
+                if not permissions_query.exists():
+                    continue
+
+                managed_with_perms.append(folder)
 
             total_items = len(managed_with_perms)
             start_index = (page - 1) * page_size
@@ -1080,7 +1115,10 @@ class FolderService(BaseService):
                     folder_id=folder.id,
                     is_deleted=False,
                     is_active=True,
-                ).order_by('created_at')
+                )
+                if granted_by_id:
+                    permissions = permissions.filter(granted_by_id=granted_by_id)
+                permissions = permissions.order_by('created_at')
 
                 permission_rows = []
                 for perm in permissions:
@@ -1092,6 +1130,8 @@ class FolderService(BaseService):
                         role = Role.objects.filter(id=perm.subject_id).first()
                         subject_name = role.name if role else 'Unknown'
 
+                    granted_by_username = perm.granted_by.username if perm.granted_by else None
+
                     permission_rows.append({
                         'id': str(perm.id),
                         'subject_type': perm.subject_type,
@@ -1099,6 +1139,8 @@ class FolderService(BaseService):
                         'subject_name': subject_name,
                         'permission': perm.permission,
                         'is_active': perm.is_active,
+                        'granted_by_id': str(perm.granted_by_id) if perm.granted_by_id else None,
+                        'granted_by_username': granted_by_username,
                         'created_at': perm.created_at.isoformat() if perm.created_at else None,
                     })
 

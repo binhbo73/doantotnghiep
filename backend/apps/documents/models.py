@@ -297,6 +297,14 @@ class DocumentPermission(BaseModel):
         help_text="Permission precedence (inherit from folder, override, or deny)"
     )
     is_active = models.BooleanField(default=True, help_text="Is this permission active?")
+    granted_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='document_permissions_granted',
+        help_text="User who granted this permission"
+    )
 
     class Meta:
         db_table = "document_permissions"
@@ -356,6 +364,14 @@ class FolderPermission(BaseModel):
         help_text="Permission level (read, write, delete)"
     )
     is_active = models.BooleanField(default=True, help_text="Is this permission active?")
+    granted_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='folder_permissions_granted',
+        help_text="User who granted this permission"
+    )
 
     class Meta:
         db_table = "folder_permissions"

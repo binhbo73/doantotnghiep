@@ -1284,7 +1284,8 @@ class DocumentService(BaseService):
     def get_document_permissions(
         self,
         doc_id: str,
-        user_id: int
+        user_id: int,
+        granted_by_id: str = None,
     ) -> List['DocumentPermission']:
         """
         Get all permissions on document.
@@ -1292,6 +1293,7 @@ class DocumentService(BaseService):
         Args:
             doc_id: Document UUID
             user_id: User requesting (must be admin or owner)
+            granted_by_id: Optional user ID who granted the permission
         
         Returns:
             List of DocumentPermission objects
@@ -1310,8 +1312,10 @@ class DocumentService(BaseService):
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
             permissions = DocumentPermission.objects.filter(
                 document_id=doc_id,
-                is_deleted=False
+                is_deleted=False,
             )
+            if granted_by_id:
+                permissions = permissions.filter(granted_by_id=granted_by_id)
             
             return list(permissions)
         
@@ -1327,6 +1331,7 @@ class DocumentService(BaseService):
         page: int = 1,
         page_size: int = 20,
         search: str = None,
+        granted_by_id: str = None,
     ) -> Dict[str, Any]:
         """
         Get a paginated list of documents with their active permissions.
@@ -1337,35 +1342,56 @@ class DocumentService(BaseService):
 
         try:
             Account = apps.get_model('users', 'Account')
-            accessible_documents = self.document_repo.get_accessible_documents(user_id)
-
-            managed_documents = []
-            for document in accessible_documents:
-                if not self.document_repo.check_user_can_write(str(document.id), user_id):
-                    continue
-
-                if search and search.strip():
-                    if search.lower() not in (document.original_name or '').lower():
-                        continue
-
-                managed_documents.append(document)
-
-            # Only include documents that have active permission rows
+            Document = apps.get_model('documents', 'Document')
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
             Role = apps.get_model('users', 'Role')
 
+            managed_documents = []
+
+            # When granted_by_id is provided, get all documents where user has granted permissions
+            if granted_by_id:
+                doc_ids_with_perms = DocumentPermission.objects.filter(
+                    granted_by_id=granted_by_id,
+                    is_deleted=False,
+                    is_active=True,
+                ).values_list('document_id', flat=True).distinct()
+                
+                docs_query = Document.objects.filter(
+                    id__in=doc_ids_with_perms,
+                    is_deleted=False
+                ).order_by('-created_at')
+                
+                if search and search.strip():
+                    docs_query = docs_query.filter(original_name__icontains=search)
+                
+                managed_documents = list(docs_query)
+            else:
+                # Without granted_by_id, show only accessible documents user can write
+                accessible_documents = self.document_repo.get_accessible_documents(user_id)
+
+                for document in accessible_documents:
+                    if search and search.strip() and search.lower() not in (document.original_name or '').lower():
+                        continue
+
+                    if not self.document_repo.check_user_can_write(str(document.id), user_id):
+                        continue
+
+                    managed_documents.append(document)
+
+            # Only include documents that have active permission rows
             managed_with_perms = []
             for document in managed_documents:
-                perm_exists = DocumentPermission.objects.filter(
+                permissions_query = DocumentPermission.objects.filter(
                     document_id=document.id,
                     is_deleted=False,
                     is_active=True,
-                ).exists()
-                if perm_exists:
-                    if search and search.strip():
-                        if search.lower() not in (document.original_name or '').lower():
-                            continue
-                    managed_with_perms.append(document)
+                )
+                if granted_by_id:
+                    permissions_query = permissions_query.filter(granted_by_id=granted_by_id)
+
+                if not permissions_query.exists():
+                    continue
+                managed_with_perms.append(document)
 
             total_items = len(managed_with_perms)
             start_index = (page - 1) * page_size
@@ -1378,7 +1404,10 @@ class DocumentService(BaseService):
                     document_id=document.id,
                     is_deleted=False,
                     is_active=True,
-                ).order_by('created_at')
+                )
+                if granted_by_id:
+                    permissions = permissions.filter(granted_by_id=granted_by_id)
+                permissions = permissions.order_by('created_at')
 
                 permission_rows = []
                 for perm in permissions:
@@ -1390,6 +1419,8 @@ class DocumentService(BaseService):
                         role = Role.objects.filter(id=perm.subject_id).first()
                         subject_name = role.name if role else 'Unknown'
 
+                    granted_by_username = perm.granted_by.username if perm.granted_by else None
+
                     permission_rows.append({
                         'id': str(perm.id),
                         'subject_type': perm.subject_type,
@@ -1398,6 +1429,8 @@ class DocumentService(BaseService):
                         'permission': perm.permission,
                         'permission_precedence': perm.permission_precedence,
                         'is_active': perm.is_active,
+                        'granted_by_id': str(perm.granted_by_id) if perm.granted_by_id else None,
+                        'granted_by_username': granted_by_username,
                         'created_at': perm.created_at.isoformat() if perm.created_at else None,
                     })
 
@@ -1459,6 +1492,7 @@ class DocumentService(BaseService):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
             
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
+            granted_by_account = self.Account.objects.get(id=user_id)
             
             # Try to find existing permission (including soft-deleted ones)
             try:
@@ -1474,6 +1508,7 @@ class DocumentService(BaseService):
                 perm_obj.permission = permission
                 perm_obj.permission_precedence = precedence
                 perm_obj.is_active = True
+                perm_obj.granted_by = granted_by_account
                 perm_obj.save()
                 created = False
             except DocumentPermission.DoesNotExist:
@@ -1485,6 +1520,7 @@ class DocumentService(BaseService):
                     permission=permission,
                     permission_precedence=precedence,
                     is_active=True,
+                    granted_by=granted_by_account,
                 )
                 created = True
             

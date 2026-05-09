@@ -388,6 +388,8 @@ class FolderPermissionSerializer(serializers.Serializer):
     
     # For response - reference info
     subject_name = serializers.SerializerMethodField()
+    granted_by_id = serializers.UUIDField(read_only=True, allow_null=True)
+    granted_by_username = serializers.SerializerMethodField()
     
     def validate(self, data):
         """Validate permission creation data"""
@@ -430,6 +432,12 @@ class FolderPermissionSerializer(serializers.Serializer):
                 except:
                     return None
         return None
+    
+    def get_granted_by_username(self, obj):
+        """Get username of the person who granted this permission"""
+        if hasattr(obj, 'granted_by') and obj.granted_by:
+            return obj.granted_by.username
+        return None
 
 
 class FolderPermissionListItemSerializer(serializers.Serializer):
@@ -441,6 +449,8 @@ class FolderPermissionListItemSerializer(serializers.Serializer):
     subject_name = serializers.CharField(allow_null=True, required=False)
     permission = serializers.CharField()
     is_active = serializers.BooleanField()
+    granted_by_id = serializers.UUIDField(allow_null=True, required=False)
+    granted_by_username = serializers.CharField(allow_null=True, required=False)
     created_at = serializers.DateTimeField(allow_null=True, required=False)
 
 
@@ -461,6 +471,8 @@ class FolderPermissionListSerializer(serializers.Serializer):
                 "subject_name": "username or role name",
                 "permission": "read|write|delete",
                 "is_active": true,
+                "granted_by_id": "user-uuid",
+                "granted_by_username": "admin_user",
                 "created_at": "2026-04-14T..."
             }
         ]

@@ -535,6 +535,7 @@ class FolderPermissionsListView(APIView):
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
             search = request.query_params.get('search')
+            granted_by_id = request.query_params.get('granted_by_id')
 
             if page < 1 or page_size < 1 or page_size > 100:
                 return Response(
@@ -551,6 +552,7 @@ class FolderPermissionsListView(APIView):
                 page=page,
                 page_size=page_size,
                 search=search,
+                granted_by_id=granted_by_id,
             )
 
             serialized_items = FolderPermissionListSerializer(result['items'], many=True).data
@@ -630,9 +632,10 @@ class FolderPermissionsView(APIView):
         """
         try:
             service = FolderService()
+            granted_by_id = request.query_params.get('granted_by_id')
             
             # Get folder permissions
-            data = service.get_folder_permissions(folder_id)
+            data = service.get_folder_permissions(folder_id, granted_by_id=granted_by_id)
             
             logger.info(f"User {request.user.id} viewed permissions for folder {folder_id}")
             

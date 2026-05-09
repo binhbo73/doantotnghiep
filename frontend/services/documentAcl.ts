@@ -130,9 +130,9 @@ function unwrapPaginatedEnvelope<T>(response: any): PaginatedPermissionListRespo
     }
 }
 
-export async function fetchFolderPermissions(folderId: string): Promise<FolderPermissionsResponse> {
+export async function fetchFolderPermissions(folderId: string, grantedById?: string): Promise<FolderPermissionsResponse> {
     try {
-        const response = await api.get<any>(`/folders/${folderId}/permissions`)
+        const response = await api.get<any>(`/folders/${folderId}/permissions${buildQueryString({ granted_by_id: grantedById || undefined })}`)
         ensureSuccess(response, 'Failed to fetch folder permissions')
         return unwrapEnvelope<FolderPermissionsResponse>(response)
     } catch (error) {
@@ -141,9 +141,9 @@ export async function fetchFolderPermissions(folderId: string): Promise<FolderPe
     }
 }
 
-export async function fetchDocumentPermissions(documentId: string): Promise<DocumentPermissionsResponse> {
+export async function fetchDocumentPermissions(documentId: string, grantedById?: string): Promise<DocumentPermissionsResponse> {
     try {
-        const response = await api.get<any>(`/documents/${documentId}/permissions`)
+        const response = await api.get<any>(`/documents/${documentId}/permissions${buildQueryString({ granted_by_id: grantedById || undefined })}`)
         ensureSuccess(response, 'Failed to fetch document permissions')
 
         const permissions = unwrapEnvelope<PermissionItem[]>(response)
@@ -157,12 +157,13 @@ export async function fetchDocumentPermissions(documentId: string): Promise<Docu
     }
 }
 
-export async function fetchAllFolderPermissions(page = 1, pageSize = 20, search = ''): Promise<PaginatedPermissionListResponse<FolderPermissionsListEntry>> {
+export async function fetchAllFolderPermissions(page = 1, pageSize = 20, search = '', grantedById?: string): Promise<PaginatedPermissionListResponse<FolderPermissionsListEntry>> {
     try {
         const response = await api.get<any>(`/folders/permissions${buildQueryString({
             page,
             page_size: pageSize,
             search: search || undefined,
+            granted_by_id: grantedById || undefined,
         })}`)
         ensureSuccess(response, 'Failed to fetch folder permissions overview')
         return unwrapPaginatedEnvelope<FolderPermissionsListEntry>(response)
@@ -172,12 +173,13 @@ export async function fetchAllFolderPermissions(page = 1, pageSize = 20, search 
     }
 }
 
-export async function fetchAllDocumentPermissions(page = 1, pageSize = 20, search = ''): Promise<PaginatedPermissionListResponse<DocumentPermissionsListEntry>> {
+export async function fetchAllDocumentPermissions(page = 1, pageSize = 20, search = '', grantedById?: string): Promise<PaginatedPermissionListResponse<DocumentPermissionsListEntry>> {
     try {
         const response = await api.get<any>(`/documents/permissions${buildQueryString({
             page,
             page_size: pageSize,
             search: search || undefined,
+            granted_by_id: grantedById || undefined,
         })}`)
         ensureSuccess(response, 'Failed to fetch document permissions overview')
         return unwrapPaginatedEnvelope<DocumentPermissionsListEntry>(response)

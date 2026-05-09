@@ -209,6 +209,7 @@ export function useDocumentStore() {
         personalDocs: [],
         companyDocs: [],
     })
+    const [allDocuments, setAllDocuments] = useState<FolderDocumentResponse[]>([])
     const [selectedDocument, setSelectedDocument] = useState<FolderDocumentResponse | null>(null)
     const [selectedFolder, setSelectedFolder] = useState<FolderResponse | null>(null)
     const [isLoading, setIsLoading] = useState(true)
@@ -229,6 +230,7 @@ export function useDocumentStore() {
 
             setFolders(folderData)
             setTree(buildFolderTree(folderData))
+            setAllDocuments(documentData.items)
 
             // Categorize documents not in any folder
             const otherDocs = categorizeOtherDocuments(documentData.items)
@@ -386,6 +388,7 @@ export function useDocumentStore() {
         folders,
         tree,
         otherDocuments,
+        allDocuments,
         selectedDocument,
         selectedFolder,
         isLoading,

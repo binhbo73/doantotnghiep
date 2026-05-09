@@ -75,7 +75,7 @@ function getStatusBadge(status: string): React.ReactNode {
     return (
         <div className={`flex items-center gap-1 ${config.bg} ${config.text} px-2 py-0.5 rounded-full text-[9px] font-bold uppercase`}>
             <span className={`w-1.5 h-1.5 ${dotColor[status] || dotColor.pending} rounded-full`}></span>
-            {config.label}
+            {/* {config.label} */}
         </div>
     );
 }

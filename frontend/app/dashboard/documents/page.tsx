@@ -4,7 +4,7 @@
  * Documents Page
  * RBAC:
  * - All authenticated users can browse documents (tab "Duyệt tài liệu")
- * - Only Admin can access the "Phân quyền" tab
+ * - Admin or Manager (Trưởng phòng) can access the "Phân quyền" tab
  * - Upload button visibility: Admin + Manager can upload, User can only upload personal
  * - Create Folder: Admin + Manager + Users in their own department
  */
@@ -143,6 +143,7 @@ export default function DocumentsPage() {
     const {
         tree,
         otherDocuments,
+        allDocuments,
         selectedDocument,
         selectedFolder,
         isLoading,
@@ -162,11 +163,6 @@ export default function DocumentsPage() {
     const shouldHideSharedItems = isTruongPhong() && !isAdmin()
 
     useEffect(() => {
-        if (!shouldHideSharedItems) {
-            setSharedWithMe({ folders: [], unfoldered_documents: [] })
-            return
-        }
-
         let isMounted = true
 
         void fetchSharedWithMeFoldersAndDocuments()
@@ -185,7 +181,7 @@ export default function DocumentsPage() {
         return () => {
             isMounted = false
         }
-    }, [shouldHideSharedItems])
+    }, [])
 
     const browseTree = useMemo(() => {
         if (!shouldHideSharedItems) {
@@ -207,7 +203,7 @@ export default function DocumentsPage() {
     }, [otherDocuments, sharedWithMe, shouldHideSharedItems])
 
     // Permissions for document page features
-    const canManagePermissions = isAdmin()
+    const canManagePermissions = isAdmin() || isTruongPhong()
     const canCreateFolder = isAdmin() || isTruongPhong() || !!user?.department_id
     const canUpload = isAdmin() || isTruongPhong() || hasGlobalPermission('create', 'document')
 
@@ -308,6 +304,8 @@ export default function DocumentsPage() {
                     <DocumentsPermissionsWorkspace
                         tree={tree}
                         otherDocuments={otherDocuments}
+                        allDocuments={allDocuments}
+                        sharedWithMe={sharedWithMe}
                         selectedDocument={selectedDocument}
                         selectedFolder={selectedFolder}
                         onSelectDocument={selectDocument}

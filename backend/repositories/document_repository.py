@@ -203,14 +203,24 @@ class DocumentRepository(BaseRepository):
     
     def check_user_can_write(self, doc_id, user_id) -> bool:
         """
-        Check if user can write/edit a document (owner only by default).
+        Check if user can write/edit a document.
+        Owner or admin may edit and manage document ACL.
         
         Example:
             can_write = repo.check_user_can_write(doc_id, user_id)
         """
         try:
+            from apps.users.models import Account, RoleIds
             doc = self.get_by_id(doc_id)
-            return doc.uploader_id == user_id  # Only owner can edit
+            user = Account.objects.get(pk=user_id)
+
+            # Owner or admin can edit/manage this document
+            if doc.uploader_id == user_id:
+                return True
+            if user.is_superuser or user.has_role(RoleIds.ADMIN):
+                return True
+
+            return False
         except Exception as e:
             logger.warning(f"Error checking document write access: {e}")
             return False
