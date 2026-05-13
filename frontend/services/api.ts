@@ -2,8 +2,9 @@
 // Force rebuild: 2025-04-20
 import { API_TIMEOUTS } from '@/constants/api'
 import { getAuthTokenForAPI, refreshAccessToken, clearAuthToken } from './token'
+import { getApiBaseUrl } from '@/config/api'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = getApiBaseUrl()
 
 // Custom error types
 export class ApiError extends Error {

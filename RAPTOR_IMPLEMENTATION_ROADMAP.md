@@ -98,6 +98,18 @@ Output mong đợi:
 
 ---
 
+## Thực trạng code hiện tại so với roadmap
+
+- Hiện tại code đã có pipeline upload → parse → chunk → embed với `DocumentUploadService`, `DocumentParser`, `DocumentChunker`, và Qdrant.
+- File upload đã hỗ trợ PDF, DOCX/DOC, TXT, Markdown, XLSX, XLS. Đây là một điểm mạnh rất tốt cho dự án RAG.
+- Parser dùng `opendataloader-pdf` cho PDF, `python-docx` cho DOCX, `openpyxl`/`xlrd` cho Excel, nên chất lượng parse khá cao và chạy được với nhiều định dạng.
+- Tuy nhiên, chunking hiện tại vẫn là window token-based với cấu trúc câu/đoạn, chưa thực sự page-aware hay hierarchical. `DocumentChunk.page_number` hiện được gán mặc định là `1`, nên không khai thác được page boundaries của PDF.
+- `DocumentChunk` đã có trường `parent_node`, `vector_id`, `summary`, `metadata`, nên schema khá phù hợp, nhưng `parent_node` và `summary` chưa được dùng để tạo RAPTOR tree.
+- Embedding đang thực hiện qua `LlamaClient.create_embedding()` và lưu vào Qdrant. Mô hình mặc định trong settings là `Qwen3-4B-Instruct-2507-Q4_K_M`, nên về mặt ý tưởng rất gần với ảnh đính kèm; nhưng cần kiểm tra `EMBEDDING_MODEL` trong môi trường để đảm bảo vector kích thước và model thực tế trùng khớp. Nếu local đang dùng `mxbai-embed-large`, cần cập nhật `EMBEDDING_DIMENSION` cho đúng và tách riêng `LLM_MODEL` / `EMBEDDING_MODEL` nếu cần.
+- Roadmap RAPTOR là đúng đắn và cần thiết, nhưng code hiện tại mới dừng ở mức RAG cơ bản/ingest. Để đạt được RAPTOR thực sự, cần bổ sung nhiều bước cụ thể ở phase 1-3 trước khi triển khai phase 6.
+
+---
+
 ## Phase 1 - Parse theo page thật
 
 Mục tiêu: không chỉ parse ra 1 khối text lớn, mà xác định rõ page boundaries.

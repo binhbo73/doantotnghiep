@@ -490,39 +490,9 @@ class MessageSendView(BaseViewSet):
     
     @action(detail=False, methods=['post'], url_path='stream')
     def stream(self, request: Request) -> Response:
-        """
-        Gửi tin nhắn và nhận kết quả dạng STREAMING (Trả về từng chữ).
-        Giống hệt giao diện llama-server ở port 11435.
-        """
-        from django.http import StreamingHttpResponse
-        from services.chat_service import ChatService
-        import json
-
-        content = request.data.get('content')
-        conversation_id = request.data.get('conversation_id')
-        
-        if not content:
-            return self.error_response("Nội dung không được để trống", status.HTTP_400_BAD_REQUEST)
-
-        chat_service = ChatService()
-
-        def stream_generator():
-            try:
-                # Trả về data dạng SSE (Server-Sent Events)
-                for chunk in chat_service.ask_stream(
-                    user_id=request.user.id,
-                    query=content,
-                    conversation_id=conversation_id
-                ):
-                    # Format data để frontend dễ xử lý
-                    yield f"data: {json.dumps({'text': chunk})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-
-        return StreamingHttpResponse(
-            stream_generator(),
-            content_type='text/event-stream'
-        )
+        # Không dùng action này nữa - ChatStreamView (async Django view) xử lý trực tiếp
+        # DRF ViewSet không hỗ trợ async def → routing thẳng ở urls.py
+        return Response({'error': 'Route to ChatStreamView directly'}, status=405)
 
     def create(self, request: Request) -> Response:
         """
@@ -936,3 +906,119 @@ class MessageFeedbackView(BaseViewSet):
         else:
             ip = request.META.get('REMOTE_ADDR')
         return ip
+
+
+# ============================================================
+# STANDALONE ASYNC STREAM VIEW (Bypass DRF — DRF không hỗ trợ async)
+# ============================================================
+import json as _json
+import asyncio as _asyncio
+from django.http import StreamingHttpResponse, JsonResponse
+from django.views import View
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework_simplejwt.tokens import AccessToken
+from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from apps.users.models import Account
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class ChatStreamView(View):
+    """
+    Standalone async Django view cho streaming chat.
+
+    KHÔNG dùng DRF ViewSet vì DRF dispatch() là sync và không thể await
+    coroutine response. View này trực tiếp trả về StreamingHttpResponse
+    với async generator → Django ASGI flush từng chunk ngay lập tức.
+    """
+
+    async def post(self, request):
+        # 1. Parse body
+        try:
+            body = _json.loads(request.body)
+        except Exception:
+            return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+        content = body.get('content', '').strip()
+        conversation_id = body.get('conversation_id')
+
+        if not content:
+            return JsonResponse({'error': 'Nội dung không được để trống'}, status=400)
+
+        # 2. Xác thực JWT token thủ công (không dùng DRF authentication)
+        auth_header = request.headers.get('Authorization', '')
+        if not auth_header.startswith('Bearer '):
+            return JsonResponse({'error': 'Missing or invalid Authorization header'}, status=401)
+
+        raw_token = auth_header.split(' ', 1)[1]
+        try:
+            validated = AccessToken(raw_token)
+            user_id = validated.get('user_id')
+            user = await Account.objects.aget(id=user_id)
+        except (TokenError, InvalidToken, Account.DoesNotExist) as e:
+            return JsonResponse({'error': f'Authentication failed: {str(e)}'}, status=401)
+        except Exception as e:
+            logger.error(f'ChatStreamView auth error: {e}', exc_info=True)
+            return JsonResponse({'error': 'Authentication error'}, status=401)
+
+        # 3. Tạo chat service
+        from services.chat_service import ChatService
+        chat_service = ChatService()
+
+        # 4. Async generator: bridge sync llama generator → async stream
+        async def async_stream_generator():
+            try:
+                # Dùng get_running_loop() thay vì get_event_loop() (deprecated Python 3.10+)
+                loop = _asyncio.get_running_loop()
+                # maxsize=64: backpressure để tránh memory buildup khi client chậm
+                queue = _asyncio.Queue(maxsize=64)
+                sentinel = object()
+
+                def run_sync():
+                    try:
+                        for chunk in chat_service.ask_stream(
+                            user_id=user.id,
+                            query=content,
+                            conversation_id=conversation_id
+                        ):
+                            # put_nowait sẽ raise nếu queue đầy → dùng run_coroutine_threadsafe
+                            future = _asyncio.run_coroutine_threadsafe(
+                                queue.put(chunk), loop
+                            )
+                            future.result()  # chờ put hoàn tất để có backpressure
+                    except Exception as e:
+                        logger.error(f'ask_stream error in thread: {e}', exc_info=True)
+                        _asyncio.run_coroutine_threadsafe(
+                            queue.put({'__error__': str(e)}), loop
+                        ).result()
+                    finally:
+                        _asyncio.run_coroutine_threadsafe(
+                            queue.put(sentinel), loop
+                        ).result()
+
+                thread_future = loop.run_in_executor(None, run_sync)
+
+                while True:
+                    item = await queue.get()
+                    if item is sentinel:
+                        break
+                    if isinstance(item, dict) and '__error__' in item:
+                        yield f"data: {_json.dumps({'error': item['__error__']})}\n\n"
+                        break
+                    yield f"data: {_json.dumps({'text': item})}\n\n"
+
+                await thread_future
+
+            except Exception as e:
+                logger.error(f'ChatStreamView stream error: {e}', exc_info=True)
+                yield f"data: {_json.dumps({'error': str(e)})}\n\n"
+
+        # 5. Trả về StreamingHttpResponse với async generator
+        response = StreamingHttpResponse(
+            async_stream_generator(),
+            content_type='text/event-stream'
+        )
+        response['X-Accel-Buffering'] = 'no'
+        response['Cache-Control'] = 'no-cache'
+        response['Connection'] = 'keep-alive'
+        return response

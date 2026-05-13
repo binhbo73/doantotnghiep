@@ -15,8 +15,10 @@ class APIClient {
     private instance: AxiosInstance
 
     constructor() {
+        const normalizedBase = env.apiUrl.endsWith('/') ? env.apiUrl : `${env.apiUrl}/`
+
         this.instance = axios.create({
-            baseURL: env.apiUrl,
+            baseURL: normalizedBase,
             timeout: env.defaultTimeout,
             headers: {
                 'Accept': 'application/json',

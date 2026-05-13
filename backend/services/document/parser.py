@@ -603,8 +603,13 @@ class DocumentParser:
             lines = text.split('\n')
             words = text.split()
             
-            # Use actual PDF page count when available; otherwise estimate.
-            pages = page_count if page_count and page_count > 0 else max(1, len(words) // 300)
+            # Improve page count calculation:
+            # Use actual count if provided (e.g., from PDF or improved DOCX parser)
+            if page_count and page_count > 0:
+                pages = page_count
+            else:
+                # Better estimation for DOCX/TXT: 3000 chars per page is more stable than words
+                pages = max(1, (len(text) + 2999) // 3000)
             
             # Get filename as potential title
             filename = Path(file_path).stem
@@ -701,52 +706,29 @@ class DocumentParser:
         file_type: str,
         page_count: Optional[int] = None
     ) -> Dict[str, Any]:
-        """
-        Extract metadata from parsed text
-        
-        Args:
-            text: Extracted text
-            file_path: Original file path
-            file_type: MIME type
-        
-        Returns:
-            Metadata dict
-        """
+        """Extract metadata from parsed text with improved page counting."""
         try:
-            # Count words + lines
-            lines = text.split('\n')
             words = text.split()
+            # Synchronized logic: Use provided count or character-based estimation
+            if page_count and page_count > 0:
+                pages = page_count
+            else:
+                pages = max(1, (len(text) + 2999) // 3000)
             
-            # Use actual PDF page count when available; otherwise estimate.
-            pages = page_count if page_count and page_count > 0 else max(1, len(words) // 300)
-            
-            # Get filename as potential title
             filename = Path(file_path).stem
             
-            metadata = {
+            return {
                 'title': filename,
                 'pages': pages,
                 'word_count': len(words),
                 'char_count': len(text),
-                'line_count': len(lines),
-                'file_type': file_type,
-                'language': 'unknown',  # Could add language detection
-            }
-            
-            logger.debug(f"Metadata extracted: {metadata}")
-            return metadata
-        
-        except Exception as e:
-            logger.warning(f"Error extracting metadata: {str(e)}")
-            return {
-                'title': 'Unknown',
-                'pages': 0,
-                'word_count': 0,
-                'char_count': len(text),
-                'line_count': 0,
+                'line_count': len(text.split('\n')),
                 'file_type': file_type,
                 'language': 'unknown',
             }
+        except Exception as e:
+            logger.warning(f"Error extracting metadata: {str(e)}")
+            return {'title': 'Unknown', 'pages': 0, 'word_count': 0, 'char_count': len(text), 'file_type': file_type}
     
     # ============================================================================
     # UTILITY METHODS

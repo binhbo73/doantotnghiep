@@ -1,5 +1,6 @@
 import { apiClient } from '@/lib/api-client'
 import { API_ENDPOINTS } from '@/config/api-endpoints'
+import { buildApiUrl } from '@/config/api'
 
 export interface ConversationDTO {
     id: string
@@ -181,12 +182,19 @@ export class ChatService {
         conversationId?: string
     ): Promise<void> {
         try {
-            const token = localStorage.getItem('auth_token')
-            const response = await fetch(`${API_ENDPOINTS.CHAT.MESSAGES}/stream/`, {
+            const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+
+            // ⚠️ QUAN TRỌNG: Không dùng Next.js rewrite (/api/v1/...) cho streaming.
+            // Next.js rewrites() buffer toàn bộ response trước khi forward → phá hủy SSE.
+            // Gọi thẳng backend URL để nhận stream real-time.
+            const backendBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || 'http://localhost:8000/api/v1'
+            const streamUrl = `${backendBase}/${API_ENDPOINTS.CHAT.MESSAGES}/stream/`
+
+            const response = await fetch(streamUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
                 },
                 body: JSON.stringify({
                     content,
@@ -194,7 +202,10 @@ export class ChatService {
                 })
             })
 
-            if (!response.ok) throw new Error('Stream request failed')
+            if (!response.ok) {
+                const errText = await response.text().catch(() => '')
+                throw new Error(`Stream request failed: ${response.status} ${errText.substring(0, 200)}`)
+            }
 
             const reader = response.body?.getReader()
             const decoder = new TextDecoder()

@@ -7,8 +7,9 @@ import { responseMiddleware } from './middleware/response'
 import { errorMiddleware } from './middleware/error'
 import { ApiError, NetworkError, TimeoutError } from './errors'
 import { logger } from '@/services/logger'
+import { getApiBaseUrl } from '@/config/api'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = getApiBaseUrl()
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
     timeout?: number
@@ -34,6 +35,30 @@ class ApiClient {
     }
 
     /**
+     * Normalize endpoint into a full URL.
+     * - If endpoint is absolute (http/https), return as-is.
+     * - If endpoint already starts with baseUrl, return as-is.
+     * - Otherwise join baseUrl and endpoint with a single slash.
+     */
+    private buildUrl(endpoint: string): string {
+        if (!endpoint) return this.baseUrl
+
+        // Absolute URL
+        if (/^https?:\/\//.test(endpoint)) return endpoint
+
+        // If endpoint already contains baseUrl (e.g. '/api/v1/...') return as-is
+        if (endpoint.startsWith(this.baseUrl)) return endpoint
+
+        const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`
+
+        if (this.baseUrl.endsWith('/')) {
+            return `${this.baseUrl.replace(/\/$/, '')}${normalized}`
+        }
+
+        return `${this.baseUrl}${normalized}`
+    }
+
+    /**
      * Main request method with 401 auto-refresh support
      */
     async request<T>(
@@ -42,7 +67,7 @@ class ApiClient {
         data?: unknown,
         options?: RequestOptions
     ): Promise<T> {
-        const url = `${this.baseUrl}${endpoint}`
+        const url = this.buildUrl(endpoint)
 
         // Create initial request to apply middleware
         let request = new Request(url, {
@@ -293,7 +318,7 @@ class ApiClient {
         formData: FormData,
         options?: RequestOptions
     ): Promise<T> {
-        const url = `${this.baseUrl}${endpoint}`
+        const url = this.buildUrl(endpoint)
         const timeout = options?.timeout ?? 120000
 
         const controller = new AbortController()
@@ -345,7 +370,7 @@ class ApiClient {
         filename?: string,
         options?: RequestOptions
     ): Promise<Blob> {
-        const url = `${this.baseUrl}${endpoint}`
+        const url = this.buildUrl(endpoint)
         const timeout = options?.timeout ?? 120000
 
         const controller = new AbortController()

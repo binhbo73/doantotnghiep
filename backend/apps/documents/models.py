@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.postgres.search import SearchVectorField
 from apps.users.models import Account, Department
 from core.models import BaseModel
 import uuid
@@ -243,6 +244,7 @@ class DocumentChunk(BaseModel):
         blank=True,
         help_text="Additional metadata (position, heading, etc.)"
     )
+    search_vector = SearchVectorField(null=True, blank=True, help_text="FTS search vector for BM25 retrieval")
 
     class Meta:
         db_table = "document_chunks"

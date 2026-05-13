@@ -7,9 +7,11 @@
  * 3. Store in localStorage for persistence
  */
 
+import { buildApiUrl, getApiBaseUrl } from '@/config/api'
+
 const TOKEN_KEY = 'auth_token'
 const REFRESH_TOKEN_KEY = 'refresh_token'
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = getApiBaseUrl()
 
 export function initializeToken(): void {
     if (typeof window === 'undefined') return
@@ -38,7 +40,7 @@ export async function loginAndGetToken(username: string, password: string): Prom
     try {
         console.log(`🔐 Logging in as "${username}"...`)
 
-        const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        const response = await fetch(buildApiUrl('/auth/login'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password }),
@@ -156,7 +158,7 @@ export async function refreshAccessToken(): Promise<string | null> {
 
         console.log('🔄 Attempting to refresh access token...')
 
-        const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        const response = await fetch(buildApiUrl('/auth/refresh'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refresh: refreshToken }),
@@ -238,7 +240,7 @@ export async function logoutUser(): Promise<void> {
         console.log(`   Body: { "refresh_token": "${refreshToken ? refreshToken.substring(0, 20) + '...' : 'EMPTY'}" }`)
         console.log(`   Header: Authorization: Bearer ${accessToken.substring(0, 20)}...`)
 
-        const response = await fetch(`${API_BASE_URL}/auth/logout`, {
+        const response = await fetch(buildApiUrl('/auth/logout'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

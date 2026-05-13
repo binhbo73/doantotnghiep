@@ -3,6 +3,8 @@
  * Centralized configuration with validation
  */
 
+import { getApiBaseUrl } from './api'
+
 type Environment = 'development' | 'production'
 type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -26,10 +28,7 @@ if (typeof window !== 'undefined' || process.env.NODE_ENV !== 'production') {
 
 export const env = Object.freeze({
     // API Configuration
-    apiUrl: (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(
-        /\/$/, // Remove trailing slash
-        ''
-    ),
+    apiUrl: getApiBaseUrl(),
 
     // Environment
     environment: (process.env.NODE_ENV || 'development') as Environment,

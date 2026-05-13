@@ -5,6 +5,7 @@
 import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { logger } from '@/services/logger'
+import { buildApiUrl } from '@/config/api'
 import type { Document, UploadDocumentRequest } from '@/types/api'
 
 interface UploadProgress {
@@ -125,8 +126,7 @@ export async function uploadFile(
         xhr.timeout = options?.timeout || 120000 // 2 minutes
 
         // Open first, then set headers, then send
-        const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
-        xhr.open('POST', `${baseUrl}/documents/upload`)
+        xhr.open('POST', buildApiUrl('/documents/upload'))
 
         // Set auth header after open() to avoid INVALID_STATE_ERR
         const token = localStorage.getItem('auth_token')

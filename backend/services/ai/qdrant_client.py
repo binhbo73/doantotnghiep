@@ -85,11 +85,16 @@ class QdrantClient:
             timeout: Request timeout in seconds (default 30)
             retry_times: Number of retries (default 3)
         """
-        self.url = url or settings.QDRANT_URL
+        self.url = url or getattr(settings, 'QDRANT_URL', None)
         self.collection = collection or getattr(settings, 'QDRANT_COLLECTION', 'documents')
         self.vector_size = vector_size or getattr(settings, 'QDRANT_VECTOR_SIZE', 1536)
         self.timeout = timeout or getattr(settings, 'QDRANT_TIMEOUT', 30)
         self.retry_times = retry_times or getattr(settings, 'QDRANT_RETRY_TIMES', 3)
+        self.hnsw_m = getattr(settings, 'QDRANT_HNSW_M', 16)
+        self.hnsw_ef_construction = getattr(settings, 'QDRANT_HNSW_EF_CONSTRUCTION', 256)
+        self.search_ef = getattr(settings, 'QDRANT_SEARCH_EF', 128)
+        self.full_scan_threshold = getattr(settings, 'QDRANT_FULL_SCAN_THRESHOLD', 100)
+        self.quantization = getattr(settings, 'QDRANT_QUANTIZATION', None) or None
         
         if not self.url:
             raise VectorDatabaseError("QDRANT_URL not configured in settings")
@@ -274,6 +279,8 @@ class QdrantClient:
                 }
             
             # Search
+            # Use ef for better recall during semantic search
+            search_data["search_params"] = {"hnsw_ef": self.search_ef}
             response = self._request_with_retry(
                 "POST",
                 f"{self.url}/collections/{self.collection}/points/search",
@@ -412,14 +419,25 @@ class QdrantClient:
             # Create collection
             logger.info(f"Creating collection '{self.collection}'...")
             
+            create_payload = {
+                "vectors": {
+                    "size": self.vector_size,
+                    "distance": "Cosine",
+                    "hnsw_config": {
+                        "m": self.hnsw_m,
+                        "ef_construct": self.hnsw_ef_construction,
+                        "full_scan_threshold": self.full_scan_threshold,
+                    }
+                }
+            }
+            if self.quantization:
+                create_payload["vectors"]["quantization_config"] = {
+                    "type": self.quantization
+                }
+
             create_response = requests.put(
                 f"{self.url}/collections/{self.collection}",
-                json={
-                    "vectors": {
-                        "size": self.vector_size,
-                        "distance": "Cosine"  # Cosine similarity
-                    }
-                },
+                json=create_payload,
                 timeout=self.timeout
             )
             

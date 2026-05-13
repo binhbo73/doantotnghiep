@@ -193,6 +193,233 @@ class DocumentChunker:
             logger.error(f"Error chunking text: {str(e)}", exc_info=True)
             raise DocumentProcessingError(f"Failed to chunk text: {str(e)}")
     
+    def chunk_by_pages(
+        self,
+        page_aware_text,
+        metadata: Dict[str, Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Hierarchical chunking: Split by pages, then chunk within each page.
+        
+        Each chunk belongs to exactly ONE page (no cross-page chunks).
+        
+        Args:
+            page_aware_text: PageAwareText object with page boundaries
+            metadata: Document metadata
+            
+        Returns:
+            List of chunks with accurate page_number and page_index
+            
+        Example:
+            Doc 10 pages
+            Page 1 (2000 tokens) → 10 chunks (200 tokens each)
+            Page 2 (1500 tokens) → 8 chunks (200 tokens each)
+            ...
+            Each chunk has page_number set correctly
+        """
+        try:
+            if not page_aware_text:
+                logger.warning("No page-aware text provided, falling back to regular chunking")
+                return self.chunk_text(page_aware_text.text if hasattr(page_aware_text, 'text') else '', metadata)
+            
+            text = page_aware_text.text
+            boundaries = page_aware_text.boundaries
+            total_pages = page_aware_text.total_pages
+            
+            if not text or len(text.strip()) == 0:
+                raise DocumentProcessingError("Empty text cannot be chunked")
+            
+            merged_metadata = metadata or {}
+            file_type = (merged_metadata.get('file_type') or '').lower()
+            self._apply_chunk_profile(file_type)
+            
+            logger.info(
+                f"🔍 [CHUNK_BY_PAGES] Starting hierarchical chunking\n"
+                f"   📄 Total pages: {total_pages}\n"
+                f"   💾 Total text length: {len(text)} chars"
+            )
+            
+            all_chunks = []
+            global_sequence = 0
+            page_chunk_stats = {}
+            
+            # Process each page
+            for page_idx, boundary in enumerate(boundaries):
+                page_number = boundary.page_number
+                page_start = boundary.char_start
+                page_end = boundary.char_end or len(text)
+                
+                # Extract page text
+                page_text = text[page_start:page_end]
+                
+                if not page_text or len(page_text.strip()) < 10:
+                    logger.debug(f"⏭️  Skipping empty page {page_number}")
+                    continue
+                
+                page_length = len(page_text)
+                page_words = len(page_text.split())
+                
+                # Chunk this page
+                page_chunks = self._chunk_page(
+                    page_text,
+                    page_number,
+                    page_start,
+                    merged_metadata
+                )
+                
+                # Track stats
+                page_chunk_stats[page_number] = {
+                    'count': len(page_chunks),
+                    'chars': page_length,
+                    'words': page_words,
+                }
+                
+                # Log page processing
+                logger.info(
+                    f"📌 [PAGE {page_number}] Processed\n"
+                    f"   ✂️  Chunks: {len(page_chunks)}\n"
+                    f"   📝 Content: {page_length} chars | {page_words} words"
+                )
+                
+                # Add global sequence and page sequence
+                for idx, chunk in enumerate(page_chunks):
+                    chunk['sequence'] = global_sequence
+                    chunk['page_index'] = idx  # Chunk index within this page
+                    all_chunks.append(chunk)
+                    global_sequence += 1
+            
+            # Format summary without backslash in f-string
+            summary_parts = [f"Page {p}:{s['count']} chunks" for p, s in sorted(page_chunk_stats.items())]
+            summary_str = ", ".join(summary_parts)
+            
+            logger.info(
+                f"✅ [HIERARCHY COMPLETE] {len(all_chunks)} total chunks from {total_pages} pages\n"
+                f"   📊 Summary: {summary_str}"
+            )
+            
+            return all_chunks
+        
+        except Exception as e:
+            logger.error(f"Error in hierarchical chunking: {str(e)}", exc_info=True)
+            raise DocumentProcessingError(f"Failed to chunk by pages: {str(e)}")
+    
+    def _chunk_page(
+        self,
+        page_text: str,
+        page_number: int,
+        page_char_offset: int,
+        metadata: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """
+        Chunk a single page using token window strategy.
+        
+        All chunks returned have page_number = page_number (guaranteed single page per chunk).
+        
+        Args:
+            page_text: Text of this page
+            page_number: Actual page number (1-indexed)
+            page_char_offset: Character offset of page start in full document
+            metadata: Document metadata
+            
+        Returns:
+            List of chunks with page_number, no cross-page chunks
+        """
+        try:
+            if not page_text or len(page_text.strip()) == 0:
+                return []
+            
+            word_spans = self._build_word_spans(page_text)
+            
+            # Fallback for pages with no word spans
+            if not word_spans:
+                return self._chunk_page_by_characters(
+                    page_text,
+                    page_number,
+                    page_char_offset,
+                    metadata
+                )
+            
+            breakpoints = self._build_structural_breakpoints(page_text, word_spans)
+            window_indices = self._build_token_windows(len(word_spans), breakpoints)
+            
+            page_chunks = []
+            for seq, (start_token, end_token) in enumerate(window_indices):
+                start_char = word_spans[start_token][0]
+                end_char = word_spans[end_token - 1][1]
+                chunk_text = page_text[start_char:end_char]
+                token_count = self._estimate_token_count(chunk_text)
+                
+                chunk_dict = {
+                    'text': chunk_text,
+                    'start_char': page_char_offset + start_char,  # Global offset
+                    'end_char': page_char_offset + end_char,      # Global offset
+                    'token_start': start_token,
+                    'token_end': end_token,
+                    'token_count': token_count,
+                    'page_number': page_number,
+                    'metadata': {
+                        **metadata,
+                        'page_number': page_number,
+                    },
+                }
+                page_chunks.append(chunk_dict)
+                
+                # Log individual chunk
+                logger.debug(
+                    f"  📌 Page {page_number} Chunk {seq}: "
+                    f"{token_count} tokens | {len(chunk_text)} chars | "
+                    f"Position: [{page_char_offset + start_char}:{page_char_offset + end_char}]"
+                )
+            
+            logger.debug(
+                f"📄 [PAGE {page_number}] Completed: {len(page_chunks)} chunks"
+            )
+            
+            return page_chunks
+        
+        except Exception as e:
+            logger.error(f"Error chunking page {page_number}: {str(e)}", exc_info=True)
+            return []
+    
+    def _chunk_page_by_characters(
+        self,
+        page_text: str,
+        page_number: int,
+        page_char_offset: int,
+        metadata: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Fallback: chunk page by character windows."""
+        page_chunks = []
+        stride = max(1, self.chunk_size - self.chunk_overlap)
+        start_char = 0
+        seq = 0
+        
+        while start_char < len(page_text):
+            end_char = min(start_char + self.chunk_size, len(page_text))
+            chunk_text = page_text[start_char:end_char]
+            
+            if chunk_text.strip():
+                page_chunks.append({
+                    'text': chunk_text,
+                    'start_char': page_char_offset + start_char,
+                    'end_char': page_char_offset + end_char,
+                    'token_start': start_char,
+                    'token_end': end_char,
+                    'token_count': self._estimate_token_count(chunk_text),
+                    'page_number': page_number,
+                    'metadata': {
+                        **metadata,
+                        'page_number': page_number,
+                    },
+                })
+                seq += 1
+            
+            if end_char >= len(page_text):
+                break
+            start_char += stride
+        
+        return page_chunks
+    
     # ============================================================================
     # CHUNKING + EMBEDDING WORKFLOW
     # ============================================================================
@@ -201,7 +428,7 @@ class DocumentChunker:
         self,
         text: str,
         document_id: str,
-        llama_client,
+        embedding_client,
         qdrant_client,
         metadata: Dict[str, Any] = None,
     ) -> List[Dict[str, Any]]:
@@ -228,8 +455,8 @@ class DocumentChunker:
                 try:
                     chunk_text = chunk_dict['text']
                     
-                    # 1. Generate embedding via LLM
-                    embedding = self._generate_embedding(chunk_text, llama_client)
+                    # 1. Generate embedding via configured embedding backend
+                    embedding = self._generate_embedding(chunk_text, embedding_client)
                     if not embedding:
                         continue
 
@@ -239,7 +466,7 @@ class DocumentChunker:
                         content=chunk_text,
                         chunk_index=idx,
                         token_count=chunk_dict.get('token_count', self._estimate_token_count(chunk_text)),
-                        page_number=1,
+                        page_number=chunk_dict.get('metadata', {}).get('page_number', 1),
                         node_type='detail',
                         metadata={
                             'start_char': chunk_dict.get('start_char', 0),
@@ -285,7 +512,7 @@ class DocumentChunker:
                         chunk=chunk_obj,
                         qdrant_vector_id=vector_id,
                         embedding_dimension=len(embedding),
-                        embedding_model=llama_client.model
+                        embedding_model=embedding_client.model
                     )
                     
                     # Add to result list
@@ -485,25 +712,21 @@ class DocumentChunker:
     def _generate_embedding(
         self,
         text: str,
-        llama_client
+        embedding_client
     ) -> List[float]:
         """
-        Generate embedding for text via LLM
-        
-        Uses LLM to convert text to vector representation
-        
+        Generate embedding for text via configured embedding backend.
+
         Args:
             text: Text to embed
-            llama_client: LlamaClient instance
-        
+            embedding_client: EmbeddingClient or LlamaClient-like client
+
         Returns:
             Embedding vector (list of floats)
         """
         try:
-            # Use LlamaClient to generate embedding via /embeddings endpoint
-            embedding = llama_client.create_embedding(text)
+            embedding = embedding_client.create_embedding(text)
             return embedding
-        
         except Exception as e:
             logger.error(f"Error generating embedding: {str(e)}")
             raise DocumentProcessingError(f"Failed to generate embedding: {str(e)}")

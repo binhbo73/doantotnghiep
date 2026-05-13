@@ -35,11 +35,13 @@ import hashlib
 import uuid
 from typing import Optional, List
 from django.db import transaction
+from django.conf import settings
 from django.utils import timezone
 from django.core.files.uploadedfile import UploadedFile
 from django.apps import apps
 
 from apps.documents.models import Document
+from services.ai.embedding_client import EmbeddingClient
 from core.exceptions import (
     ValidationError,
     FileSizeExceededError,
@@ -420,10 +422,12 @@ class DocumentUploadService:
             department_id=resolved['department_id'],
             folder_id=resolved['folder_id'],
             access_scope=resolved['access_scope'],
+            embedding_model=getattr(settings, 'EMBEDDING_MODEL', 'bge-m3'),
             status='pending',
             metadata={
                 'description': description or '',
                 'original_ext': ext,
+                'embedding_model': getattr(settings, 'EMBEDDING_MODEL', 'bge-m3'),
             },
         )
 
@@ -448,116 +452,56 @@ class DocumentUploadService:
     # =========================================================================
 
     def _process_document(self, document, storage_path: str):
-        """
-        Pipeline hoàn chỉnh (OPTIMIZED):
-          Parse text → Chunk + Embed (via DocumentChunker)
-        Cập nhật document.status = 'completed' | 'failed'.
-        
-        OPTIMIZATION: Measure time, handle DOCX fast-path
+        """Simplified processing: delegate to DocumentIngestPipeline.
+
+        The pipeline will perform parse → chunk → embed → persist and
+        return a PipelineContext we can use to update the Document row.
         """
         import time
-        doc_id = str(document.id)
         start_time = time.time()
 
-        # Đánh dấu đang xử lý
+        # Mark processing
         self._update_status(document, 'processing')
 
         try:
-            # ── 5a. Parse text ────────────────────────────────────────────────
-            from services.document.parser import DocumentParser
-            parser = DocumentParser(use_cache=True)  # Enable Redis cache
-            
-            parse_start = time.time()
-            try:
-                # Pass the MIME type stored in DB because storage_path might lack extension
-                text, parse_meta = parser.parse_file(storage_path, file_type=document.mime_type)
-                parse_time = time.time() - parse_start
-                
-                # Log cache status + timing
-                from_cache = parse_meta.get('from_cache', False)
-                logger.info(
-                    f"[Upload] Parsed {doc_id} ({document.file_type}): "
-                    f"{parse_time:.2f}s {'(CACHED)' if from_cache else ''}"
-                )
-            except DocumentProcessingError as e:
-                logger.error(f"[Upload] Parse failed for {doc_id}: {e}")
-                self._update_status(document, 'failed', error=str(e))
-                return
+            from services.pipeline.orchestrator import DocumentIngestPipeline
 
-            if not text or not text.strip():
-                logger.warning(f"[Upload] Empty text after parsing {doc_id}")
-                self._update_status(document, 'failed', error='Không trích xuất được nội dung')
-                return
+            pipeline = DocumentIngestPipeline()
+            metadata = {
+                'source_name': document.original_name,
+                'file_type': document.file_type,
+                'uploader_id': str(document.uploader_id or ''),
+                'embedding_model': getattr(settings, 'EMBEDDING_MODEL', document.embedding_model or ''),
+            }
 
-            # ── 5b. Khởi tạo AI clients ──────────────────────────────────────
-            try:
-                from services.ai.llama_client import LlamaClient
-                from services.ai.qdrant_client import QdrantClient
-                llama = LlamaClient()
-                qdrant = QdrantClient()
-            except Exception as e:
-                logger.error(f"[Upload] AI client init failed: {e}")
-                self._update_status(document, 'failed', error=f"AI Service error: {str(e)}")
-                return
+            success, context = pipeline.execute(
+                file_path=storage_path,
+                user_id=str(document.uploader_id or ''),
+                document_id=str(document.id),
+                metadata=metadata,
+            )
 
-            # ── 5c. Chunk & Embed ─────────────────────────────────────────────
-            from services.document.chunker import DocumentChunker
-            chunker = DocumentChunker()
-
-            # Persist runtime chunking strategy for observability/tuning
-            document.chunking_strategy = chunker.strategy_name
-            document.save(update_fields=['chunking_strategy'])
-            
-            # chunk_and_embed handles: chunking, embedding, DB saving, Qdrant saving, and linking
-            chunk_start = time.time()
-            try:
-                with transaction.atomic():
-                    processed_chunks = chunker.chunk_and_embed(
-                        text=text,
-                        document_id=doc_id,
-                        llama_client=llama,
-                        qdrant_client=qdrant,
-                        metadata={
-                            'file_type': document.file_type,
-                            'page_count': parse_meta.get('pages', 0),
-                            'word_count': parse_meta.get('word_count', 0),
-                            'source_name': document.original_name,
-                        },
-                    )
-                chunk_time = time.time() - chunk_start
-            except Exception as e:
-                logger.error(f"[Upload] Chunk & Embed failed for {doc_id}: {e}")
-                self._update_status(document, 'failed', error=f"Processing error: {str(e)}")
-                return
-
-            # ── 5d. Cập nhật Document status ──────────────────────────────────
-            if processed_chunks:
-                document.status = 'completed'
-                document.chunking_strategy = chunker.strategy_name
-                total_time = time.time() - start_time
-                
-                document.metadata.update({
-                    'chunk_count': len(processed_chunks),
-                    'word_count': parse_meta.get('word_count', 0),
-                    'page_count': parse_meta.get('pages', 0),
-                    'processed_at': timezone.now().isoformat(),
-                    'processing_metrics': {
-                        'parse_time_sec': round(parse_time, 2),
-                        'chunk_embed_time_sec': round(chunk_time, 2),
-                        'total_time_sec': round(total_time, 2),
-                    }
-                })
-                document.save(update_fields=['status', 'metadata'])
-                logger.info(
-                    f"[Upload] Document {doc_id} completed: "
-                    f"{len(processed_chunks)} chunks, "
-                    f"Parse: {parse_time:.2f}s, Embed: {chunk_time:.2f}s, Total: {total_time:.2f}s"
-                )
+            # Update document based on pipeline result
+            if success:
+                try:
+                    document.status = 'completed'
+                    document.metadata = document.metadata or {}
+                    document.metadata.update({
+                        'chunk_count': len(context.chunks),
+                        'processed_at': time.time(),
+                        'pipeline_metrics_ms': context.total_time_ms(),
+                    })
+                    document.save(update_fields=['status', 'metadata'])
+                    logger.info(f"[Upload] Document {document.id} processed by pipeline: {len(context.chunks)} chunks")
+                except Exception as e:
+                    logger.error(f"[Upload] Failed to update document after pipeline success: {e}")
             else:
-                self._update_status(document, 'failed', error='Không tạo được chunk hoặc embedding nào')
+                err_msg = '; '.join([e.get('error', '') for e in context.errors]) or 'Unknown pipeline error'
+                logger.error(f"[Upload] Pipeline failed for document {document.id}: {err_msg}")
+                self._update_status(document, 'failed', error=err_msg)
 
         except Exception as e:
-            logger.error(f"[Upload] Unexpected error processing {doc_id}: {e}", exc_info=True)
+            logger.exception(f"[Upload] Pipeline execution error for document {document.id}: {e}")
             self._update_status(document, 'failed', error=str(e))
 
 

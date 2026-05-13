@@ -3,6 +3,8 @@
  * Sends logs to backend in production, console in development
  */
 
+import { buildApiUrl } from '@/config/api'
+
 type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 interface LogEntry {
@@ -159,7 +161,7 @@ class Logger {
             }
 
             await fetch(
-                `${process.env.NEXT_PUBLIC_API_URL}/logs`,
+                buildApiUrl('/logs'),
                 {
                     method: 'POST',
                     headers: {

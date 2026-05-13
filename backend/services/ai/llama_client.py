@@ -111,6 +111,7 @@ class LlamaClient:
         max_tokens: int = None,
         temperature: float = None,
         top_p: float = None,
+        timeout: int = None,
     ) -> str:
         """
         Simple text completion
@@ -148,7 +149,7 @@ class LlamaClient:
                 "POST",
                 f"{self.api_url}/completions",
                 json=data,
-                timeout=self.timeout
+                timeout=timeout or self.timeout
             )
             
             # Extract text from response
@@ -247,6 +248,7 @@ class LlamaClient:
         max_tokens: int = None,
         temperature: float = None,
         system_prompt: str = None,
+        timeout: int = None,
     ) -> str:
         """
         Chat completion (conversation-based)
@@ -286,7 +288,7 @@ class LlamaClient:
                 "POST",
                 f"{self.api_url}/chat/completions",
                 json=data,
-                timeout=self.timeout
+                timeout=timeout or self.timeout
             )
             
             if response.status_code == 200:
@@ -365,6 +367,98 @@ class LlamaClient:
             logger.error(f"Chat stream error: {str(e)}", exc_info=True)
             raise LLMServiceError(f"Failed to chat stream: {str(e)}")
     
+    def score_candidates(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+        max_tokens: int = None,
+    ) -> List[float]:
+        """
+        Score candidate chunks for relevance to a query using the LLM.
+
+        Args:
+            query: User query/question
+            candidates: List of candidate dicts with a 'snippet' field
+            max_tokens: Max tokens for the response, defaults to 256
+
+        Returns:
+            List of normalized scores in the range [0.0, 1.0]
+        """
+        if not candidates:
+            return []
+
+        if len(candidates) > 20:
+            logger.warning(
+                f"Limiting {len(candidates)} candidates to 20 for performance"
+            )
+            candidates = candidates[:20]
+
+        try:
+            prompt = self._build_ranking_prompt(query, candidates)
+            response = self.complete(
+                prompt=prompt,
+                max_tokens=max_tokens or 256,
+                temperature=0.1,
+            )
+            scores = self._extract_scores_from_response(response, len(candidates))
+            logger.debug(f"LLM scored {len(scores)} candidates")
+            return scores
+        except Exception as e:
+            logger.error(f"Error scoring candidates: {str(e)}", exc_info=True)
+            raise LLMServiceError(f"Failed to score candidates: {str(e)}")
+
+    def _build_ranking_prompt(self, query: str, candidates: List[Dict[str, Any]]) -> str:
+        """Build a ranking prompt for the LLM."""
+        prompt = (
+            f'Rate the relevance of each snippet to the query: "{query}"\n\n'
+            "Give one score per line in the same order as the snippets. "
+            "Use a 0-10 scale where 0 means not relevant and 10 means highly relevant.\n\n"
+            "Snippets:\n"
+        )
+
+        for index, candidate in enumerate(candidates, start=1):
+            snippet = (candidate.get("snippet") or "")[:200]
+            if not snippet:
+                snippet = "[Empty snippet]"
+            prompt += f"{index}. {snippet}\n"
+
+        prompt += "\nReturn only numbers, one per line."
+        return prompt
+
+    def _extract_scores_from_response(
+        self,
+        response: str,
+        expected_count: int,
+    ) -> List[float]:
+        """Extract numeric scores from the LLM response and normalize them."""
+        import re
+
+        scores: List[float] = []
+
+        for line in response.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+
+            match = re.search(r"(\d+(?:\.\d+)?)", line)
+            if match:
+                try:
+                    score_raw = float(match.group(1))
+                    score_norm = max(0.0, min(1.0, score_raw / 10.0))
+                    scores.append(score_norm)
+                except (ValueError, ZeroDivisionError):
+                    scores.append(0.5)
+            else:
+                scores.append(0.5)
+
+            if len(scores) >= expected_count:
+                break
+
+        while len(scores) < expected_count:
+            scores.append(0.5)
+
+        return scores[:expected_count]
+
     def create_embedding(self, text: str) -> List[float]:
         """
         Generate embedding vector for text

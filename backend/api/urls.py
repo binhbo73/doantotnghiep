@@ -76,6 +76,7 @@ from api.views.chat_views import (
     MessageListView,
     MessageDetailView,
     MessageFeedbackView,
+    ChatStreamView,
 )
 from api.views import AvailableAttachmentsView
 from api.views.audit_views import (
@@ -313,9 +314,9 @@ urlpatterns = [
     }), name="chat_messages_send"),
     
     # POST /api/v1/chat/messages/stream - Streaming Q&A
-    re_path(r"^chat/messages/stream/?$", MessageSendView.as_view({
-        'post': 'stream'
-    }), name="chat_messages_stream"),
+    # Dùng ChatStreamView (async Django View) thay vì DRF ViewSet
+    # vì DRF dispatch() là sync và không thể await async def
+    re_path(r"^chat/messages/stream/?$", ChatStreamView.as_view(), name="chat_messages_stream"),
     
     # GET /api/v1/chat/messages/{id} - Get message details
     re_path(rf"^chat/messages/(?P<message_id>{UUID_PATTERN})/?$", MessageDetailView.as_view({

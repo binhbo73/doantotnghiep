@@ -84,8 +84,10 @@ services:
       # llama-server sử dụng URL chuẩn OpenAI /v1
       LLM_BASE_URL: http://llama-server:8080/v1
       LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
-      EMBEDDING_BASE_URL: http://llama-server:8080/v1
-      EMBEDDING_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf # llama.cpp server có thể dùng chung 1 model cho cả chat và embed
+      EMBEDDING_BACKEND: flag
+      EMBEDDING_MODEL: /app/models/bge-m3
+      EMBEDDING_DEVICE: cpu
+      # EMBEDDING_BASE_URL không dùng khi backend=flag
       
       # Embedding chunk configuration to fit llama.cpp token limits
       CHUNK_TOKEN_SIZE_PDF: "100"
@@ -108,6 +110,7 @@ services:
       
     volumes:
       - ./backend:/app
+      - ./models:/app/models:ro
       - backend_logs:/app/logs
       - backend_uploads:/app/uploads
       - backend_qdrant:/app/qdrant_data
@@ -126,9 +129,46 @@ services:
         condition: service_started
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
-      interval: 10s
-      timeout: 5s
+      interval: 30s
+      timeout: 15s
       retries: 5
+    networks:
+      - rag_network
+
+  # 4. Celery Worker - Background task processing for async summarization
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_celery_worker
+    restart: unless-stopped
+    command: celery -A config worker --loglevel=info
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rag_system}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+      LLM_BASE_URL: http://llama-server:8080/v1
+      LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+      EMBEDDING_BACKEND: flag
+      EMBEDDING_MODEL: /app/models/bge-m3
+      EMBEDDING_DEVICE: cpu
+    volumes:
+      - ./backend:/app
+      - ./models:/app/models:ro
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+    depends_on:
+      - postgres
+      - redis
+      - qdrant
+      - llama-server
     networks:
       - rag_network
 
@@ -164,11 +204,10 @@ services:
       LLAMA_ARG_PORT: 8080
       LLAMA_ARG_CTX_SIZE: 8192
       LLAMA_ARG_N_GPU_LAYERS: 35
-      LLAMA_ARG_EMBEDDING: "true"
-      LLAMA_ARG_POOLING: "mean"
+      LLAMA_ARG_EMBEDDING: "false"
       LLAMA_ARG_BATCH: "1024"
       LLAMA_ARG_UBATCH: "1024"
-    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 8192 --embedding --pooling mean --batch-size 1024 --ubatch-size 1024
+    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 8192 --batch-size 1024 --ubatch-size 1024
     networks:
       - rag_network
 
