@@ -138,14 +138,30 @@ export const useChat = (options: UseChatOptions = {}) => {
                 }
                 setMessages((prev) => [...prev, initialBotMsg])
 
-                // 4. Gọi Stream API
+                // 4. Gọi Stream API — truyền document_ids/folder_ids để backend kích hoạt RAG
+                // attachments.documentIds đã được gắn vào conversation ở bước 1 (attachConversationResources),
+                // nhưng truyền thêm xuống stream để backend không cần query DB thêm 1 lần nữa.
                 let fullContent = ''
-                await ChatService.sendMessageStream(content, (chunk) => {
-                    fullContent += chunk
-                    setMessages((prev) =>
-                        prev.map(msg => msg.id === botMsgId ? { ...msg, content: fullContent } : msg)
-                    )
-                }, conversationId)
+                await ChatService.sendMessageStream(
+                    content,
+                    (chunk) => {
+                        fullContent += chunk
+                        setMessages((prev) =>
+                            prev.map(msg => msg.id === botMsgId ? { ...msg, content: fullContent } : msg)
+                        )
+                    },
+                    conversationId,
+                    attachments?.documentIds,
+                    attachments?.folderIds,
+                    (status) => {
+                        // Hiển thị status (VD: "Đang tìm tài liệu...") nếu LLM chưa gửi token nào
+                        if (!fullContent) {
+                            setMessages((prev) =>
+                                prev.map(msg => msg.id === botMsgId ? { ...msg, content: `_⏳ ${status}_` } : msg)
+                            )
+                        }
+                    }
+                )
 
                 // 5. Cập nhật danh sách hội thoại nếu cần
                 await fetchConversations()

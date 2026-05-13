@@ -31,18 +31,27 @@ class BM25Searcher:
     # BM25 parameters
     K1 = 2.0  # term frequency saturation parameter
     B = 0.75  # field length normalization parameter
-    FTS_CONFIG = getattr(settings, 'POSTGRES_FTS_CONFIG', 'english')
+    # ✅ P0#2: Dùng 'simple' config cho PostgreSQL FTS.
+    # 'english' stemming + stopword list không phù hợp tiếng Việt — tất cả từ
+    # tiếng Việt bị coi là unknown, stemming sai, stopword không lọc đúng.
+    # 'simple' không stemming, không stopword → phù hợp cho multilingual.
+    # Khi có giải pháp FTS tiếng Việt (vd: pg_bigm + custom dictionary),
+    # có thể chuyển sang config chuyên dụng.
+    FTS_CONFIG = getattr(settings, 'POSTGRES_FTS_CONFIG', 'simple')
 
     def __init__(self):
         self.DocumentChunk = apps.get_model('documents', 'DocumentChunk')
 
-    def search(self, query: str, top_k: int = 20, document_id: str = None) -> List[Dict[str, Any]]:
+    def search(self,        query: str, 
+        top_k: int = 20, 
+        document_ids: List[str] = None
+    ) -> List[Dict[str, Any]]:
         """Search chunks using BM25 scoring.
         
         Args:
             query: Search query string
             top_k: Number of top results to return
-            document_id: Optional filter by document
+            document_ids: Optional list of document IDs to filter
         
         Returns:
             List of {chunk_id, document_id, score, content} sorted by BM25 score
@@ -55,9 +64,12 @@ class BM25Searcher:
                 return []
 
             # Search directly on the migrated tsvector field
+            # Fix: OR logic for multi-word queries - AND logic fails for Tieng Viet
+            # vi khong chunk nao chua TAT CA cac tu cung luc
+            or_terms = ' | '.join(terms)
             search_query = SearchQuery(
-                ' '.join(terms),
-                search_type='websearch',
+                or_terms,
+                search_type='raw',
                 config=self.FTS_CONFIG
             )
 
@@ -69,9 +81,12 @@ class BM25Searcher:
                 is_deleted=False
             )
 
-            # Optional: filter by document
-            if document_id:
-                queryset = queryset.filter(document_id=document_id)
+            # Optional: filter by document(s)
+            if document_ids:
+                if isinstance(document_ids, list):
+                    queryset = queryset.filter(document_id__in=document_ids)
+                else:
+                    queryset = queryset.filter(document_id=document_ids)
 
             # Order by BM25 rank
             queryset = queryset.order_by('-rank')[:top_k]
@@ -97,7 +112,7 @@ class BM25Searcher:
     def search_with_filters(
         self,
         query: str,
-        document_id: str = None,
+        document_ids: List[str] = None,
         page_number: int = None,
         top_k: int = 20
     ) -> List[Dict[str, Any]]:
@@ -117,9 +132,12 @@ class BM25Searcher:
             if not terms:
                 return []
 
+            # Fix: OR logic for multi-word queries - AND logic fails for Tieng Viet
+            # vi khong chunk nao chua TAT CA cac tu cung luc
+            or_terms = ' | '.join(terms)
             search_query = SearchQuery(
-                ' '.join(terms),
-                search_type='websearch',
+                or_terms,
+                search_type='raw',
                 config=self.FTS_CONFIG
             )
 
@@ -131,8 +149,11 @@ class BM25Searcher:
             )
 
             # Apply filters
-            if document_id:
-                queryset = queryset.filter(document_id=document_id)
+            if document_ids:
+                if isinstance(document_ids, list):
+                    queryset = queryset.filter(document_id__in=document_ids)
+                else:
+                    queryset = queryset.filter(document_id=document_ids)
             if page_number:
                 queryset = queryset.filter(page_number=page_number)
 
@@ -178,7 +199,12 @@ class BM25Searcher:
         terms = cleaned.split()
 
         # Filter: keep terms >= 3 chars, remove duplicates
-        valid_terms = list(dict.fromkeys(t for t in terms if len(t) >= 3))
+        # ✅ P0#3: Giữ lại từ >= 2 ký tự thay vì >= 3.
+        # Tiếng Việt có rất nhiều từ 2 ký tự quan trọng.
+        ONE_CHAR_WHITELIST = {'ý', 't', 'p', 'k'}
+        valid_terms = list(dict.fromkeys(
+            t for t in terms if len(t) >= 2 or t.lower() in ONE_CHAR_WHITELIST
+        ))
 
         if not valid_terms:
             # Fallback: if all terms too short, use original query (risky but better than nothing)

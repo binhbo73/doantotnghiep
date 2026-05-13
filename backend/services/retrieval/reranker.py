@@ -11,8 +11,10 @@ class Reranker:
     Otherwise falls back to a lightweight lexical relevance score.
     """
 
-    def __init__(self, llama_client: Optional[Any] = None):
-        self.llama = llama_client
+    def __init__(self, llama_client: Optional[Any] = None, use_llm: bool = False):
+        # Fix A: LLM reranker disabled by default - too slow (90s+) on CPU Qwen3-4B
+        # and poorly calibrated. Lexical-only is fast (<1ms) and reliable.
+        self.llama = llama_client if use_llm else None
 
     def rerank(self, query: str, candidates: List[Dict[str, Any]], top_k: int = 5) -> List[Dict[str, Any]]:
         """Rerank candidates using LLM if available, fallback to lexical scoring.
@@ -87,4 +89,95 @@ class Reranker:
             base = float(c.get('score', 0.0) or 0.0)
             c['score'] = base + (overlap * 0.1)
 
-        return sorted(candidates, key=lambda x: x['score'], reverse=True)[:top_k]
+        ranked = sorted(candidates, key=lambda x: x['score'], reverse=True)[:top_k]
+        # P2#12: Apply MMR diversity re-ranking
+        if len(ranked) > 3:
+            ranked = self._mmr_diversify(query, ranked, top_k, lambda_param=0.7)
+        return ranked
+
+    def rerank_pairwise(self, query, candidates, top_k=5):
+        """P2#8: Pairwise comparison reranking - chinh xac hon pointwise.
+        LLM so sanh tung CAP candidates thay vi cham diem tung cai.
+        """
+        if not candidates or len(candidates) <= 1:
+            return candidates[:top_k]
+        
+        max_compare = min(15, len(candidates))
+        compare_candidates = candidates[:max_compare]
+        
+        if self.llama and hasattr(self.llama, 'compare_candidates'):
+            try:
+                wins = {i: 0 for i in range(len(compare_candidates))}
+                comparisons = 0
+                
+                for i in range(len(compare_candidates)):
+                    for j in range(i + 1, len(compare_candidates)):
+                        try:
+                            result = self.llama.compare_candidates(
+                                query=query,
+                                candidate_a=compare_candidates[i],
+                                candidate_b=compare_candidates[j],
+                            )
+                            if result > 0:
+                                wins[i] += 1
+                            elif result < 0:
+                                wins[j] += 1
+                            comparisons += 1
+                        except Exception:
+                            continue
+                
+                for idx, c in enumerate(compare_candidates):
+                    c['score'] = wins[idx] / max(1, len(compare_candidates) - 1)
+                
+                compare_candidates.sort(key=lambda x: x['score'], reverse=True)
+                return compare_candidates[:top_k]
+            except Exception as e:
+                logger.warning(f"Pairwise rerank failed: {e}")
+        
+        return self.rerank(query, candidates, top_k)
+
+    def _mmr_diversify(self, query, candidates, top_k, lambda_param=0.7):
+        """P2#12: MMR diversity re-ranking - can bang relevance va diversity.
+        
+        Dung Jaccard similarity de do overlap giua cac snippet,
+        uu tien candidate vua relevant vua khac biet voi nhung cai da chon.
+        lambda_param=0.7: 70% relevance, 30% diversity.
+        """
+        if not candidates or len(candidates) <= 1:
+            return candidates[:top_k]
+        
+        def tokenize(snippet):
+            return set((snippet or '').lower().split())
+        
+        tokenized = [tokenize(c.get('snippet', '')) for c in candidates]
+        selected = []
+        remaining = list(range(len(candidates)))
+        selected.append(remaining.pop(0))
+        
+        while len(selected) < min(top_k, len(candidates)):
+            if not remaining:
+                break
+            best_idx = None
+            best_score = -float('inf')
+            
+            for idx in remaining:
+                relevance = candidates[idx].get('score', 0.5)
+                max_sim = 0.0
+                for s_idx in selected:
+                    a, b = tokenized[idx], tokenized[s_idx]
+                    if a and b:
+                        sim = len(a & b) / max(1, len(a | b))
+                        max_sim = max(max_sim, sim)
+                
+                mmr_score = lambda_param * relevance - (1.0 - lambda_param) * max_sim
+                if mmr_score > best_score:
+                    best_score = mmr_score
+                    best_idx = idx
+            
+            if best_idx is not None:
+                selected.append(best_idx)
+                remaining.remove(best_idx)
+            else:
+                break
+        
+        return [candidates[i] for i in selected]

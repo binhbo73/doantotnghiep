@@ -244,6 +244,12 @@ class EnhancedDocumentChunker:
                     prev_chunk_obj = page_container
                     db_chunk_index += 1
 
+                # P1#5: Batch embed all chunk texts for this page
+                page_chunk_texts = [c['text'] for c in page_chunks]
+                page_embeddings = self.base_chunker.batch_generate_embeddings(
+                    page_chunk_texts, embedding_client
+                )
+                
                 for page_idx, chunk_dict in enumerate(page_chunks):
                     try:
                         chunk_text = chunk_dict['text']
@@ -279,7 +285,7 @@ class EnhancedDocumentChunker:
                             vector_id = chunk_obj.vector_id
                         else:
                             # Generate embedding ONLY for new chunks
-                            embedding = self.base_chunker._generate_embedding(chunk_text, embedding_client)
+                            embedding = page_embeddings[page_idx] if page_idx < len(page_embeddings) else self.base_chunker._generate_embedding(chunk_text, embedding_client)
                             if not embedding:
                                 logger.warning(f"⚠️ Failed to generate embedding for chunk {db_chunk_index}")
                                 continue
@@ -347,7 +353,7 @@ class EnhancedDocumentChunker:
                     except Exception as e:
                         logger.error(f"❌ Error processing chunk index {db_chunk_index}: {e}", exc_info=True)
                         continue
-            
+
             # ✅ REMOVED: Redundant RAPTOR thread. 
             # Building RAPTOR tree is now handled exclusively in PersistenceStage 
             # to ensure base chunks are fully saved first and avoid race conditions.

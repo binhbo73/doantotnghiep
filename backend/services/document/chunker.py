@@ -39,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 
 class DocumentChunker:
+    # ✅ P1#4: Lazy-loaded BGE-M3/XLM-RoBERTa tokenizer cho đếm token chính xác
+    _tokenizer = None
     """
     Document chunker - splits text into semantic chunks + generates embeddings
     
@@ -89,11 +91,30 @@ class DocumentChunker:
             f"strategy={self.strategy_name}, chunk_size={self.chunk_size}, overlap={self.chunk_overlap}"
         )
     
+    @classmethod
+    def _get_tokenizer(cls):
+        """Lazy-load BGE-M3/XLM-RoBERTa tokenizer để đếm token chính xác."""
+        if cls._tokenizer is None:
+            try:
+                from transformers import AutoTokenizer
+                model_name = getattr(settings, 'EMBEDDING_MODEL', 'BAAI/bge-m3')
+                cls._tokenizer = AutoTokenizer.from_pretrained(
+                    model_name, use_fast=True
+                )
+                logger.info(f"✅ BGE-M3 tokenizer loaded: {model_name}")
+            except Exception as e:
+                logger.warning(
+                    f"Không thể load BGE-M3 tokenizer: {e}. "
+                    f"Dùng heuristic word_count * 1.5 thay thế."
+                )
+                cls._tokenizer = None
+        return cls._tokenizer
+
     def _estimate_token_count(self, text: str) -> int:
         """
         Estimate token count for text using heuristics.
         
-        Since we can't access llama tokenizer directly, use conservative estimation:
+        ✅ P1#4: Dùng BGE-M3/XLM-RoBERTa tokenizer thật để đếm token chính xác.
         - Base: word count
         - Multiplier: 1.5x for Vietnamese/Asian languages and complex text
         - Add buffer for punctuation and special chars
@@ -101,17 +122,20 @@ class DocumentChunker:
         if not text:
             return 0
         
+        # P1#4: Dung BGE-M3/XLM-RoBERTa tokenizer that neu co
+        tokenizer = self._get_tokenizer()
+        if tokenizer is not None:
+            try:
+                encoding = tokenizer.encode(text, add_special_tokens=False)
+                return max(1, len(encoding))
+            except Exception as e:
+                logger.debug('Tokenizer encode failed: %s, using heuristic', e)
+        
+        # Fallback heuristic
         word_count = len(text.split())
-        
-        # Conservative estimation: tokens ≈ words * 1.5
-        # This accounts for subword tokenization in multilingual models like Qwen
         estimated_tokens = int(word_count * 1.5)
-        
-        # Add buffer for punctuation, numbers, special characters
-        # Count non-alphanumeric characters as potential extra tokens
         special_chars = len(re.findall(r'[^a-zA-Z0-9\s]', text))
-        estimated_tokens += min(special_chars, word_count // 2)  # Cap at 50% of word count
-        
+        estimated_tokens += min(special_chars, word_count // 2)
         return max(1, estimated_tokens)
     
     # ============================================================================
@@ -730,6 +754,50 @@ class DocumentChunker:
         except Exception as e:
             logger.error(f"Error generating embedding: {str(e)}")
             raise DocumentProcessingError(f"Failed to generate embedding: {str(e)}")
+
+    def batch_generate_embeddings(
+        self,
+        texts: List[str],
+        embedding_client
+    ) -> List[List[float]]:
+        """
+        P1#5: Batch generate embeddings cho nhieu texts cung luc.
+        
+        FlagEmbedding BGE-M3 ho tro batch encode qua embedder.encode([texts...])
+        nhanh hon 5-10x so voi goi tung cai mot.
+        
+        Args:
+            texts: List of texts to embed
+            embedding_client: EmbeddingClient instance
+            
+        Returns:
+            List of embedding vectors (cung thu tu voi texts)
+        """
+        if not texts:
+            return []
+        
+        try:
+            # Kiem tra xem embedding_client co ho tro batch khong
+            if hasattr(embedding_client, 'embedder') and hasattr(embedding_client.embedder, 'encode'):
+                # FlagEmbedding backend - batch encode
+                result = embedding_client.embedder.encode(
+                    texts,
+                    return_dense=True,
+                    return_sparse=False,
+                    return_colbert_vecs=False,
+                )
+                if isinstance(result, dict) and 'dense_vecs' in result:
+                    import numpy as np
+                    dense = np.asarray(result['dense_vecs'])
+                    return [dense[i].tolist() for i in range(len(texts))]
+            
+            # Fallback: goi tung cai mot (giu lai de backward compatibility)
+            logger.debug(f"Batch embedding not supported, falling back to sequential ({len(texts)} texts)")
+            return [embedding_client.create_embedding(t) for t in texts]
+            
+        except Exception as e:
+            logger.error(f"Batch embedding failed: {e}, falling back to sequential")
+            return [embedding_client.create_embedding(t) for t in texts]
     
     # ============================================================================
     # RERANKING (Future)

@@ -174,12 +174,21 @@ export class ChatService {
     }
 
     /**
-     * Send a message with STREAMING support
+     * Send a message with STREAMING support.
+     *
+     * @param content        - Nội dung câu hỏi
+     * @param onChunk        - Callback nhận từng text chunk khi stream
+     * @param conversationId - ID cuộc trò chuyện (optional)
+     * @param documentIds    - IDs tài liệu đính kèm để giới hạn phạm vi RAG search
+     * @param folderIds      - IDs thư mục đính kèm để giới hạn phạm vi RAG search
      */
     static async sendMessageStream(
         content: string,
         onChunk: (text: string) => void,
-        conversationId?: string
+        conversationId?: string,
+        documentIds?: string[],
+        folderIds?: string[],
+        onStatus?: (status: string) => void
     ): Promise<void> {
         try {
             const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
@@ -198,7 +207,11 @@ export class ChatService {
                 },
                 body: JSON.stringify({
                     content,
-                    conversation_id: conversationId
+                    conversation_id: conversationId,
+                    // Truyền IDs tài liệu/thư mục để backend giới hạn phạm vi RAG search.
+                    // Backend sẽ ưu tiên danh sách này; nếu rỗng thì đọc từ ConversationAttachedDocument.
+                    ...(documentIds?.length ? { document_ids: documentIds } : {}),
+                    ...(folderIds?.length ? { folder_ids: folderIds } : {}),
                 })
             })
 
@@ -223,6 +236,7 @@ export class ChatService {
                     if (line.startsWith('data: ')) {
                         try {
                             const data = JSON.parse(line.slice(6))
+                            if (data.status && onStatus) onStatus(data.status)
                             if (data.text) onChunk(data.text)
                             if (data.error) throw new Error(data.error)
                         } catch (e) {

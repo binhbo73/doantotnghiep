@@ -941,6 +941,18 @@ class ChatStreamView(View):
 
         content = body.get('content', '').strip()
         conversation_id = body.get('conversation_id')
+        # IDs tài liệu/thư mục để giới hạn phạm vi RAG search.
+        # Frontend truyền khi user đính kèm tài liệu vào cuộc trò chuyện.
+        # Nếu rỗng, ChatService sẽ fallback đọc từ ConversationAttachedDocument trong DB.
+        document_ids = body.get('document_ids') or []
+        folder_ids = body.get('folder_ids') or []
+        # Đảm bảo là list[str]
+        if not isinstance(document_ids, list):
+            document_ids = []
+        if not isinstance(folder_ids, list):
+            folder_ids = []
+        document_ids = [str(d) for d in document_ids if d]
+        folder_ids = [str(f) for f in folder_ids if f]
 
         if not content:
             return JsonResponse({'error': 'Nội dung không được để trống'}, status=400)
@@ -979,7 +991,9 @@ class ChatStreamView(View):
                         for chunk in chat_service.ask_stream(
                             user_id=user.id,
                             query=content,
-                            conversation_id=conversation_id
+                            conversation_id=conversation_id,
+                            document_ids=document_ids,
+                            folder_ids=folder_ids,
                         ):
                             # put_nowait sẽ raise nếu queue đầy → dùng run_coroutine_threadsafe
                             future = _asyncio.run_coroutine_threadsafe(
@@ -1002,9 +1016,13 @@ class ChatStreamView(View):
                     item = await queue.get()
                     if item is sentinel:
                         break
-                    if isinstance(item, dict) and '__error__' in item:
-                        yield f"data: {_json.dumps({'error': item['__error__']})}\n\n"
-                        break
+                    if isinstance(item, dict):
+                        if '__error__' in item:
+                            yield f"data: {_json.dumps({'error': item['__error__']})}\n\n"
+                            break
+                        elif 'status' in item:
+                            yield f"data: {_json.dumps({'status': item['status']})}\n\n"
+                            continue
                     yield f"data: {_json.dumps({'text': item})}\n\n"
 
                 await thread_future

@@ -314,6 +314,7 @@ class LlamaClient:
         messages: List[Dict[str, str]],
         max_tokens: int = None,
         temperature: float = None,
+        system_prompt: str = None,
     ) -> Generator[str, None, None]:
         """
         Stream chat completion
@@ -322,11 +323,18 @@ class LlamaClient:
             messages: List of message dicts
             max_tokens: Max tokens
             temperature: Sampling temperature
+            system_prompt: Optional system prompt
         
         Yields:
             Response text chunks
         """
         try:
+            # Prepend system prompt if provided
+            if system_prompt:
+                messages = [
+                    {"role": "system", "content": system_prompt}
+                ] + messages
+
             data = {
                 "model": self.model,
                 "messages": messages,
@@ -458,6 +466,48 @@ class LlamaClient:
             scores.append(0.5)
 
         return scores[:expected_count]
+
+    def compare_candidates(
+        self,
+        query: str,
+        candidate_a: dict,
+        candidate_b: dict,
+    ) -> float:
+        """P2#8: Pairwise comparison - returns > 0 if A better, < 0 if B better.
+        
+        LLM duoc hoi de so sanh 2 candidates va chon cai nao relevant hon
+        cho query. Tra ve so duong neu A tot hon, so am neu B tot hon.
+        Dung cho pairwise reranking.
+        """
+        try:
+            snippet_a = (candidate_a.get('snippet') or '')[:300]
+            snippet_b = (candidate_b.get('snippet') or '')[:300]
+            
+            prompt = (
+                f'Query: {query}\n\n'
+                f'Snippet A: {snippet_a}\n\n'
+                f'Snippet B: {snippet_b}\n\n'
+                f'Which snippet is more relevant to the query? '
+                f'Answer ONLY "A" or "B".'
+            )
+            
+            response = self.complete(
+                prompt=prompt,
+                max_tokens=4,
+                temperature=0.1,
+            )
+            
+            response = response.strip().upper()
+            if 'A' in response and 'B' not in response:
+                return 1.0
+            elif 'B' in response and 'A' not in response:
+                return -1.0
+            else:
+                return 0.0
+                
+        except Exception as e:
+            logger.error(f"Pairwise comparison error: {e}")
+            return 0.0
 
     def create_embedding(self, text: str) -> List[float]:
         """

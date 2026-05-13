@@ -271,11 +271,15 @@ class QdrantClient:
             
             # Add filter if provided
             if filter_payload:
+                must_conditions = []
+                for k, v in filter_payload.items():
+                    if isinstance(v, list):
+                        must_conditions.append({"key": k, "match": {"any": v}})
+                    else:
+                        must_conditions.append({"key": k, "match": {"value": v}})
+                
                 search_data["filter"] = {
-                    "must": [
-                        {"key": k, "match": {"value": v}}
-                        for k, v in filter_payload.items()
-                    ]
+                    "must": must_conditions
                 }
             
             # Search

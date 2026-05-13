@@ -3,6 +3,7 @@ import logging
 from django.apps import apps
 
 from .hybrid_retriever import HybridRetriever
+from .query_rewriter import QueryRewriter
 from .reranker import Reranker
 from .raptor_tree import RaptorTreeBuilder
 
@@ -20,25 +21,47 @@ class QueryRouter:
 
     def __init__(self, qdrant_client, embedding_client, llama_client=None):
         self.hybrid = HybridRetriever(qdrant_client=qdrant_client, embedding_client=embedding_client)
-        self.reranker = Reranker(llama_client)
+        self.reranker = Reranker(llama_client=None)  # Fix A: Disable LLM reranker
         self.raptor = RaptorTreeBuilder()
+        self.rewriter = QueryRewriter(llama_client)
 
     def route(self, query: str, user_context: Dict = None, top_k: int = 5) -> List[Dict]:
+        """Quyết định chiến lược retrieval và trả về ranked candidates.
+
+        user_context hỗ trợ 2 keys:
+          - 'document_id'  : str  — single doc (cũ, backward compatible)
+          - 'document_ids' : List[str] — multi-doc filter (ưu tiên hơn)
+        """
         # quick heuristics
         q_words = query.split()
         word_count = len(q_words)
         query_lower = query.lower()
 
+        # Lấy danh sách document IDs để filter (ưu tiên 'document_ids' list)
+        document_ids: List[str] = []
+        if user_context:
+            if user_context.get('document_ids'):
+                document_ids = [str(d) for d in user_context['document_ids'] if d]
+            elif user_context.get('document_id'):
+                document_ids = [str(user_context['document_id'])]
+
+        # Fix: Query expansion disabled for speed - LLM expansion costs 70s on CPU
+        # The QueryRewriter is available but only used for simple expansions
+        expanded_query = query
+
         # Step 1: Handle keyword-heavy queries (Lexical/BM25 focus)
         lexical_keywords = ['mã', 'số', 'code', 'id', 'số liệu', 'thông tin', 'danh sách', 'bảng']
         if any(k in query_lower for k in lexical_keywords):
-            candidates = self.hybrid.retrieve(query, top_k=top_k, sparse_k=20)
-        
-        # Step 2: RAPTOR Logic - Use if document is hierarchical OR query is long
+            candidates = self.hybrid.retrieve(
+                expanded_query, top_k=top_k, sparse_k=20, document_ids=document_ids
+            )
+
+        # Step 2: RAPTOR Logic — dùng khi query dài hoặc document có hierarchical structure
         else:
-            doc_id = user_context.get('document_id') if user_context else None
+            # Chỉ thử RAPTOR khi tìm kiếm trong đúng 1 document (nhiều docs → hybrid tốt hơn)
+            doc_id = document_ids[0] if len(document_ids) == 1 else None
             use_raptor = False
-            
+
             if doc_id:
                 try:
                     Document = apps.get_model('documents', 'Document')
@@ -48,7 +71,7 @@ class QueryRouter:
                         use_raptor = True
                 except Exception:
                     pass
-            
+
             # Also use RAPTOR for long queries (>25 words) even without explicit doc_id hint
             if not use_raptor and word_count > 25:
                 use_raptor = True
@@ -57,8 +80,10 @@ class QueryRouter:
                 logger.info(f"🚀 Routing query to RAPTOR strategy for document {doc_id}")
                 candidates = self._retrieve_via_raptor(query, doc_id, top_k=top_k)
             else:
-                # Default to Hybrid search
-                candidates = self.hybrid.retrieve(query, top_k=top_k)
+                # Default to Hybrid search (multi-doc hoặc không có RAPTOR)
+                candidates = self.hybrid.retrieve(
+                    expanded_query, top_k=top_k, document_ids=document_ids
+                )
 
         # Step 3: Final Rerank for maximum relevance
         ranked = self.reranker.rerank(query=query, candidates=candidates, top_k=top_k)
@@ -192,7 +217,23 @@ class QueryRouter:
             final_candidates = sorted(final_candidates, key=lambda x: x['score'], reverse=True)
             result = final_candidates[:top_k]
             
-            logger.info(f"RAPTOR retrieval: {len(result)} results from {len(top_summaries)} summary nodes")
+            # Merge RAPTOR results with hybrid results for better coverage
+            hybrid_candidates = self.hybrid.retrieve(query, top_k=top_k)
+            
+            # Deduplicate by chunk_id
+            seen_ids = {c['chunk_id'] for c in result}
+            for hc in hybrid_candidates:
+                if hc['chunk_id'] not in seen_ids:
+                    result.append(hc)
+                    seen_ids.add(hc['chunk_id'])
+            
+            result = sorted(result, key=lambda x: x['score'], reverse=True)[:top_k * 2]
+            
+            logger.info(
+                f"RAPTOR retrieval: {len(result)} results "
+                f"({len([c for c in result if 'raptor' in c.get('source', '')])} RAPTOR, "
+                f"{len([c for c in result if 'raptor' not in c.get('source', '')])} hybrid)"
+            )
             return result
         
         except Exception as e:

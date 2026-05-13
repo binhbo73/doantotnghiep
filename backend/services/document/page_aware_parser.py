@@ -94,6 +94,11 @@ class PageAwareParserEnhancer:
             with open(file_path, 'rb') as pdf_file:
                 pdf_reader = PdfReader(pdf_file)
                 total_pages = len(pdf_reader.pages)
+                # ✅ P0#1: Per-page char counts for proportional boundary placement
+                page_char_counts = []
+                for page in pdf_reader.pages:
+                    page_text = page.extract_text() or ''
+                    page_char_counts.append(len(page_text))
             
             # Parse with opendataloader-pdf
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -118,7 +123,10 @@ class PageAwareParserEnhancer:
             # Insert page markers after parsing
             # Since opendataloader-pdf doesn't preserve page info in markdown,
             # we'll estimate based on text length per page
-            text_with_markers = self._insert_page_markers(text, total_pages)
+            # ✅ P0#1: Dùng tỉ lệ per-page text length từ pypdf (proportional)
+            text_with_markers = self._insert_page_markers_proportional(
+                text, page_char_counts
+            )
             boundaries = self._extract_boundaries(text_with_markers)
             
             return PageAwareText(text_with_markers, boundaries, total_pages)
@@ -341,6 +349,64 @@ class PageAwareParserEnhancer:
         # Fallback to target position
         return target_pos
     
+    # ✅ P0#1: NEW method — proportional page marker placement
+    def _insert_page_markers_proportional(
+        self, text: str, page_char_counts: list
+    ) -> str:
+        """
+        Insert page markers using per-page text length ratios from pypdf.
+        
+        Khác với _insert_page_markers (uniform division), phương thức này dùng tỉ lệ
+        text thực tế mỗi trang từ pypdf để phân bổ vị trí marker trong Markdown output.
+        
+        Ví dụ: PDF 3 trang, pypdf trả về char counts [5000, 2000, 3000]
+        → Tổng = 10000, tỉ lệ 50%/20%/30%
+        → Markdown dài 20000 chars → markers tại 10000, 14000 (theo tỉ lệ)
+        
+        Args:
+            text: Full Markdown text từ opendataloader-pdf
+            page_char_counts: List[int] char count mỗi trang từ pypdf
+        
+        Returns:
+            Text with proportional page break markers inserted
+        """
+        total_pages = len(page_char_counts)
+        if total_pages <= 1:
+            return text
+        
+        total_chars = sum(page_char_counts)
+        if total_chars == 0:
+            # Fallback to uniform if all pages are empty (edge case)
+            return self._insert_page_markers_legacy(text, total_pages)
+        
+        text_len = len(text)
+        markers = []
+        cumulative_chars = 0
+        
+        for page_idx in range(total_pages - 1):
+            cumulative_chars += page_char_counts[page_idx]
+            ratio = cumulative_chars / total_chars
+            target_pos = int(ratio * text_len)
+            # Clamp to valid range
+            target_pos = max(1, min(text_len - 1, target_pos))
+            break_pos = self._find_good_break_point(text, target_pos)
+            markers.append((break_pos, page_idx + 1))
+        
+        # Insert markers in reverse order to maintain positions
+        result = text
+        for pos, page in sorted(markers, reverse=True):
+            result = result[:pos] + self.PAGE_BREAK_MARKER + result[pos:]
+        
+        logger.debug(
+            f"Proportional markers: {total_pages} pages, "
+            f"ratios={[round(c/total_chars, 2) for c in page_char_counts]}"
+        )
+        return result
+
+    def _insert_page_markers_legacy(self, text: str, total_pages: int) -> str:
+        """Fallback: uniform division (giữ lại để backward compatibility)."""
+        return self._insert_page_markers(text, total_pages)
+
     def _extract_boundaries(self, text: str) -> List[PageBoundary]:
         """Extract page boundaries from text with markers."""
         boundaries = []

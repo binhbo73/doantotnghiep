@@ -37,10 +37,10 @@ class ChunkSummaryService:
         summary_service.queue_summary(chunk_id, chunk_text)
     """
     
-    # Configuration
-    SUMMARY_MAX_TOKENS = 100
+    # Configuration (Fix #3: optimized for Qwen3-4B latency)
+    SUMMARY_MAX_TOKENS = 80   # Giam tu 100 -> 80 de LLM phan hoi nhanh hon
     SUMMARY_TEMPERATURE = 0.3  # Low for consistency
-    SUMMARY_TIMEOUT = 180  # Increased for stability
+    SUMMARY_TIMEOUT = 300      # Tang tu 180 -> 300 de tranh timeout tren CPU
     CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days
     SUMMARY_PROMPT_VERSION = "v2"
     CACHE_KEY_PREFIX = "chunk_summary"
@@ -248,29 +248,17 @@ class ChunkSummaryService:
         return summary
     
     def _build_summary_prompt(self, chunk_text: str) -> str:
-        """Build prompt for chunk summarization."""
-        return f"""Bạn là chuyên gia tóm tắt tài liệu.
-
-    Chỉ dựa trên nội dung trong CHUNK_CONTENT bên dưới.
-    Không suy đoán thêm thông tin ngoài chunk.
-    Không nhắc đến việc bạn là AI, không giải thích dài dòng.
-
-    Nhiệm vụ:
-    - Tóm tắt chính xác chunk này bằng 1-3 câu ngắn gọn.
-    - Giữ đúng ý chính, tên riêng, số liệu, công nghệ, chức năng hoặc kết luận quan trọng nếu có.
-    - Nếu chunk là một phần của tài liệu lớn, chỉ tóm tắt phần hiện có trong chunk.
-    - Nếu nội dung là danh sách hoặc mô tả dự án, hãy nêu chủ đề, mục tiêu và điểm chính.
-
-    Ràng buộc:
-    - Viết bằng tiếng Việt.
-    - Tối đa khoảng 150 ký tự.
-    - Không thêm tiêu đề, không thêm gạch đầu dòng, không thêm nhận xét ngoài phần tóm tắt.
-
-    [CHUNK_CONTENT]
-    {chunk_text[:2000]}
-    [/CHUNK_CONTENT]
-
-    Tóm tắt:"""
+        """Build prompt for chunk summarization.
+        
+        Fix #3: Giam prompt size (1200 chars thay vi 2000) de giam LLM latency.
+        Qwen3-4B xu ly prompt ngan nhanh hon dang ke, tranh timeout.
+        """
+        return (
+            "Tom tat doan van sau bang 1-3 cau ngan gon tieng Viet (toi da 150 ky tu). "
+            "Giu dung y chinh, ten rieng, so lieu. Khong them tieu de hay giai thich.\n\n"
+            f"{chunk_text[:1200]}\n\n"
+            "Tom tat:"
+        )
     
     def estimate_summary_time(self, document_page_count: int, chunk_count: int) -> float:
         """

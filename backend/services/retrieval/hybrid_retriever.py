@@ -1,5 +1,7 @@
 from typing import List, Dict, Any, Optional
 import logging
+import math
+import hashlib
 from django.apps import apps
 from django.core.cache import cache
 from django.conf import settings
@@ -38,25 +40,43 @@ class HybridRetriever:
             logger.warning(f"BM25 initialization failed, will fall back to icontains: {e}")
             self.bm25 = None
 
-    def retrieve(self, query: str, top_k: int = 10, sparse_k: int = 10) -> List[Dict[str, Any]]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+        sparse_k: int = 10,
+        document_ids: List[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Return merged list of candidate chunks with scores.
 
         Each item: {chunk_id, document_id, score, source, snippet}
-        
+
+        Args:
+            query: Search query string.
+            top_k: Total number of final candidates to return.
+            sparse_k: Number of BM25 candidates before merging.
+            document_ids: Optional list of document UUIDs to restrict search scope.
+                          Khi được cung cấp, cả BM25 và Qdrant đều chỉ tìm trong
+                          các document này — cực kỳ quan trọng cho accuracy!
+
         Scoring Strategy:
         1. Sparse search (BM25): Term frequency + IDF + field length normalization
         2. Dense search: Vector similarity [0, 1]
         3. Merge: Normalize both to [0, 1], combine with weights
            - Sparse: 40% (lexical relevance)
            - Dense: 60% (semantic relevance)
-        
+
         BM25 advantages over icontains:
         - Doesn't just count term occurrences
         - Weights rare terms higher (IDF)
         - Avoids length bias
         - More relevant results for keyword queries
         """
-        cache_key = f"hybrid_retrieval:{query}:{top_k}:{sparse_k}"
+        # P2#11: Hash document_ids to prevent cache key fragmentation
+        doc_hash = hashlib.md5(
+            ','.join(sorted(document_ids or [])).encode()
+        ).hexdigest()[:12]
+        cache_key = f"hybrid_retrieval:{query}:{top_k}:{sparse_k}:{doc_hash}"
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -69,96 +89,135 @@ class HybridRetriever:
         sparse_scores: Dict[str, float] = {}
         dense_scores: Dict[str, float] = {}
 
-        # 1) Sparse search: BM25 (or fallback to icontains if BM25 unavailable)
-        max_sparse = 0.0
-        try:
-            if self.bm25:
-                # Use BM25 full-text search
-                sparse_results = self.bm25.search(query, top_k=sparse_k)
-                for result in sparse_results:
-                    cid = result['chunk_id']
-                    score = float(result['score']) * self.sparse_boost
-                    candidates[cid] = {
-                        'chunk_id': cid,
-                        'document_id': result['document_id'],
-                        'score': 0.0,  # Will be set after normalization
-                        'source': 'bm25',
-                        'snippet': result['content'][:300]
-                    }
-                    sparse_scores[cid] = score
-                    max_sparse = max(max_sparse, score)
-                logger.debug(f"BM25 sparse search returned {len(sparse_results)} results")
-            else:
-                # Fallback: simple icontains (less effective but reliable)
-                logger.debug("Using icontains fallback for sparse search")
-                from repositories.document_repository import DocumentRepository
-                doc_repo = DocumentRepository()
-                
-                sparse_docs = doc_repo.search(query)[:5]  # Reduced from sparse_k
-                for doc in sparse_docs:
-                    chunks_qs = apps.get_model('documents', 'DocumentChunk').objects.filter(
-                        document_id=doc.id, is_deleted=False
-                    ).filter(content__icontains=query).order_by('chunk_index')[:3]
-                    
-                    for c in chunks_qs:
-                        cid = str(c.id)
-                        score = 1.0 * self.sparse_boost  # Uniform score for icontains
-                        candidates[cid] = {
-                            'chunk_id': cid,
-                            'document_id': str(c.document_id),
-                            'score': 0.0,
-                            'source': 'icontains_fallback',
-                            'snippet': (c.content or '')[:300]
-                        }
-                        sparse_scores[cid] = score
-                        max_sparse = max(max_sparse, score)
-        
-        except Exception as e:
-            logger.warning(f"Sparse retrieval error: {e}", exc_info=True)
+        # 1 & 2) Run Sparse and Dense search in parallel
+        import concurrent.futures
+        import threading
 
-        # 2) Dense search: Vector similarity
-        max_dense = 0.0
-        try:
-            embedding = self.embedding_client.create_embedding(query)
-            dense_results = self.qdrant.search_similar(embedding=embedding, limit=top_k)
-            
-            for vector_id, score, payload in dense_results:
-                cid = str(payload.get('chunk_id') or vector_id)
-                score = float(score or 0.0)
-                payload = payload or {}
-                
-                dense_scores[cid] = score
-                max_dense = max(max_dense, score)
-                
-                if cid in candidates:
-                    # Already found in sparse, mark as hybrid
-                    candidates[cid]['source'] = 'hybrid'
+        lock = threading.Lock()
+        max_sparse = [0.0]
+        max_dense = [0.0]
+
+        def run_sparse():
+            local_max = 0.0
+            try:
+                if self.bm25:
+                    sparse_results = self.bm25.search(query, top_k=sparse_k, document_ids=document_ids)
+                    for result in sparse_results:
+                        cid = result['chunk_id']
+                        doc_id = result['document_id']
+                        if document_ids and str(doc_id) not in document_ids:
+                            continue
+                        score = float(result['score']) * self.sparse_boost
+                        with lock:
+                            candidates[cid] = {
+                                'chunk_id': cid,
+                                'document_id': doc_id,
+                                'score': 0.0,
+                                'source': 'bm25',
+                                'snippet': result['content'][:300]
+                            }
+                            sparse_scores[cid] = score
+                        local_max = max(local_max, score)
+                    logger.debug(f"BM25 sparse search returned {len(sparse_scores)} results")
                 else:
-                    candidates[cid] = {
-                        'chunk_id': cid,
-                        'document_id': str(payload.get('document_id') or payload.get('doc_id') or ''),
-                        'score': 0.0,
-                        'source': 'dense',
-                        'snippet': (payload.get('text_preview') or '')[:300]
-                    }
+                    logger.debug("Using icontains fallback for sparse search")
+                    from repositories.document_repository import DocumentRepository
+                    doc_repo = DocumentRepository()
+                    sparse_docs = doc_repo.search(query)[:5]
+                    for doc in sparse_docs:
+                        if document_ids and str(doc.id) not in document_ids:
+                            continue
+                        chunks_qs = apps.get_model('documents', 'DocumentChunk').objects.filter(
+                            document_id=doc.id, is_deleted=False
+                        ).filter(content__icontains=query).order_by('chunk_index')[:3]
+
+                        for c in chunks_qs:
+                            cid = str(c.id)
+                            score = 1.0 * self.sparse_boost
+                            with lock:
+                                candidates[cid] = {
+                                    'chunk_id': cid,
+                                    'document_id': str(c.document_id),
+                                    'score': 0.0,
+                                    'source': 'icontains_fallback',
+                                    'snippet': (c.content or '')[:300]
+                                }
+                                sparse_scores[cid] = score
+                            local_max = max(local_max, score)
+            except Exception as e:
+                logger.warning(f"Sparse retrieval error: {e}", exc_info=True)
+            max_sparse[0] = local_max
+
+        def run_dense():
+            local_max = 0.0
+            try:
+                embedding = self.embedding_client.create_embedding(query)
+                qdrant_filter = None
+                if document_ids:
+                    qdrant_filter = {'document_id': document_ids}
+
+                dense_results = self.qdrant.search_similar(
+                    embedding=embedding,
+                    limit=top_k,
+                    filter_payload=qdrant_filter,
+                )
+
+                for vector_id, score, payload in dense_results:
+                    cid = str(payload.get('chunk_id') or vector_id)
+                    doc_id = str(payload.get('document_id') or payload.get('doc_id') or '')
+                    score = float(score or 0.0)
+                    payload = payload or {}
+
+                    with lock:
+                        dense_scores[cid] = score
+                        if cid in candidates:
+                            candidates[cid]['source'] = 'hybrid'
+                        else:
+                            candidates[cid] = {
+                                'chunk_id': cid,
+                                'document_id': doc_id,
+                                'score': 0.0,
+                                'source': 'dense',
+                                'snippet': (payload.get('text_preview') or '')[:300]
+                            }
+                    local_max = max(local_max, score)
+            except Exception as e:
+                logger.warning(f"Dense retrieval error: {e}", exc_info=True)
+            max_dense[0] = local_max
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            future_sparse = executor.submit(run_sparse)
+            future_dense = executor.submit(run_dense)
+            future_sparse.result()
+            future_dense.result()
         
-        except Exception as e:
-            logger.warning(f"Dense retrieval error: {e}", exc_info=True)
+        max_sparse_val = max_sparse[0]
+        max_dense_val = max_dense[0]
+
 
         # 3) Normalize and combine scores
-        # Important: normalize to [0, 1] before combining
-        if max_sparse > 0:
-            for cid in sparse_scores:
-                sparse_scores[cid] = sparse_scores[cid] / max_sparse
-        if max_dense > 0:
-            for cid in dense_scores:
-                dense_scores[cid] = dense_scores[cid] / max_dense
+        # P1#7: Softmax normalization thay vi max-score normalization.
+        # Max-score fragile: 1 outlier lam tat ca score khac ve gan 0.
+        # Softmax on dinh hon, bao toan relative ordering tot hon.
+        def _softmax(scores_dict, temperature=0.5):
+            if not scores_dict:
+                return {}
+            values = list(scores_dict.values())
+            max_val = max(values)
+            exps = [math.exp((v - max_val) / temperature) for v in values]
+            total = sum(exps)
+            if total == 0:
+                return {k: 0.0 for k in scores_dict}
+            return {k: exps[i] / total for i, k in enumerate(scores_dict.keys())}
+        
+        sparse_scores = _softmax(sparse_scores)
+        dense_scores = _softmax(dense_scores)
 
         # Combine with weights: 40% sparse (keyword) + 60% dense (semantic)
         for cid, candidate in candidates.items():
             sparse_norm = sparse_scores.get(cid, 0.0)
             dense_norm = dense_scores.get(cid, 0.0)
-            combined_score = 0.4 * sparse_norm + 0.6 * dense_norm
+            combined_score = 0.5 * sparse_norm + 0.5 * dense_norm  # Fix E: 50/50 cho tieng Viet
             candidate['score'] = combined_score
 
         # 4) Sort by combined score

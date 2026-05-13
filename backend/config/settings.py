@@ -311,3 +311,6 @@ DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER)
 FRONTEND_URL = os.environ.get("APP_URL", "http://localhost:3000")
 # RAG Pipeline Settings
 RAG_RAPTOR_THRESHOLD_PAGES = 3  # Only apply RAPTOR/Hierarchical logic for docs > 3 pages
+
+# Query Rewriter (P2#10)
+QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]

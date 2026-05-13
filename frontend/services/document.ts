@@ -235,6 +235,14 @@ export async function createTag(data: {
 }
 
 /**
+ * Get document processing status
+ */
+export async function getDocumentStatus(documentId: string): Promise<any> {
+    const response = await api.get<any>(`/documents/${documentId}/status`)
+    return response
+}
+
+/**
  * Export all functions as an object for easy importing
  */
 export const documentService = {
@@ -252,4 +260,5 @@ export const documentService = {
     deleteFolder,
     listTags,
     createTag,
+    getDocumentStatus,
 }

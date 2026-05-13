@@ -179,7 +179,7 @@ class RaptorTreeBuilder:
         section_groups = [page_summary_objs[i:i + pages_per_section] for i in range(0, len(page_summary_objs), pages_per_section)]
 
         def process_section(section_index, group):
-            section_text = self._compose_summary_text(group)
+            section_text = self._compose_summary_text(group, use_llm=True)
             if not section_text:
                 return None
 
@@ -236,7 +236,7 @@ class RaptorTreeBuilder:
 
         summary_ids = [item['section_summary_id'] for item in section_summaries]
         section_objs = list(self.DocumentChunk.objects.filter(id__in=summary_ids).order_by('page_number'))
-        document_text = self._compose_summary_text(section_objs)
+        document_text = self._compose_summary_text(section_objs, use_llm=True)
         if not document_text:
             return None
 
@@ -332,7 +332,13 @@ class RaptorTreeBuilder:
         except Exception as e:
             logger.error(f"Failed to embed and store RAPTOR node {chunk_obj.id}: {e}")
 
-    def _compose_summary_text(self, chunks: List[Any]) -> str:
+    def _compose_summary_text(self, chunks: List[Any], use_llm: bool = False) -> str:
+        """Compose summary text from child chunks/summaries.
+        
+        P1#6: Khi use_llm=True (level >= 2), dung LLM de synthesize summary
+        thay vi chi concatenate thuan tuy. Concatenation tao ra chuoi dai cac cau
+        roi rac, khong co tinh mach lac. LLM synthesis cho summary chat luong cao hon.
+        """
         parts = []
         for chunk in chunks:
             summary_text = getattr(chunk, 'summary', None)
@@ -340,4 +346,44 @@ class RaptorTreeBuilder:
                 parts.append(summary_text)
             elif getattr(chunk, 'content', None):
                 parts.append(chunk.content[:400])
-        return ' '.join(parts).strip()
+        
+        combined = ' '.join(parts).strip()
+        
+        # P1#6: LLM synthesis cho level >= 2 section/document summaries
+        if use_llm and len(combined) > 500:
+            try:
+                synthesized = self._llm_synthesize_summary(combined)
+                if synthesized:
+                    return synthesized
+            except Exception as e:
+                logger.warning(f'LLM synthesis failed, using concatenation: {e}')
+        
+        return combined
+    
+    def _llm_synthesize_summary(self, text: str) -> str:
+        """Goi LLM de synthesize summary tu concatenated child summaries.
+        
+        Fix: Tang timeout len 300s (tuong thich voi Qwen3-4B tren CPU)
+        va giam prompt text xuong 1500 chars de tranh timeout.
+        """
+        try:
+            from services.ai.llama_client import LlamaClient
+            
+            llama = LlamaClient(timeout=300)
+            prompt = (
+                "Tong hop cac doan tom tat sau thanh 1 doan van ngan gon "
+                "tieng Viet (toi da 400 ky tu), giu y chinh, ten rieng, so lieu.\n\n"
+                + text[:1500] + "\n\n"
+                "Tom tat tong hop:"
+            )
+            summary = llama.complete(
+                prompt=prompt,
+                max_tokens=150,
+                temperature=0.3,
+                timeout=300,
+            )
+            if summary and len(summary.strip()) > 20:
+                return summary.strip()[:4000]
+        except Exception as e:
+            logger.warning(f'LLM synthesis error: {e}')
+        return None

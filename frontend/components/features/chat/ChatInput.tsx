@@ -5,12 +5,17 @@ import { Send, Paperclip, X, FolderOpen, Search, Check } from 'lucide-react'
 import { fetchAvailableAttachments } from '@/services/chatAttachments'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { ConversationAttachmentPayload } from '@/services/chatService'
+import { uploadDocument, getDocumentStatus } from '@/services/document'
 
 export interface ChatUploadAttachment {
     id: string
     name: string
     size: number
     type: string
+    progress?: number
+    status?: 'uploading' | 'processing' | 'completed' | 'failed'
+    statusText?: string
+    documentId?: string
 }
 
 export interface ChatSelectedResourceItem {
@@ -116,13 +121,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     const handleSend = () => {
         if (!message.trim() || isLoading || disabled) return
+        
+        // Chỉ gửi những file đã hoàn thành xử lý
+        const completedUploads = attachments.filter(att => att.status === 'completed' && att.documentId)
+        const completedUploadIds = completedUploads.map(att => att.documentId!)
 
         onSendMessage?.(message, {
-            documentIds: selectedDocumentIds,
+            documentIds: [...selectedDocumentIds, ...completedUploadIds],
             folderIds: selectedFolderIds,
         })
+        
         setMessage('')
-        setAttachments([])
+        // Chỉ xóa những file đã gửi thành công, giữ lại những file đang xử lý dở dang
+        setAttachments((prev) => prev.filter(att => att.status !== 'completed'))
+        setSelectedDocumentIds([])
+        setSelectedFolderIds([])
         setShowSystemPicker(false)
         setSystemSearch('')
 
@@ -131,22 +144,110 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         }
     }
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = e.currentTarget.files
         if (!files) return
 
-        const newAttachments: ChatUploadAttachment[] = []
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i]
-            newAttachments.push({
-                id: `${Date.now()}-${i}`,
+        const fileArray = Array.from(files)
+        
+        for (let i = 0; i < fileArray.length; i++) {
+            const file = fileArray[i]
+            const uploadId = `${Date.now()}-${i}`
+            
+            // 1. Thêm vào state với trạng thái đang upload
+            const newUpload: ChatUploadAttachment = {
+                id: uploadId,
                 name: file.name,
                 size: file.size,
                 type: file.type,
-            })
-        }
+                progress: 0,
+                status: 'uploading',
+                statusText: 'Đang tải lên...'
+            }
+            
+            setAttachments((prev) => [...prev, newUpload].slice(0, 10))
 
-        setAttachments((prev) => [...prev, ...newAttachments].slice(0, 5)) // Max 5 files
+            try {
+                // 2. Bắt đầu upload
+                const document = await uploadDocument(file, {
+                    onProgress: (percent) => {
+                        setAttachments(prev => prev.map(att => 
+                            att.id === uploadId ? { ...att, progress: percent } : att
+                        ))
+                    }
+                })
+
+                // 3. Chuyển sang trạng thái đang xử lý (Parsing/Embedding)
+                setAttachments(prev => prev.map(att => 
+                    att.id === uploadId ? { 
+                        ...att, 
+                        status: 'processing', 
+                        statusText: 'Đang phân tích...',
+                        documentId: document.id 
+                    } : att
+                ))
+
+                // 4. Polling trạng thái xử lý từ backend
+                let isDone = false
+                let retryCount = 0
+                const maxRetries = 60 // 1 phút
+
+                while (!isDone && retryCount < maxRetries) {
+                    await new Promise(resolve => setTimeout(resolve, 2000))
+                    retryCount++
+
+                    try {
+                        const statusData = await getDocumentStatus(document.id)
+                        const docStatus = statusData.data?.document_status
+                        
+                        if (docStatus === 'completed') {
+                            setAttachments(prev => prev.map(att => 
+                                att.id === uploadId ? { 
+                                    ...att, 
+                                    status: 'completed', 
+                                    statusText: 'Sẵn sàng',
+                                    progress: 100 
+                                } : att
+                            ))
+                            isDone = true
+                        } else if (docStatus === 'failed') {
+                            throw new Error('Xử lý thất bại')
+                        } else {
+                            // Cập nhật text chi tiết nếu có
+                            const chunks = statusData.data?.chunk_processing_status
+                            if (chunks) {
+                                const percent = Math.round((chunks.completed_chunks / (chunks.total_chunks || 1)) * 100)
+                                setAttachments(prev => prev.map(att => 
+                                    att.id === uploadId ? { 
+                                        ...att, 
+                                        statusText: `Đang phân tích (${percent}%)` 
+                                    } : att
+                                ))
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Polling error:', err)
+                    }
+                }
+
+                if (!isDone) {
+                    throw new Error('Hết thời gian chờ xử lý')
+                }
+
+            } catch (error) {
+                console.error('Upload error:', error)
+                setAttachments(prev => prev.map(att => 
+                    att.id === uploadId ? { 
+                        ...att, 
+                        status: 'failed', 
+                        statusText: 'Lỗi xử lý' 
+                    } : att
+                ))
+            }
+        }
+        
+        // Reset file input
+        if (fileInputRef.current) fileInputRef.current.value = ''
     }
 
     const removeAttachment = useCallback((id: string) => {
@@ -282,13 +383,56 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     {/* Send Button */}
                     <button
                         onClick={handleSend}
-                        disabled={!message.trim() || isLoading || disabled}
+                        disabled={
+                            !message.trim() || 
+                            isLoading || 
+                            disabled
+                        }
                         className="flex-shrink-0 p-2.5 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-primary/30 active:scale-95 flex items-center justify-center"
                         title="Gửi (Enter hoặc Shift+Enter)"
                     >
                         <Send size={20} />
                     </button>
                 </div>
+
+                {/* Uploads Preview with Status */}
+                {attachments.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2 px-2">
+                        {attachments.map((att) => (
+                            <div 
+                                key={att.id}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs transition-all ${
+                                    att.status === 'failed' 
+                                        ? 'bg-error/5 border-error/20 text-error' 
+                                        : att.status === 'completed'
+                                            ? 'bg-success/5 border-success/20 text-success'
+                                            : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                                }`}
+                            >
+                                <div className="flex flex-col max-w-[150px]">
+                                    <span className="font-medium truncate" title={att.name}>{att.name}</span>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        {att.status === 'uploading' || att.status === 'processing' ? (
+                                            <div className="w-12 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                                                <div 
+                                                    className="h-full bg-primary transition-all duration-300" 
+                                                    style={{ width: `${att.progress || 0}%` }}
+                                                />
+                                            </div>
+                                        ) : null}
+                                        <span className="text-[9px] opacity-70 uppercase tracking-tight">{att.statusText}</span>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => removeAttachment(att.id)}
+                                    className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
 
                 {/* Help Text */}
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-2 px-2">
