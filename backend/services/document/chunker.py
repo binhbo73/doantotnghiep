@@ -118,20 +118,37 @@ class DocumentChunker:
         - Base: word count
         - Multiplier: 1.5x for Vietnamese/Asian languages and complex text
         - Add buffer for punctuation and special chars
+        - Handle long texts by truncating before encoding to avoid sequence length errors
         """
         if not text:
             return 0
+        
+        # BGE-M3 max_length is 8192 tokens
+        # For safety, we'll estimate and truncate at ~6000 chars (conservative estimate)
+        # This prevents the "Token indices sequence length is longer than the specified maximum" error
+        MAX_ENCODE_CHARS = 6000
         
         # P1#4: Dung BGE-M3/XLM-RoBERTa tokenizer that neu co
         tokenizer = self._get_tokenizer()
         if tokenizer is not None:
             try:
-                encoding = tokenizer.encode(text, add_special_tokens=False)
+                # Only encode a truncated portion to avoid exceeding model limits
+                text_truncated = text[:MAX_ENCODE_CHARS]
+                encoding = tokenizer.encode(text_truncated, add_special_tokens=False, max_length=8192)
+                
+                # If text was truncated, estimate remaining tokens
+                if len(text) > MAX_ENCODE_CHARS:
+                    # Estimate tokens for remaining text using heuristic
+                    remaining_text = text[MAX_ENCODE_CHARS:]
+                    word_count_remaining = len(remaining_text.split())
+                    estimated_remaining = int(word_count_remaining * 1.5)
+                    return max(1, len(encoding) + estimated_remaining)
+                
                 return max(1, len(encoding))
             except Exception as e:
-                logger.debug('Tokenizer encode failed: %s, using heuristic', e)
+                logger.warning('Tokenizer encode failed (%s), using heuristic fallback', str(e))
         
-        # Fallback heuristic
+        # Fallback heuristic - always used for long texts
         word_count = len(text.split())
         estimated_tokens = int(word_count * 1.5)
         special_chars = len(re.findall(r'[^a-zA-Z0-9\s]', text))
@@ -595,21 +612,30 @@ class DocumentChunker:
             ext = normalized.split('.')[-1] if '.' in normalized else normalized
 
         if ext == 'pdf':
-            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 200)
-            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_PDF', 40)
+            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 160)
+            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_PDF', 32)
             profile = 'pdf'
         elif ext in ('docx', 'doc', 'md', 'xlsx', 'xls'):
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_DOC', 240)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_DOC', 48)
             profile = 'doc'
         elif ext in ('txt', 'text'):
-            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_TEXT', 260)
-            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_TEXT', 52)
+            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_TEXT', 200)
+            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_TEXT', 40)
             profile = 'text'
         else:
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE', self.chunk_size)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP', self.chunk_overlap)
             profile = 'default'
+
+        # Safeguard: BGE-M3 has max_length=8192, ensure chunk_size < 6000 for safety
+        MAX_SAFE_CHUNK_SIZE = 6000
+        if self.chunk_size > MAX_SAFE_CHUNK_SIZE:
+            logger.warning(
+                f'Chunk size {self.chunk_size} exceeds safe maximum {MAX_SAFE_CHUNK_SIZE} for BGE-M3 (max_length=8192). '
+                f'Reducing to {MAX_SAFE_CHUNK_SIZE}'
+            )
+            self.chunk_size = MAX_SAFE_CHUNK_SIZE
 
         if self.chunk_overlap >= self.chunk_size:
             self.chunk_overlap = max(0, self.chunk_size // 4)
@@ -783,8 +809,14 @@ class DocumentChunker:
             # Kiem tra xem embedding_client co ho tro batch khong
             if hasattr(embedding_client, 'embedder') and hasattr(embedding_client.embedder, 'encode'):
                 # FlagEmbedding backend - batch encode
+                # Truncate texts to prevent token limit errors (BGE-M3 max_length=8192)
+                MAX_CHARS = 6000
+                truncated_texts = [t[:MAX_CHARS] if len(t) > MAX_CHARS else t for t in texts]
+                if any(len(t) > MAX_CHARS for t in texts):
+                    logger.warning(f'One or more texts truncated to {MAX_CHARS} chars for BGE-M3 (max_length=8192)')
+                
                 result = embedding_client.embedder.encode(
-                    texts,
+                    truncated_texts,
                     return_dense=True,
                     return_sparse=False,
                     return_colbert_vecs=False,

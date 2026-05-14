@@ -328,6 +328,8 @@ class DocumentParser:
                 # Read the extracted text
                 with open(md_file, 'r', encoding='utf-8') as f:
                     text = f.read()
+
+                text = self._sanitize_pdf_markdown(text)
                 
                 logger.debug(f"PDF parsing completed: {len(text)} chars")
                 return text, page_count or 1
@@ -340,6 +342,56 @@ class DocumentParser:
         except Exception as e:
             logger.error(f"PDF parsing error: {str(e)}", exc_info=True)
             raise DocumentProcessingError(f"Failed to parse PDF: {str(e)}")
+
+    def _sanitize_pdf_markdown(self, text: str) -> str:
+        """Strip embedded image payloads from PDF markdown output."""
+        if not text:
+            return text
+
+        original_len = len(text)
+        sanitized = text
+
+        sanitized = re.sub(
+            r'!\[([^\]]*)\]\(([^)]+)\)',
+            lambda m: f"[Image: {(m.group(1) or 'embedded image').strip()}]",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+        def _replace_img_tag(match):
+            tag = match.group(0)
+            alt_match = re.search(r'alt=[\"\']([^\"\']+)[\"\']', tag, flags=re.IGNORECASE)
+            title_match = re.search(r'title=[\"\']([^\"\']+)[\"\']', tag, flags=re.IGNORECASE)
+            label = None
+            if alt_match and alt_match.group(1).strip():
+                label = alt_match.group(1).strip()
+            elif title_match and title_match.group(1).strip():
+                label = title_match.group(1).strip()
+            return f"[Image: {label or 'embedded image'}]"
+
+        sanitized = re.sub(
+            r'<img\b[^>]*>',
+            _replace_img_tag,
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+        sanitized = re.sub(
+            r'data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+',
+            '[EmbeddedImageData]',
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+        sanitized = re.sub(r'\n{3,}', '\n\n', sanitized).strip()
+
+        if len(sanitized) < original_len:
+            logger.info(
+                f"PDF markdown sanitized: {original_len} -> {len(sanitized)} chars "
+                f"(removed {original_len - len(sanitized)} chars of image payloads)"
+            )
+
+        return sanitized
     
     def parse_docx(self, file_path: str) -> str:
         """

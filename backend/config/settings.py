@@ -153,7 +153,8 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
-CELERY_TASK_TIME_LIMIT = 300
+CELERY_TASK_TIME_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", "300"))
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", "240"))
 
 # ============================================================
 # AI CONFIGURATION (LLM & EMBEDDING)
@@ -168,6 +169,11 @@ LLM_CONTEXT_WINDOW = int(os.environ.get("LLM_CONTEXT_WINDOW", "8192"))
 LLM_REQUEST_TIMEOUT = int(os.environ.get("LLM_REQUEST_TIMEOUT", "120"))
 RAG_LLM_MAX_TOKENS = int(os.environ.get("RAG_LLM_MAX_TOKENS", "384"))
 RAG_LLM_TEMPERATURE = float(os.environ.get("RAG_LLM_TEMPERATURE", "0.2"))
+RAG_LLM_MAX_TOKENS_LIST = int(os.environ.get("RAG_LLM_MAX_TOKENS_LIST", "896"))
+RAG_RETRIEVAL_TOP_K = int(os.environ.get("RAG_RETRIEVAL_TOP_K", "4"))
+RAG_RETRIEVAL_TOP_K_LIST = int(os.environ.get("RAG_RETRIEVAL_TOP_K_LIST", "8"))
+RAG_CONTEXT_SNIPPET_CHARS = int(os.environ.get("RAG_CONTEXT_SNIPPET_CHARS", "1400"))
+RAG_CONTEXT_SNIPPET_CHARS_LIST = int(os.environ.get("RAG_CONTEXT_SNIPPET_CHARS_LIST", "2200"))
 
 # 2. Embedding Settings
 EMBEDDING_BACKEND = os.environ.get("EMBEDDING_BACKEND", "http")  # 'http' or 'flag'
@@ -214,14 +220,14 @@ QDRANT_QUANTIZATION = os.environ.get("QDRANT_QUANTIZATION", "")
 # ============================================================
 # CHUNKING
 # ============================================================
-CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "240"))
-CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "48"))
-CHUNK_TOKEN_SIZE_PDF = int(os.environ.get("CHUNK_TOKEN_SIZE_PDF", "200"))
-CHUNK_TOKEN_OVERLAP_PDF = int(os.environ.get("CHUNK_TOKEN_OVERLAP_PDF", "40"))
+CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "200"))
+CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "40"))
+CHUNK_TOKEN_SIZE_PDF = int(os.environ.get("CHUNK_TOKEN_SIZE_PDF", "160"))  # Reduced from 200 for safety
+CHUNK_TOKEN_OVERLAP_PDF = int(os.environ.get("CHUNK_TOKEN_OVERLAP_PDF", "32"))  # Reduced proportionally
 CHUNK_TOKEN_SIZE_DOC = int(os.environ.get("CHUNK_TOKEN_SIZE_DOC", "240"))
 CHUNK_TOKEN_OVERLAP_DOC = int(os.environ.get("CHUNK_TOKEN_OVERLAP_DOC", "48"))
-CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "260"))
-CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "52"))
+CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "200"))  # Reduced from 260
+CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "40"))  # Reduced proportionally
 CHUNK_SIZE = CHUNK_TOKEN_SIZE
 CHUNK_OVERLAP = CHUNK_TOKEN_OVERLAP
 
@@ -326,6 +332,8 @@ RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD = os.environ.get("RAG_QUEUE_SECTION_SUMMAR
 RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD = os.environ.get("RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 RAG_RAPTOR_BUILD_WORKERS = int(os.environ.get("RAG_RAPTOR_BUILD_WORKERS", "1"))
 RAG_VECTORIZE_PAGE_SECTIONS = os.environ.get("RAG_VECTORIZE_PAGE_SECTIONS", "false").lower() in ["true", "1", "yes"]
+RAG_RAPTOR_TASK_TIME_LIMIT = int(os.environ.get("RAG_RAPTOR_TASK_TIME_LIMIT", "1800"))
+RAG_RAPTOR_TASK_SOFT_TIME_LIMIT = int(os.environ.get("RAG_RAPTOR_TASK_SOFT_TIME_LIMIT", "1500"))
 
 # Query Rewriter (P2#10)
 QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]

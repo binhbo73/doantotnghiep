@@ -76,6 +76,60 @@ class PageAwareParserEnhancer:
     
     def __init__(self):
         pass
+
+    def _sanitize_pdf_markdown(self, text: str) -> str:
+        """Remove embedded image payloads from markdown to keep chunking text-only."""
+        if not text:
+            return text
+
+        original_len = len(text)
+        sanitized = text
+
+        # Replace markdown images with a short placeholder so alt text context is preserved.
+        sanitized = re.sub(
+            r'!\[([^\]]*)\]\(([^)]+)\)',
+            lambda m: f"[Image: {(m.group(1) or 'embedded image').strip()}]",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+        # Replace HTML img tags with a stable placeholder.
+        def _replace_img_tag(match):
+            tag = match.group(0)
+            alt_match = re.search(r'alt=[\"\']([^\"\']+)[\"\']', tag, flags=re.IGNORECASE)
+            title_match = re.search(r'title=[\"\']([^\"\']+)[\"\']', tag, flags=re.IGNORECASE)
+            label = None
+            if alt_match and alt_match.group(1).strip():
+                label = alt_match.group(1).strip()
+            elif title_match and title_match.group(1).strip():
+                label = title_match.group(1).strip()
+            return f"[Image: {label or 'embedded image'}]"
+
+        sanitized = re.sub(
+            r'<img\b[^>]*>',
+            _replace_img_tag,
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+        # Safety net: remove any leftover data URI payload blocks.
+        sanitized = re.sub(
+            r'data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+',
+            '[EmbeddedImageData]',
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+
+        sanitized = re.sub(r'\n{3,}', '\n\n', sanitized)
+        sanitized = sanitized.strip()
+
+        if len(sanitized) < original_len:
+            logger.info(
+                f"PDF markdown sanitized: {original_len} -> {len(sanitized)} chars "
+                f"(removed {original_len - len(sanitized)} chars of image payloads)"
+            )
+
+        return sanitized
     
     def enhance_pdf(self, file_path: str) -> Optional[PageAwareText]:
         """
@@ -119,6 +173,8 @@ class PageAwareParserEnhancer:
                 
                 with open(md_file, 'r', encoding='utf-8') as f:
                     text = f.read()
+
+            text = self._sanitize_pdf_markdown(text)
             
             # Insert page markers after parsing
             # Since opendataloader-pdf doesn't preserve page info in markdown,
@@ -409,18 +465,19 @@ class PageAwareParserEnhancer:
 
     def _extract_boundaries(self, text: str) -> List[PageBoundary]:
         """Extract page boundaries from text with markers."""
-        boundaries = []
-        page_num = 1
-        
+        boundaries = [PageBoundary(1, 0)]
+        page_num = 2
+
+        # Each page-break marker separates previous page from next page.
+        # So the next page starts AFTER the marker token.
         for match in re.finditer(self.PAGE_BREAK_PATTERN, text):
-            boundaries.append(PageBoundary(page_num, match.start()))
-            page_num += 1
-        
-        # Always start with page 1
-        if not boundaries or boundaries[0].page_number != 1:
-            boundaries.insert(0, PageBoundary(1, 0))
-        
-        return sorted(boundaries, key=lambda b: b.char_start)
+            next_page_start = min(len(text), match.end())
+            # Skip duplicate/non-increasing starts to keep boundaries valid.
+            if next_page_start > boundaries[-1].char_start:
+                boundaries.append(PageBoundary(page_num, next_page_start))
+                page_num += 1
+
+        return boundaries
     
     def _has_page_break(self, paragraph) -> bool:
         """

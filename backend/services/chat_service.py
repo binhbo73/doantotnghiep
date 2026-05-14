@@ -63,6 +63,7 @@ QUY TAC BAT BUOC:
 6. NEU tai lieu thuc su khong chua thong tin, hay tra loi: "Tai lieu khong co thong tin nay."
 7. Trich dan nguon cu the: [Nguon: ten_file, trang X] cho moi y.
 8. Tra loi NGAN GON, dung y chinh, khong dai dong.
+9. NEU cau hoi la dang liet ke/"gom nhung gi"/"dac trung", phai liet ke DAY DU cac y co trong tai lieu tham khao, khong rut gon mat y.
 
 NEU BAN DUNG KIEN THUC NGOAI TAI LIEU, CAU TRA LOI SAI.
 TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
@@ -89,6 +90,34 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 llama_client=self.llama,
             )
         return self._router
+
+    def _is_list_style_query(self, query: str) -> bool:
+        """Detect queries that expect comprehensive bullet/list answers."""
+        q = (query or '').lower()
+        list_markers = [
+            'đặc trưng', 'dac trung', 'bao gồm', 'bao gom', 'gồm', 'gom',
+            'liệt kê', 'liet ke', 'nêu', 'neu', 'những gì', 'nhung gi',
+            'các', 'cac', 'kể', 'ke', 'list',
+        ]
+        return any(marker in q for marker in list_markers)
+
+    def _get_rag_top_k(self, query: str, default_top_k: int) -> int:
+        """Increase retrieval depth for list-style questions to reduce missing points."""
+        base_top_k = int(getattr(settings, 'RAG_RETRIEVAL_TOP_K', default_top_k))
+        list_top_k = int(getattr(settings, 'RAG_RETRIEVAL_TOP_K_LIST', max(base_top_k, 8)))
+        return list_top_k if self._is_list_style_query(query) else base_top_k
+
+    def _get_rag_max_tokens(self, query: str) -> int:
+        """Allow longer output for list-style questions so answers are not truncated."""
+        base_tokens = int(getattr(settings, 'RAG_LLM_MAX_TOKENS', 384))
+        list_tokens = int(getattr(settings, 'RAG_LLM_MAX_TOKENS_LIST', max(base_tokens, 768)))
+        return list_tokens if self._is_list_style_query(query) else base_tokens
+
+    def _get_context_snippet_chars(self, query: str) -> int:
+        """Allow larger per-chunk context for list-style questions."""
+        base_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS', 1400))
+        list_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_LIST', max(base_chars, 2200)))
+        return list_chars if self._is_list_style_query(query) else base_chars
 
     # =========================================================================
     # HELPERS - Resolve document IDs from DB conversation attachments
@@ -192,6 +221,7 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
         query: str,
         resolved_doc_ids: List[str],
         top_k: int = 4,  # Fix E: Giam tu 5 -> 4 de nhanh hon, it noise hon
+        snippet_chars: int = 900,
     ) -> Tuple[str, List[Dict]]:
         """
         Thực hiện Hybrid RAG search (BM25 + Vector) → rerank → build context string.
@@ -274,7 +304,7 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 doc_name = doc_name_map.get(str(doc_id), f'Tài liệu #{i}')
                 page = c.get('page')
                 page_info = f", trang {page}" if page else ''
-                snippet = (c.get('snippet') or '').strip()[:900]
+                snippet = (c.get('snippet') or '').strip()[:snippet_chars]
                 if snippet:
                     context_parts.append(
                         f"--- TAI LIEU {i}: {doc_name}{page_info} ---\n{snippet}"
@@ -355,7 +385,8 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
             context_str, rag_candidates = self._retrieve_context(
                 query=query,
                 resolved_doc_ids=resolved_ids,
-                top_k=3,
+                top_k=self._get_rag_top_k(query, default_top_k=3),
+                snippet_chars=self._get_context_snippet_chars(query),
             )
             
             context_texts = [context_str] if context_str else []
@@ -384,7 +415,7 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
             bot_response_text = self.llama.chat_complete(
                 messages=messages_for_llm,
                 system_prompt=system_prompt,
-                max_tokens=getattr(settings, 'RAG_LLM_MAX_TOKENS', 384) if use_rag else None,
+                max_tokens=self._get_rag_max_tokens(query) if use_rag else None,
                 temperature=getattr(settings, 'RAG_LLM_TEMPERATURE', 0.2) if use_rag else None,
             )
 
@@ -490,7 +521,8 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 context_str, rag_candidates = self._retrieve_context(
                     query=query,
                     resolved_doc_ids=resolved_ids,
-                    top_k=4,  # Fix E
+                    top_k=self._get_rag_top_k(query, default_top_k=4),
+                    snippet_chars=self._get_context_snippet_chars(query),
                 )
                 t5 = time.monotonic()
                 logger.debug(
@@ -529,7 +561,7 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 for chunk in self.llama.chat_complete_stream(
                     messages=messages_with_context,
                     system_prompt=system_prompt,
-                    max_tokens=getattr(settings, 'RAG_LLM_MAX_TOKENS', 384) if use_rag else None,
+                    max_tokens=self._get_rag_max_tokens(query) if use_rag else None,
                     temperature=getattr(settings, 'RAG_LLM_TEMPERATURE', 0.2) if use_rag else None,
                 ):
                     if first_chunk:

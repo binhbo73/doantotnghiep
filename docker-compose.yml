@@ -90,12 +90,12 @@ services:
       # EMBEDDING_BASE_URL không dùng khi backend=flag
       
       # Embedding chunk configuration to fit llama.cpp token limits
-      CHUNK_TOKEN_SIZE_PDF: "200"
-      CHUNK_TOKEN_OVERLAP_PDF: "40"
+      CHUNK_TOKEN_SIZE_PDF: "160"
+      CHUNK_TOKEN_OVERLAP_PDF: "32"
       CHUNK_TOKEN_SIZE_DOC: "240"
       CHUNK_TOKEN_OVERLAP_DOC: "48"
-      CHUNK_TOKEN_SIZE_TEXT: "260"
-      CHUNK_TOKEN_OVERLAP_TEXT: "52"
+      CHUNK_TOKEN_SIZE_TEXT: "200"
+      CHUNK_TOKEN_OVERLAP_TEXT: "40"
       RAG_RAPTOR_THRESHOLD_PAGES: "3"
       RAG_UPLOAD_FAST_MODE: "false"
       RAG_DEFER_SUMMARY_ON_UPLOAD: "false"
@@ -104,6 +104,10 @@ services:
       RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD: "false"
       RAG_RAPTOR_BUILD_WORKERS: "1"
       RAG_VECTORIZE_PAGE_SECTIONS: "false"
+      CELERY_TASK_TIME_LIMIT: "1800"
+      CELERY_TASK_SOFT_TIME_LIMIT: "1500"
+      RAG_RAPTOR_TASK_TIME_LIMIT: "1800"
+      RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
       CELERY_ENABLED: "true"
       
       # Email Configuration (Gmail SMTP)
@@ -175,12 +179,12 @@ services:
       EMBEDDING_BACKEND: flag
       EMBEDDING_MODEL: /app/models/bge-m3
       EMBEDDING_DEVICE: auto
-      CHUNK_TOKEN_SIZE_PDF: "200"
-      CHUNK_TOKEN_OVERLAP_PDF: "40"
+      CHUNK_TOKEN_SIZE_PDF: "160"
+      CHUNK_TOKEN_OVERLAP_PDF: "32"
       CHUNK_TOKEN_SIZE_DOC: "240"
       CHUNK_TOKEN_OVERLAP_DOC: "48"
-      CHUNK_TOKEN_SIZE_TEXT: "260"
-      CHUNK_TOKEN_OVERLAP_TEXT: "52"
+      CHUNK_TOKEN_SIZE_TEXT: "200"
+      CHUNK_TOKEN_OVERLAP_TEXT: "40"
       RAG_RAPTOR_THRESHOLD_PAGES: "3"
       RAG_UPLOAD_FAST_MODE: "false"
       RAG_DEFER_SUMMARY_ON_UPLOAD: "false"
@@ -190,6 +194,10 @@ services:
       RAG_RAPTOR_BUILD_WORKERS: "1"
       RAG_VECTORIZE_PAGE_SECTIONS: "false"
       CELERY_ENABLED: "true"
+      CELERY_TASK_TIME_LIMIT: "1800"
+      CELERY_TASK_SOFT_TIME_LIMIT: "1500"
+      RAG_RAPTOR_TASK_TIME_LIMIT: "1800"
+      RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
     volumes:
       - ./backend:/app
       - ./models:/app/models:ro

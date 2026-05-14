@@ -4,8 +4,13 @@ try:
     from celery import shared_task
 except ImportError:
     shared_task = None
+try:
+    from celery.exceptions import SoftTimeLimitExceeded
+except Exception:
+    SoftTimeLimitExceeded = Exception
 
 from django.apps import apps
+from django.conf import settings
 from django.utils import timezone
 from services.document.chunk_summary_service import ChunkSummaryService
 
@@ -37,7 +42,11 @@ if shared_task:
             return {'chunk_id': chunk_id, 'status': 'failed', 'error': str(e)}
 
 
-    @shared_task(bind=True)
+    @shared_task(
+        bind=True,
+        time_limit=getattr(settings, 'RAG_RAPTOR_TASK_TIME_LIMIT', 1800),
+        soft_time_limit=getattr(settings, 'RAG_RAPTOR_TASK_SOFT_TIME_LIMIT', 1500),
+    )
     def build_raptor_tree_task(self, document_id: str):
         """Celery task to build RAPTOR summaries after chunks/embeddings are persisted."""
         try:
@@ -70,6 +79,22 @@ if shared_task:
                 'document_id': str(document_id),
                 'status': 'completed',
                 'summary_nodes': node_count,
+            }
+        except SoftTimeLimitExceeded:
+            try:
+                _update_document_indexing_metadata(
+                    document_id,
+                    raptor_status='timeout',
+                    raptor_ready=False,
+                    raptor_error='RAPTOR build exceeded soft time limit',
+                    raptor_failed_at=timezone.now().isoformat(),
+                )
+            except Exception:
+                pass
+            return {
+                'document_id': str(document_id),
+                'status': 'timeout',
+                'error': 'RAPTOR build exceeded soft time limit',
             }
         except Exception as e:
             try:

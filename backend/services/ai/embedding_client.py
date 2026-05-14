@@ -219,6 +219,16 @@ class EmbeddingClient:
     def _create_flag_embedding(self, text: str) -> List[float]:
         try:
             t_request_start = time.monotonic()
+            
+            # BGE-M3 has max_length=8192. Truncate text to prevent "Token indices sequence length" error
+            # Use conservative 6000 char limit to account for tokenization expansion
+            MAX_CHARS = 6000
+            if len(text) > MAX_CHARS:
+                logger.warning(
+                    f'Text truncated from {len(text)} to {MAX_CHARS} chars for BGE-M3 (max_length=8192)'
+                )
+                text = text[:MAX_CHARS]
+            
             result = self.embedder.encode(
                 [text],
                 return_dense=True,
@@ -244,8 +254,20 @@ class EmbeddingClient:
 
     def _create_flag_embeddings(self, texts: List[str]) -> List[List[float]]:
         try:
+            # BGE-M3 has max_length=8192. Truncate texts to prevent "Token indices sequence length" error
+            MAX_CHARS = 6000
+            truncated_texts = []
+            for text in texts:
+                if len(text) > MAX_CHARS:
+                    logger.warning(
+                        f'Text truncated from {len(text)} to {MAX_CHARS} chars for BGE-M3 (max_length=8192)'
+                    )
+                    truncated_texts.append(text[:MAX_CHARS])
+                else:
+                    truncated_texts.append(text)
+            
             result = self.embedder.encode(
-                texts,
+                truncated_texts,
                 return_dense=True,
                 return_sparse=False,
                 return_colbert_vecs=False,
