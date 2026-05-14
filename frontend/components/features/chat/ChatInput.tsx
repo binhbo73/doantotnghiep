@@ -64,6 +64,33 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     const fileInputRef = useRef<HTMLInputElement>(null)
     const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+    const uploadStats = attachments.reduce(
+        (acc, att) => {
+            acc.total += 1
+            if (att.status === 'uploading') acc.uploading += 1
+            else if (att.status === 'processing') acc.processing += 1
+            else if (att.status === 'completed') acc.completed += 1
+            else if (att.status === 'failed') acc.failed += 1
+            return acc
+        },
+        { total: 0, uploading: 0, processing: 0, completed: 0, failed: 0 }
+    )
+
+    const uploadReadinessPercent = uploadStats.total > 0
+        ? Math.round((uploadStats.completed / uploadStats.total) * 100)
+        : 0
+
+    const uploadReadinessLabel = (() => {
+        if (uploadStats.total === 0) return 'Chưa có file nào được tải lên'
+        if (uploadStats.failed > 0 && uploadStats.completed === 0 && uploadStats.processing === 0 && uploadStats.uploading === 0) {
+            return 'Có file tải lên bị lỗi'
+        }
+        if (uploadStats.completed === uploadStats.total) return 'Tất cả file đã sẵn sàng để tìm kiếm'
+        if (uploadStats.processing > 0) return 'Đang phân tích tài liệu để sẵn sàng tìm kiếm'
+        if (uploadStats.uploading > 0) return 'Đang tải file lên'
+        return 'Đang cập nhật trạng thái file'
+    })()
+
     const flattenFolders = useCallback((folders: FolderResponse[]): FolderResponse[] => {
         const flat: FolderResponse[] = []
 
@@ -121,7 +148,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     const handleSend = () => {
         if (!message.trim() || isLoading || disabled) return
-        
+
         // Chỉ gửi những file đã hoàn thành xử lý
         const completedUploads = attachments.filter(att => att.status === 'completed' && att.documentId)
         const completedUploadIds = completedUploads.map(att => att.documentId!)
@@ -130,12 +157,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             documentIds: [...selectedDocumentIds, ...completedUploadIds],
             folderIds: selectedFolderIds,
         })
-        
+
         setMessage('')
-        // Chỉ xóa những file đã gửi thành công, giữ lại những file đang xử lý dở dang
-        setAttachments((prev) => prev.filter(att => att.status !== 'completed'))
-        setSelectedDocumentIds([])
-        setSelectedFolderIds([])
+        // Giữ nguyên attachment để user có thể hỏi nhiều câu liên tiếp trên cùng bộ file
+        // Chỉ đóng picker / reset nhập liệu tạm thời, không xoá selection sau khi gửi
         setShowSystemPicker(false)
         setSystemSearch('')
 
@@ -149,11 +174,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
         if (!files) return
 
         const fileArray = Array.from(files)
-        
+
         for (let i = 0; i < fileArray.length; i++) {
             const file = fileArray[i]
             const uploadId = `${Date.now()}-${i}`
-            
+
             // 1. Thêm vào state với trạng thái đang upload
             const newUpload: ChatUploadAttachment = {
                 id: uploadId,
@@ -164,26 +189,27 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 status: 'uploading',
                 statusText: 'Đang tải lên...'
             }
-            
+
             setAttachments((prev) => [...prev, newUpload].slice(0, 10))
 
             try {
                 // 2. Bắt đầu upload
                 const document = await uploadDocument(file, {
+                    accessScope: 'personal',
                     onProgress: (percent) => {
-                        setAttachments(prev => prev.map(att => 
+                        setAttachments(prev => prev.map(att =>
                             att.id === uploadId ? { ...att, progress: percent } : att
                         ))
                     }
                 })
 
                 // 3. Chuyển sang trạng thái đang xử lý (Parsing/Embedding)
-                setAttachments(prev => prev.map(att => 
-                    att.id === uploadId ? { 
-                        ...att, 
-                        status: 'processing', 
+                setAttachments(prev => prev.map(att =>
+                    att.id === uploadId ? {
+                        ...att,
+                        status: 'processing',
                         statusText: 'Đang phân tích...',
-                        documentId: document.id 
+                        documentId: document.id
                     } : att
                 ))
 
@@ -199,14 +225,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     try {
                         const statusData = await getDocumentStatus(document.id)
                         const docStatus = statusData.data?.document_status
-                        
+
                         if (docStatus === 'completed') {
-                            setAttachments(prev => prev.map(att => 
-                                att.id === uploadId ? { 
-                                    ...att, 
-                                    status: 'completed', 
+                            setAttachments(prev => prev.map(att =>
+                                att.id === uploadId ? {
+                                    ...att,
+                                    status: 'completed',
                                     statusText: 'Sẵn sàng',
-                                    progress: 100 
+                                    progress: 100
                                 } : att
                             ))
                             isDone = true
@@ -217,10 +243,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                             const chunks = statusData.data?.chunk_processing_status
                             if (chunks) {
                                 const percent = Math.round((chunks.completed_chunks / (chunks.total_chunks || 1)) * 100)
-                                setAttachments(prev => prev.map(att => 
-                                    att.id === uploadId ? { 
-                                        ...att, 
-                                        statusText: `Đang phân tích (${percent}%)` 
+                                setAttachments(prev => prev.map(att =>
+                                    att.id === uploadId ? {
+                                        ...att,
+                                        statusText: `Đang phân tích (${percent}%)`
                                     } : att
                                 ))
                             }
@@ -236,16 +262,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
             } catch (error) {
                 console.error('Upload error:', error)
-                setAttachments(prev => prev.map(att => 
-                    att.id === uploadId ? { 
-                        ...att, 
-                        status: 'failed', 
-                        statusText: 'Lỗi xử lý' 
+                setAttachments(prev => prev.map(att =>
+                    att.id === uploadId ? {
+                        ...att,
+                        status: 'failed',
+                        statusText: 'Lỗi xử lý'
                     } : att
                 ))
             }
         }
-        
+
         // Reset file input
         if (fileInputRef.current) fileInputRef.current.value = ''
     }
@@ -384,8 +410,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     <button
                         onClick={handleSend}
                         disabled={
-                            !message.trim() || 
-                            isLoading || 
+                            !message.trim() ||
+                            isLoading ||
                             disabled
                         }
                         className="flex-shrink-0 p-2.5 bg-gradient-to-br from-primary to-primary-container text-on-primary rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-primary/30 active:scale-95 flex items-center justify-center"
@@ -395,35 +421,58 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     </button>
                 </div>
 
+                {/* Upload readiness bar */}
+                {attachments.length > 0 && (
+                    <div className="mt-3 px-2">
+                        <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/80 px-4 py-3 shadow-sm">
+                            <div className="flex items-start justify-between gap-3">
+
+                                <div className="shrink-0 text-right">
+                                    <div className="text-lg font-extrabold text-primary">{uploadReadinessPercent}%</div>
+                                    <div className="text-[10px] uppercase tracking-widest text-slate-400">Sẵn sàng</div>
+                                </div>
+                            </div>
+
+                            <div className="mt-3 h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                                <div
+                                    className="h-full rounded-full bg-gradient-to-r from-primary via-amber-500 to-emerald-500 transition-all duration-300"
+                                    style={{ width: `${uploadReadinessPercent}%` }}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Uploads Preview with Status */}
                 {attachments.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2 px-2">
                         {attachments.map((att) => (
-                            <div 
+                            <div
                                 key={att.id}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs transition-all ${
-                                    att.status === 'failed' 
-                                        ? 'bg-error/5 border-error/20 text-error' 
-                                        : att.status === 'completed'
-                                            ? 'bg-success/5 border-success/20 text-success'
-                                            : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                                }`}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs transition-all ${att.status === 'failed'
+                                    ? 'bg-error/5 border-error/20 text-error'
+                                    : att.status === 'completed'
+                                        ? 'bg-success/5 border-success/20 text-success'
+                                        : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
+                                    }`}
                             >
                                 <div className="flex flex-col max-w-[150px]">
                                     <span className="font-medium truncate" title={att.name}>{att.name}</span>
                                     <div className="flex items-center gap-2 mt-0.5">
                                         {att.status === 'uploading' || att.status === 'processing' ? (
                                             <div className="w-12 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                                                <div 
-                                                    className="h-full bg-primary transition-all duration-300" 
+                                                <div
+                                                    className="h-full bg-primary transition-all duration-300"
                                                     style={{ width: `${att.progress || 0}%` }}
                                                 />
                                             </div>
+                                        ) : att.status === 'completed' ? (
+                                            <Check size={10} className="text-success" />
                                         ) : null}
                                         <span className="text-[9px] opacity-70 uppercase tracking-tight">{att.statusText}</span>
                                     </div>
                                 </div>
-                                <button 
+                                <button
                                     onClick={() => removeAttachment(att.id)}
                                     className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
                                 >
