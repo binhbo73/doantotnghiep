@@ -13,8 +13,10 @@ Pattern:
     ❌ NEVER: Service → Conversation.objects.*, Message.objects.* directly
 """
 import logging
+import time
 from typing import List, Dict, Any, Optional, Tuple, Generator
 from django.apps import apps
+from django.conf import settings
 from django.utils import timezone
 from core.exceptions import BusinessLogicError, LLMServiceError
 from services.ai.llama_client import LlamaClient
@@ -55,9 +57,12 @@ class ChatService:
 QUY TAC BAT BUOC:
 1. CHI tra loi dua vao NOI DUNG TAI LIEU THAM KHAO ben duoi.
 2. TUYET DOI KHONG dung kien thuc ben ngoai hoac suy doan.
-3. NEU tai lieu khong chua thong tin, hay tra loi: "Tai lieu khong co thong tin nay."
-4. Trich dan nguon cu the: [Nguon: ten_file, trang X] cho moi y.
-5. Tra loi NGAN GON, dung y chinh, khong dai dong.
+3. Tra loi DUNG Y DINH CAU HOI HIEN TAI; bo qua cac doan lien quan nhung tra loi cho cau hoi khac.
+4. Neu cau hoi hoi "tai sao/vi sao/ly do", uu tien cac doan co "ly do", "vi", "do", "nguyen nhan", "buoc phai".
+5. KHONG tra loi "khong co thong tin" neu bat ky doan nao da tra loi truc tiep cau hoi.
+6. NEU tai lieu thuc su khong chua thong tin, hay tra loi: "Tai lieu khong co thong tin nay."
+7. Trich dan nguon cu the: [Nguon: ten_file, trang X] cho moi y.
+8. Tra loi NGAN GON, dung y chinh, khong dai dong.
 
 NEU BAN DUNG KIEN THUC NGOAI TAI LIEU, CAU TRA LOI SAI.
 TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
@@ -201,10 +206,12 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
             - context_string: Text sẵn sàng chèn vào prompt LLM (có header + citations).
             - candidates_list: Raw list candidates để lưu vào metadata nếu cần.
         """
+        t_context_start = time.monotonic()
         if not resolved_doc_ids:
             return '', []
 
         try:
+            t_route_start = time.monotonic()
             router = self._get_router()
 
             # Truyền document_ids vào user_context để HybridRetriever / RAPTOR biết giới hạn
@@ -216,12 +223,36 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 user_context=user_context,
                 top_k=top_k,
             )
+            t_route_done = (time.monotonic() - t_route_start) * 1000
 
             if not candidates:
                 logger.debug("[_retrieve_context] Không tìm thấy chunks phù hợp")
                 return '', []
 
             # Lấy thông tin tên tài liệu để gắn citation (batch query, tránh N+1)
+            # Retrieval payloads only carry short previews. Fetch the selected
+            # chunks before prompt building so key facts are not truncated.
+            t_chunk_fetch_start = time.monotonic()
+            try:
+                DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+                chunk_ids_needed = [c.get('chunk_id') for c in candidates if c.get('chunk_id')]
+                chunks = DocumentChunk.objects.filter(
+                    id__in=chunk_ids_needed,
+                    is_deleted=False,
+                ).values('id', 'document_id', 'content', 'page_number')
+                chunk_map = {str(chunk['id']): chunk for chunk in chunks}
+                for candidate in candidates:
+                    chunk = chunk_map.get(str(candidate.get('chunk_id')))
+                    if not chunk:
+                        continue
+                    candidate['document_id'] = str(chunk['document_id'])
+                    candidate['snippet'] = chunk.get('content') or candidate.get('snippet') or ''
+                    candidate['page'] = chunk.get('page_number') or candidate.get('page')
+            except Exception as e:
+                logger.warning(f"[_retrieve_context] Khong the hydrate chunks: {e}")
+            t_chunk_fetch_done = (time.monotonic() - t_chunk_fetch_start) * 1000
+
+            t_doc_fetch_start = time.monotonic()
             doc_ids_needed = list({c.get('document_id') for c in candidates if c.get('document_id')})
             doc_name_map: Dict[str, str] = {}
             if doc_ids_needed:
@@ -233,15 +264,17 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                         doc_name_map[str(doc['id'])] = name
                 except Exception as e:
                     logger.warning(f"[_retrieve_context] Không thể lấy tên tài liệu: {e}")
+            t_doc_fetch_done = (time.monotonic() - t_doc_fetch_start) * 1000
 
             # Build context string với số thứ tự để LLM trích dẫn dễ hơn
+            t_ctx_build_start = time.monotonic()
             context_parts = []
             for i, c in enumerate(candidates, start=1):
                 doc_id = c.get('document_id', '')
                 doc_name = doc_name_map.get(str(doc_id), f'Tài liệu #{i}')
                 page = c.get('page')
                 page_info = f", trang {page}" if page else ''
-                snippet = (c.get('snippet') or '').strip()[:500]  # Fix: 500 chars, date/key info can be at pos 200+
+                snippet = (c.get('snippet') or '').strip()[:900]
                 if snippet:
                     context_parts.append(
                         f"--- TAI LIEU {i}: {doc_name}{page_info} ---\n{snippet}"
@@ -256,7 +289,19 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 + context_str +
                 "\n=== HET TAI LIEU ==="
             )
+            t_ctx_build_done = (time.monotonic() - t_ctx_build_start) * 1000
+            t_context_total = (time.monotonic() - t_context_start) * 1000
 
+            logger.info(
+                f"[CONTEXT_PROFILE] "
+                f"query='{query[:40]}...' "
+                f"chunks={len(candidates)} docs={len(doc_name_map)} | "
+                f"timing: route={t_route_done:.1f}ms, "
+                f"chunk_fetch={t_chunk_fetch_done:.1f}ms, "
+                f"doc_fetch={t_doc_fetch_done:.1f}ms, "
+                f"ctx_build={t_ctx_build_done:.1f}ms, "
+                f"total={t_context_total:.1f}ms"
+            )
             logger.debug(
                 f"[_retrieve_context] {len(candidates)} chunks từ {len(doc_name_map)} tài liệu "
                 f"(top score: {candidates[0].get('score', 0):.3f})"
@@ -327,15 +372,20 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
             # P2#9: Unified context injection (same as ask_stream)
             if context_str:
                 last_msg = messages_for_llm[-1].copy()
-                last_msg['content'] = f"{query}\n\n{context_str}"
-                messages_for_llm = messages_for_llm[:-1] + [last_msg]
+                last_msg['content'] = (
+                    f"CAU HOI CAN TRA LOI:\n{query}\n\n"
+                    f"{context_str}"
+                )
+                messages_for_llm = [last_msg]
 
             # 6. Gọi LLM
             use_rag = bool(context_str)
             system_prompt = self.RAG_SYSTEM_PROMPT if use_rag else ''
             bot_response_text = self.llama.chat_complete(
                 messages=messages_for_llm,
-                system_prompt=system_prompt
+                system_prompt=system_prompt,
+                max_tokens=getattr(settings, 'RAG_LLM_MAX_TOKENS', 384) if use_rag else None,
+                temperature=getattr(settings, 'RAG_LLM_TEMPERATURE', 0.2) if use_rag else None,
             )
 
             # 7. Lưu tin nhắn Bot
@@ -460,7 +510,7 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
             if context_str and messages_for_llm:
                 last_msg = messages_for_llm[-1].copy()
                 last_msg['content'] = f"{query}\n\n{context_str}"
-                messages_with_context = messages_for_llm[:-1] + [last_msg]
+                messages_with_context = [last_msg]
             else:
                 messages_with_context = messages_for_llm
 
@@ -479,6 +529,8 @@ TAT CA THONG TIN PHAI DEN TU TAI LIEU DUOC CUNG CAP."""
                 for chunk in self.llama.chat_complete_stream(
                     messages=messages_with_context,
                     system_prompt=system_prompt,
+                    max_tokens=getattr(settings, 'RAG_LLM_MAX_TOKENS', 384) if use_rag else None,
+                    temperature=getattr(settings, 'RAG_LLM_TEMPERATURE', 0.2) if use_rag else None,
                 ):
                     if first_chunk:
                         logger.debug(

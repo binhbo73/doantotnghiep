@@ -14,6 +14,7 @@ Uses Qwen3-4B LLM for summarization (local, no API cost).
 import logging
 import hashlib
 import threading
+import time
 from typing import Optional
 from django.conf import settings
 from django_redis import get_redis_connection
@@ -38,8 +39,8 @@ class ChunkSummaryService:
     """
     
     # Configuration (Fix #3: optimized for Qwen3-4B latency)
-    SUMMARY_MAX_TOKENS = 80   # Giam tu 100 -> 80 de LLM phan hoi nhanh hon
-    SUMMARY_TEMPERATURE = 0.3  # Low for consistency
+    SUMMARY_MAX_TOKENS = 64   # Short output keeps background summary fast
+    SUMMARY_TEMPERATURE = 0.2  # Low for consistency
     SUMMARY_TIMEOUT = 300      # Tang tu 180 -> 300 de tranh timeout tren CPU
     CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days
     SUMMARY_PROMPT_VERSION = "v2"
@@ -95,6 +96,7 @@ class ChunkSummaryService:
         Returns:
             Summary string (1-3 sentences, ~150 chars)
         """
+        t_start = time.monotonic()
         try:
             if not chunk_text or len(chunk_text.strip()) < 50:
                 logger.debug(f"Chunk too short ({len(chunk_text)} chars), skipping summary")
@@ -119,6 +121,10 @@ class ChunkSummaryService:
                 logger.debug(f"✅ Summary generated ({len(clean_summary)} chars): {clean_summary[:60]}...")
             else:
                 logger.warning(f"⚠️  Summary generation returned empty result")
+
+            logger.info(
+                f"[SUMMARY_PROFILE] mode=sync chars={len(chunk_text)} time={(time.monotonic() - t_start) * 1000:.1f}ms"
+            )
             
             return clean_summary
         
@@ -137,11 +143,15 @@ class ChunkSummaryService:
             chunk_text: Text to summarize
             document_id: Parent Document.id (optional)
         """
+        t_start = time.monotonic()
         try:
             if self.celery_enabled and self.celery_task:
                 try:
                     self.celery_task.delay(chunk_id, chunk_text, document_id)
-                    logger.debug(f"Queued Celery summary task for chunk {chunk_id}")
+                    logger.info(
+                        f"[SUMMARY_PROFILE] mode=celery-queued chunk_id={chunk_id} "
+                        f"queue_time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                    )
                     return
                 except Exception as e:
                     logger.warning(f"Celery task enqueue failed, falling back to thread: {e}")
@@ -152,7 +162,10 @@ class ChunkSummaryService:
                 daemon=True
             )
             thread.start()
-            logger.debug(f"Queued background summary for chunk {chunk_id}")
+            logger.info(
+                f"[SUMMARY_PROFILE] mode=thread-queued chunk_id={chunk_id} "
+                f"queue_time={(time.monotonic() - t_start) * 1000:.1f}ms"
+            )
         
         except Exception as e:
             logger.error(f"Error queuing background summary: {str(e)}")
@@ -250,13 +263,14 @@ class ChunkSummaryService:
     def _build_summary_prompt(self, chunk_text: str) -> str:
         """Build prompt for chunk summarization.
         
-        Fix #3: Giam prompt size (1200 chars thay vi 2000) de giam LLM latency.
+        Fix #3: Giam prompt size de giam LLM latency.
         Qwen3-4B xu ly prompt ngan nhanh hon dang ke, tranh timeout.
         """
         return (
-            "Tom tat doan van sau bang 1-3 cau ngan gon tieng Viet (toi da 150 ky tu). "
-            "Giu dung y chinh, ten rieng, so lieu. Khong them tieu de hay giai thich.\n\n"
-            f"{chunk_text[:1200]}\n\n"
+            "Tom tat doan van sau bang 1-2 cau tieng Viet, toi da 120 ky tu. "
+            "Giu ten rieng, ngay thang, so lieu, dieu kien va hanh dong quan trong. "
+            "Khong suy dien, khong them tieu de.\n\n"
+            f"{chunk_text[:900]}\n\n"
             "Tom tat:"
         )
     

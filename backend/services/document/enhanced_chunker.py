@@ -18,6 +18,7 @@ Integration points:
 import logging
 import threading
 import hashlib
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from django.apps import apps
 from django.conf import settings
@@ -96,8 +97,10 @@ class EnhancedDocumentChunker:
             List of chunk dictionaries with metadata + embeddings
         """
         try:
+            t_total_start = time.monotonic()
             # Step 1: Use hierarchical chunking if page-aware, else fallback to regular chunking
             should_raptor = False
+            t_chunking_start = time.monotonic()
             if page_aware_text:
                 page_count = page_aware_text.total_pages
                 threshold = getattr(settings, 'RAG_RAPTOR_THRESHOLD_PAGES', 3)
@@ -113,6 +116,7 @@ class EnhancedDocumentChunker:
                 # FALLBACK: Regular chunking on full text
                 chunks = self.base_chunker.chunk_text(text, metadata)
                 logger.info(f"Created {len(chunks)} base chunks for document {document_id}")
+            chunking_ms = (time.monotonic() - t_chunking_start) * 1000
             
             # Step 2: Skip page enrichment if already done by chunk_by_pages()
             # (page_number is already accurate from hierarchical chunking)
@@ -120,6 +124,7 @@ class EnhancedDocumentChunker:
                 chunks = self._enrich_chunks_with_pages(chunks, page_aware_text)
             
             # Step 3: Generate embeddings + store in DB
+            t_embed_store_start = time.monotonic()
             DocumentChunk = apps.get_model('documents', 'DocumentChunk')
             Document = apps.get_model('documents', 'Document')
             
@@ -157,7 +162,7 @@ class EnhancedDocumentChunker:
                     content_hash = hashlib.md5(page_container_content.encode()).hexdigest()
                     
                     # 🚀 NEW: Generate embedding for the whole page/section node
-                    section_embedding = self.base_chunker._generate_embedding(page_container_content[:4000], embedding_client)
+                    section_embedding = None
                     
                     # ✅ IDEMPOTENCY FIX: Check if a section node for this page already exists
                     existing_section = DocumentChunk.objects.filter(
@@ -190,50 +195,65 @@ class EnhancedDocumentChunker:
                             prev_chunk=prev_chunk_obj,
                         )
                     
-                        # Store section embedding in Qdrant
-                        section_vector_id = qdrant_client.add_embedding(
-                            embedding=section_embedding,
-                            chunk_id=str(page_container.id),
-                            payload={
-                                'document_id': str(document_id),
-                                'chunk_id': str(page_container.id),
-                                'page_number': page_number,
-                                'text_preview': page_container_content[:200],
-                                'node_type': 'section',
-                                'hierarchy_level': 1,
-                            }
-                        )
-                        
-                        page_container.vector_id = section_vector_id
-                        page_container.save(update_fields=['vector_id'])
-                        
-                        # Store section embedding in SQL
-                        from apps.documents.models import DocumentEmbedding
-                        import json
-                        section_embedding_json = json.dumps(section_embedding.tolist() if hasattr(section_embedding, 'tolist') else section_embedding)
-                        
-                        DocumentEmbedding.objects.create(
-                            chunk=page_container,
-                            embedding_vector=section_embedding_json, # Store for visibility
-                            qdrant_vector_id=section_vector_id,
-                            embedding_model=getattr(settings, 'EMBEDDING_MODEL', 'bge-m3'),
-                            embedding_dimension=len(section_embedding) if section_embedding else 1024,
-                            embedding_computed_at=timezone.now(),
-                        )
+                        if getattr(settings, 'RAG_VECTORIZE_PAGE_SECTIONS', False):
+                            section_embedding = self.base_chunker._generate_embedding(
+                                page_container_content[:4000],
+                                embedding_client,
+                            )
+                            section_vector_id = qdrant_client.add_embedding(
+                                embedding=section_embedding,
+                                chunk_id=str(page_container.id),
+                                payload={
+                                    'document_id': str(document_id),
+                                    'chunk_id': str(page_container.id),
+                                    'page_number': page_number,
+                                    'text_preview': page_container_content[:200],
+                                    'node_type': 'section',
+                                    'hierarchy_level': 1,
+                                }
+                            )
+
+                            page_container.vector_id = section_vector_id
+                            page_container.save(update_fields=['vector_id'])
+
+                            from apps.documents.models import DocumentEmbedding
+                            import json
+                            section_embedding_json = json.dumps(section_embedding.tolist() if hasattr(section_embedding, 'tolist') else section_embedding)
+
+                            DocumentEmbedding.objects.create(
+                                chunk=page_container,
+                                embedding_vector=section_embedding_json,
+                                qdrant_vector_id=section_vector_id,
+                                embedding_model=getattr(settings, 'EMBEDDING_MODEL', 'bge-m3'),
+                                embedding_dimension=len(section_embedding) if section_embedding else 1024,
+                                embedding_computed_at=timezone.now(),
+                            )
 
                         logger.info(
                             f"📂 [PAGE {page_number}] Created & Vectorized Parent Node\n"
                             f"   🆔 ID: {page_container.id}\n"
                             f"   👶 Children expected: {len(page_chunks)} chunks"
                         )
-                        # 🚀 NEW: Queue summary ONLY for the page/section node
-                        if generate_summaries and self.summary_service:
+                        # RAPTOR tree building creates page/section/document summaries.
+                        # Queue section summaries separately only when explicitly enabled.
+                        queue_section_summaries = getattr(
+                            settings,
+                            'RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD',
+                            False,
+                        )
+                        if generate_summaries and queue_section_summaries and self.summary_service:
                             try:
-                                self.summary_service.queue_summary_async(
-                                    chunk_id=str(page_container.id),
-                                    chunk_text=page_container_content[:4000],
-                                    document_id=document_id
-                                )
+                                if summary_mode == 'async':
+                                    self.summary_service.queue_summary_async(
+                                        chunk_id=str(page_container.id),
+                                        chunk_text=page_container_content[:4000],
+                                        document_id=document_id
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[SUMMARY_PROFILE] skipped_async_queue chunk_id={page_container.id} "
+                                        f"mode={summary_mode}"
+                                    )
                             except Exception as e:
                                 logger.warning(f"Failed to queue summary for section {page_container.id}: {e}")
 
@@ -326,14 +346,26 @@ class EnhancedDocumentChunker:
                                 embedding_computed_at=timezone.now(),
                             )
 
-                            # Queue summary generation
-                            if generate_summaries and self.summary_service:
+                            # Detail chunk summaries are optional. Final answers cite
+                            # detail chunks directly; RAPTOR uses page/section summaries.
+                            summarize_detail_chunks = getattr(
+                                settings,
+                                'RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD',
+                                False,
+                            )
+                            if generate_summaries and summarize_detail_chunks and self.summary_service:
                                 try:
-                                    self.summary_service.queue_summary_async(
-                                        chunk_id=str(chunk_obj.id),
-                                        chunk_text=chunk_text,
-                                        document_id=document_id
-                                    )
+                                    if summary_mode == 'async':
+                                        self.summary_service.queue_summary_async(
+                                            chunk_id=str(chunk_obj.id),
+                                            chunk_text=chunk_text,
+                                            document_id=document_id
+                                        )
+                                    else:
+                                        logger.info(
+                                            f"[SUMMARY_PROFILE] skipped_async_queue chunk_id={chunk_obj.id} "
+                                            f"mode={summary_mode}"
+                                        )
                                 except Exception as summary_err:
                                     logger.warning(f"Failed to queue summary for chunk {chunk_obj.id}: {summary_err}")
 
@@ -361,6 +393,11 @@ class EnhancedDocumentChunker:
             logger.info(
                 f"Enhanced chunking completed: {len(chunks_with_embeddings)} chunks with embeddings, "
                 f"page_aware={page_aware_text is not None}, summaries={generate_summaries}"
+            )
+            logger.info(
+                f"[UPLOAD_PROFILE] stage=enhanced_chunker document={document_id} "
+                f"chunking={chunking_ms:.1f}ms embed_store={(time.monotonic() - t_embed_store_start) * 1000:.1f}ms "
+                f"total={(time.monotonic() - t_total_start) * 1000:.1f}ms"
             )
             
             return chunks_with_embeddings

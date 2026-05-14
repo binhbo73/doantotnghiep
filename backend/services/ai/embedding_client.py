@@ -16,6 +16,7 @@ Configuration (settings.py):
 
 import logging
 import time
+import threading
 from typing import Optional, List
 
 import numpy as np
@@ -37,8 +38,24 @@ def _normalize_backend(value: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _normalize_device(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if normalized in ('', 'auto', 'default', 'detect'):
+        return None
+    if normalized in ('gpu', 'cuda'):
+        return 'cuda'
+    if normalized in ('cpu', 'mps'):
+        return normalized
+    return value
+
+
 class EmbeddingClient:
     """Embedding client supporting HTTP or FlagEmbedding backends."""
+
+    _flag_model_cache = {}
+    _flag_model_lock = threading.Lock()
 
     def __init__(
         self,
@@ -51,7 +68,7 @@ class EmbeddingClient:
     ):
         self.api_url = api_url or settings.EMBEDDING_BASE_URL
         self.backend = _normalize_backend(backend or getattr(settings, 'EMBEDDING_BACKEND', None))
-        self.device = device or getattr(settings, 'EMBEDDING_DEVICE', None)
+        self.device = _normalize_device(device or getattr(settings, 'EMBEDDING_DEVICE', None))
         self.timeout = timeout or getattr(settings, 'EMBEDDING_TIMEOUT', 60)
         self.retry_times = retry_times or getattr(settings, 'EMBEDDING_RETRY_TIMES', 1)
 
@@ -74,6 +91,7 @@ class EmbeddingClient:
         if self.backend == 'flag':
             self._init_flag_embedding()
         else:
+            import threading
             logger.info(
                 f"EmbeddingClient configured for HTTP backend: {self.api_url} model={self.model}"
             )
@@ -101,16 +119,28 @@ class EmbeddingClient:
             use_fp16 = True
 
         try:
-            self.embedder = BGEM3FlagModel(
-                model_name_or_path=self.model,
-                devices=self.device,
-                normalize_embeddings=True,
-                use_fp16=use_fp16,
-                use_bf16=False,
-            )
-            logger.info(
-                f'EmbeddingClient configured for FlagEmbedding backend: model={self.model} device={self.device}'
-            )
+            device = self.device
+            cache_key = (self.model, device, use_fp16)
+            with self._flag_model_lock:
+                cached_embedder = self._flag_model_cache.get(cache_key)
+                if cached_embedder is None:
+                    cached_embedder = BGEM3FlagModel(
+                        model_name_or_path=self.model,
+                        devices=device,
+                        normalize_embeddings=True,
+                        use_fp16=use_fp16,
+                        use_bf16=False,
+                    )
+                    self._flag_model_cache[cache_key] = cached_embedder
+                    logger.info(
+                        f'EmbeddingClient configured for FlagEmbedding backend: model={self.model} device={device}'
+                    )
+                else:
+                    logger.info(
+                        f'EmbeddingClient reused cached FlagEmbedding backend: model={self.model} device={device}'
+                    )
+
+            self.embedder = cached_embedder
         except Exception as e:
             logger.error('Failed to initialize FlagEmbedding model', exc_info=True)
             raise LLMServiceError(f'Failed to initialize FlagEmbedding model: {str(e)}')
@@ -119,12 +149,46 @@ class EmbeddingClient:
         if not text:
             raise LLMServiceError('Cannot generate embedding for empty text')
 
+        t_start = time.monotonic()
         if self.backend == 'http':
-            return self._create_http_embedding(text)
-        return self._create_flag_embedding(text)
+            embedding = self._create_http_embedding(text)
+        else:
+            embedding = self._create_flag_embedding(text)
+
+        elapsed_ms = (time.monotonic() - t_start) * 1000
+        logger.info(
+            f"[EMBEDDING_PROFILE] backend={self.backend} model={self.model} "
+            f"dims={len(embedding)} time={elapsed_ms:.1f}ms"
+        )
+        return embedding
+
+    def create_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for multiple texts in one batch when supported."""
+        valid_texts = [text for text in texts if text]
+        if len(valid_texts) != len(texts):
+            raise LLMServiceError('Cannot generate embedding for empty text')
+
+        if not texts:
+            return []
+
+        t_start = time.monotonic()
+        if self.backend == 'flag':
+            embeddings = self._create_flag_embeddings(texts)
+        else:
+            embeddings = [self._create_http_embedding(text) for text in texts]
+
+        elapsed_ms = (time.monotonic() - t_start) * 1000
+        avg_ms = elapsed_ms / max(1, len(embeddings))
+        dims = len(embeddings[0]) if embeddings else 0
+        logger.info(
+            f"[EMBEDDING_BATCH_PROFILE] backend={self.backend} model={self.model} "
+            f"count={len(embeddings)} dims={dims} total={elapsed_ms:.1f}ms avg={avg_ms:.1f}ms"
+        )
+        return embeddings
 
     def _create_http_embedding(self, text: str) -> List[float]:
         try:
+            t_request_start = time.monotonic()
             payload = {
                 'model': self.model,
                 'input': text,
@@ -141,7 +205,10 @@ class EmbeddingClient:
                 result = response.json()
                 if 'data' in result and len(result['data']) > 0:
                     embedding = result['data'][0].get('embedding', [])
-                    logger.debug(f'Embedding generated: {len(embedding)} dimensions')
+                    logger.debug(
+                        f'Embedding generated: {len(embedding)} dimensions in '
+                        f'{(time.monotonic() - t_request_start) * 1000:.1f}ms'
+                    )
                     return embedding
                 raise LLMServiceError('Invalid embedding response format')
             raise LLMServiceError(f'Embedding API error: {response.status_code}')
@@ -151,6 +218,7 @@ class EmbeddingClient:
 
     def _create_flag_embedding(self, text: str) -> List[float]:
         try:
+            t_request_start = time.monotonic()
             result = self.embedder.encode(
                 [text],
                 return_dense=True,
@@ -164,12 +232,33 @@ class EmbeddingClient:
                 else:
                     dense_vec = dense_vecs
                 embedding = dense_vec.tolist()
-                logger.debug(f'Embedding generated (FlagEmbedding): {len(embedding)} dimensions')
+                logger.debug(
+                    f'Embedding generated (FlagEmbedding): {len(embedding)} dimensions in '
+                    f'{(time.monotonic() - t_request_start) * 1000:.1f}ms'
+                )
                 return embedding
             raise LLMServiceError('Invalid FlagEmbedding output format')
         except Exception as e:
             logger.error('Embedding generation error (FlagEmbedding): %s', str(e), exc_info=True)
             raise LLMServiceError(f'Failed to generate embedding: {str(e)}')
+
+    def _create_flag_embeddings(self, texts: List[str]) -> List[List[float]]:
+        try:
+            result = self.embedder.encode(
+                texts,
+                return_dense=True,
+                return_sparse=False,
+                return_colbert_vecs=False,
+            )
+            if isinstance(result, dict) and 'dense_vecs' in result:
+                dense_vecs = np.asarray(result['dense_vecs'])
+                if dense_vecs.ndim != 2 or dense_vecs.shape[0] != len(texts):
+                    raise LLMServiceError('Invalid FlagEmbedding batch output shape')
+                return [dense_vecs[i].tolist() for i in range(len(texts))]
+            raise LLMServiceError('Invalid FlagEmbedding batch output format')
+        except Exception as e:
+            logger.error('Batch embedding generation error (FlagEmbedding): %s', str(e), exc_info=True)
+            raise LLMServiceError(f'Failed to generate batch embeddings: {str(e)}')
 
     def _request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         last_error = None

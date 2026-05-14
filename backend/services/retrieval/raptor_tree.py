@@ -156,8 +156,8 @@ class RaptorTreeBuilder:
             self._embed_and_store(page_summary)
             return {'summary_chunk_id': str(page_summary.id), 'page': page, 'child_count': len(chunks)}
 
-        # Use up to 4 threads for RAPTOR generation
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        max_workers = max(1, int(getattr(settings, 'RAG_RAPTOR_BUILD_WORKERS', 1)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_page = {executor.submit(process_page, p, c): p for p, c in page_groups.items()}
             for future in concurrent.futures.as_completed(future_to_page):
                 res = future.result()
@@ -220,7 +220,8 @@ class RaptorTreeBuilder:
                 'page_number': section_summary.page_number
             }
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        max_workers = max(1, int(getattr(settings, 'RAG_RAPTOR_BUILD_WORKERS', 1)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_sec = {executor.submit(process_section, i, g): i for i, g in enumerate(section_groups, 1)}
             for future in concurrent.futures.as_completed(future_to_sec):
                 res = future.result()
@@ -371,15 +372,16 @@ class RaptorTreeBuilder:
             
             llama = LlamaClient(timeout=300)
             prompt = (
-                "Tong hop cac doan tom tat sau thanh 1 doan van ngan gon "
-                "tieng Viet (toi da 400 ky tu), giu y chinh, ten rieng, so lieu.\n\n"
-                + text[:1500] + "\n\n"
+                "Tong hop cac tom tat sau thanh 1-3 cau tieng Viet, toi da 250 ky tu. "
+                "Chi giu y chinh, ten rieng, ngay thang, so lieu, dieu kien va hanh dong quan trong. "
+                "Khong suy dien, khong them thong tin ngoai noi dung.\n\n"
+                + text[:900] + "\n\n"
                 "Tom tat tong hop:"
             )
             summary = llama.complete(
                 prompt=prompt,
-                max_tokens=150,
-                temperature=0.3,
+                max_tokens=96,
+                temperature=0.2,
                 timeout=300,
             )
             if summary and len(summary.strip()) > 20:

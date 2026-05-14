@@ -777,6 +777,9 @@ class DocumentChunker:
             return []
         
         try:
+            if hasattr(embedding_client, 'create_embeddings'):
+                return embedding_client.create_embeddings(texts)
+
             # Kiem tra xem embedding_client co ho tro batch khong
             if hasattr(embedding_client, 'embedder') and hasattr(embedding_client.embedder, 'encode'):
                 # FlagEmbedding backend - batch encode

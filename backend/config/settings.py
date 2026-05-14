@@ -166,12 +166,14 @@ LLM_TOP_P = float(os.environ.get("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "2048"))
 LLM_CONTEXT_WINDOW = int(os.environ.get("LLM_CONTEXT_WINDOW", "8192"))
 LLM_REQUEST_TIMEOUT = int(os.environ.get("LLM_REQUEST_TIMEOUT", "120"))
+RAG_LLM_MAX_TOKENS = int(os.environ.get("RAG_LLM_MAX_TOKENS", "384"))
+RAG_LLM_TEMPERATURE = float(os.environ.get("RAG_LLM_TEMPERATURE", "0.2"))
 
 # 2. Embedding Settings
 EMBEDDING_BACKEND = os.environ.get("EMBEDDING_BACKEND", "http")  # 'http' or 'flag'
 EMBEDDING_BASE_URL = os.environ.get("EMBEDDING_BASE_URL", LLM_BASE_URL)
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", LLM_MODEL)
-EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
+EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "auto")
 EMBEDDING_TIMEOUT = int(os.environ.get("EMBEDDING_TIMEOUT", "60"))
 EMBEDDING_RETRY_TIMES = int(os.environ.get("EMBEDDING_RETRY_TIMES", "1"))
 
@@ -214,6 +216,12 @@ QDRANT_QUANTIZATION = os.environ.get("QDRANT_QUANTIZATION", "")
 # ============================================================
 CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "240"))
 CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "48"))
+CHUNK_TOKEN_SIZE_PDF = int(os.environ.get("CHUNK_TOKEN_SIZE_PDF", "200"))
+CHUNK_TOKEN_OVERLAP_PDF = int(os.environ.get("CHUNK_TOKEN_OVERLAP_PDF", "40"))
+CHUNK_TOKEN_SIZE_DOC = int(os.environ.get("CHUNK_TOKEN_SIZE_DOC", "240"))
+CHUNK_TOKEN_OVERLAP_DOC = int(os.environ.get("CHUNK_TOKEN_OVERLAP_DOC", "48"))
+CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "260"))
+CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "52"))
 CHUNK_SIZE = CHUNK_TOKEN_SIZE
 CHUNK_OVERLAP = CHUNK_TOKEN_OVERLAP
 
@@ -310,7 +318,14 @@ DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER)
 
 FRONTEND_URL = os.environ.get("APP_URL", "http://localhost:3000")
 # RAG Pipeline Settings
-RAG_RAPTOR_THRESHOLD_PAGES = 3  # Only apply RAPTOR/Hierarchical logic for docs > 3 pages
+RAG_RAPTOR_THRESHOLD_PAGES = int(os.environ.get("RAG_RAPTOR_THRESHOLD_PAGES", "3"))
+RAG_UPLOAD_FAST_MODE = os.environ.get("RAG_UPLOAD_FAST_MODE", "false").lower() in ["true", "1", "yes"]
+RAG_DEFER_SUMMARY_ON_UPLOAD = os.environ.get("RAG_DEFER_SUMMARY_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
+RAG_BUILD_RAPTOR_ON_UPLOAD = os.environ.get("RAG_BUILD_RAPTOR_ON_UPLOAD", "true").lower() in ["true", "1", "yes"]
+RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD = os.environ.get("RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
+RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD = os.environ.get("RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
+RAG_RAPTOR_BUILD_WORKERS = int(os.environ.get("RAG_RAPTOR_BUILD_WORKERS", "1"))
+RAG_VECTORIZE_PAGE_SECTIONS = os.environ.get("RAG_VECTORIZE_PAGE_SECTIONS", "false").lower() in ["true", "1", "yes"]
 
 # Query Rewriter (P2#10)
 QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]

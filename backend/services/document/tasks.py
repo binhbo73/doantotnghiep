@@ -6,7 +6,18 @@ except ImportError:
     shared_task = None
 
 from django.apps import apps
+from django.utils import timezone
 from services.document.chunk_summary_service import ChunkSummaryService
+
+
+def _update_document_indexing_metadata(document_id: str, **updates):
+    Document = apps.get_model('documents', 'Document')
+    doc = Document.objects.get(id=document_id)
+    metadata = doc.metadata or {}
+    metadata.update(updates)
+    doc.metadata = metadata
+    doc.save(update_fields=['metadata', 'updated_at'])
+    return doc
 
 if shared_task:
     @shared_task(bind=True)
@@ -24,3 +35,51 @@ if shared_task:
             return {'chunk_id': chunk_id, 'status': 'empty_summary'}
         except Exception as e:
             return {'chunk_id': chunk_id, 'status': 'failed', 'error': str(e)}
+
+
+    @shared_task(bind=True)
+    def build_raptor_tree_task(self, document_id: str):
+        """Celery task to build RAPTOR summaries after chunks/embeddings are persisted."""
+        try:
+            from services.ai.embedding_client import EmbeddingClient
+            from services.ai.qdrant_client import QdrantClient
+            from services.retrieval.raptor_tree import RaptorTreeBuilder
+
+            _update_document_indexing_metadata(
+                document_id,
+                raptor_status='building',
+                raptor_ready=False,
+                raptor_started_at=timezone.now().isoformat(),
+            )
+
+            builder = RaptorTreeBuilder(
+                embedding_client=EmbeddingClient(),
+                qdrant_client=QdrantClient(),
+            )
+            nodes = builder.build_tree(str(document_id))
+            node_count = len(nodes or [])
+            _update_document_indexing_metadata(
+                document_id,
+                indexing_status='raptor_ready' if node_count else 'base_ready',
+                raptor_status='ready' if node_count else 'skipped',
+                raptor_ready=bool(node_count),
+                raptor_node_count=node_count,
+                raptor_ready_at=timezone.now().isoformat(),
+            )
+            return {
+                'document_id': str(document_id),
+                'status': 'completed',
+                'summary_nodes': node_count,
+            }
+        except Exception as e:
+            try:
+                _update_document_indexing_metadata(
+                    document_id,
+                    raptor_status='failed',
+                    raptor_ready=False,
+                    raptor_error=str(e)[:500],
+                    raptor_failed_at=timezone.now().isoformat(),
+                )
+            except Exception:
+                pass
+            return {'document_id': str(document_id), 'status': 'failed', 'error': str(e)}

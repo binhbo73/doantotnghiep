@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class Reranker:
         Returns:
             Reranked candidates with updated scores
         """
+        t_rerank_start = time.monotonic()
         if not candidates:
             return []
         
@@ -79,20 +81,35 @@ class Reranker:
 
         # Fallback lexical scoring: token overlap
         logger.debug("Using fallback lexical scoring")
+        query_lower = query.lower()
         q_tokens = set([t.lower() for t in query.split() if len(t) > 2])
+        asks_reason = any(marker in query_lower for marker in ("tại sao", "tai sao", "vì sao", "vi sao", "lý do", "ly do"))
+        asks_quantity = any(marker in query_lower for marker in ("bao nhiêu", "bao nhieu", "số lượng", "so luong", "mấy", "may"))
+        reason_markers = ("lý do", "ly do", "vì ", "vi ", "do ", "nguyên nhân", "nguyen nhan", "buộc", "buoc", "chi phí", "chi phi", "tài nguyên", "tai nguyen")
+        quantity_markers = ("bao nhiêu", "bao nhieu", "số lượng", "so luong", "lượt hỏi", "luot hoi", "token", "không công bố", "khong cong bo", "không có số liệu", "khong co so lieu")
         
         for c in candidates:
             snippet = (c.get('snippet') or '')
+            snippet_lower = snippet.lower()
             s_tokens = set([t.lower() for t in snippet.split() if len(t) > 2])
             overlap = len(q_tokens & s_tokens)
             # combine existing score with overlap (preserve existing score + add overlap bonus)
             base = float(c.get('score', 0.0) or 0.0)
-            c['score'] = base + (overlap * 0.1)
+            intent_bonus = 0.0
+            if asks_reason:
+                if any(marker in snippet_lower for marker in reason_markers):
+                    intent_bonus += 0.35
+                if not asks_quantity and any(marker in snippet_lower for marker in quantity_markers):
+                    intent_bonus -= 0.25
+            c['score'] = base + (overlap * 0.1) + intent_bonus
 
         ranked = sorted(candidates, key=lambda x: x['score'], reverse=True)[:top_k]
         # P2#12: Apply MMR diversity re-ranking
         if len(ranked) > 3:
             ranked = self._mmr_diversify(query, ranked, top_k, lambda_param=0.7)
+        
+        t_rerank_total = (time.monotonic() - t_rerank_start) * 1000
+        logger.debug(f"[RERANK_PROFILE] {len(candidates)} candidates reranked to {len(ranked)} in {t_rerank_total:.1f}ms")
         return ranked
 
     def rerank_pairwise(self, query, candidates, top_k=5):

@@ -136,6 +136,7 @@ class QdrantClient:
                 payload={"document_id": 1, "text": "..."}
             )
         """
+        t_start = time.monotonic()
         try:
             # Validate embedding size
             if len(embedding) != self.vector_size:
@@ -166,7 +167,10 @@ class QdrantClient:
             )
             
             if response.status_code == 200:
-                logger.debug(f"Embedding stored: {vector_id}")
+                logger.info(
+                    f"[QDRANT_UPLOAD_PROFILE] action=add_embedding vector_id={vector_id} "
+                    f"chunk_id={chunk_id} time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                )
                 return vector_id
             else:
                 raise VectorDatabaseError(
@@ -190,6 +194,7 @@ class QdrantClient:
         Returns:
             List of vector IDs
         """
+        t_start = time.monotonic()
         try:
             points = []
             vector_ids = []
@@ -215,7 +220,10 @@ class QdrantClient:
             )
             
             if response.status_code == 200:
-                logger.debug(f"Batch stored {len(vector_ids)} embeddings")
+                logger.info(
+                    f"[QDRANT_UPLOAD_PROFILE] action=batch_add_embeddings count={len(vector_ids)} "
+                    f"time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                )
                 return vector_ids
             else:
                 raise VectorDatabaseError(f"Batch store failed: {response.status_code}")
@@ -254,6 +262,7 @@ class QdrantClient:
                 print(f"ID: {vector_id}, Score: {score:.3f}")
                 print(f"  Chunk ID: {payload.get('chunk_id')}")
         """
+        t_start = time.monotonic()
         try:
             if len(embedding) != self.vector_size:
                 raise VectorDatabaseError(f"Query vector size mismatch")
@@ -302,7 +311,10 @@ class QdrantClient:
                     
                     results.append((vector_id, score, payload))
                 
-                logger.debug(f"Search returned {len(results)} results")
+                logger.info(
+                    f"[QDRANT_SEARCH_PROFILE] limit={limit} results={len(results)} "
+                    f"time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                )
                 return results
             else:
                 raise VectorDatabaseError(f"Search failed: {response.status_code}")

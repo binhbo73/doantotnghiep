@@ -16,6 +16,7 @@ Configuration:
 
 import logging
 import re
+import time
 from typing import List, Dict, Any
 from django.conf import settings
 from django.contrib.postgres.search import SearchQuery, SearchRank
@@ -56,9 +57,12 @@ class BM25Searcher:
         Returns:
             List of {chunk_id, document_id, score, content} sorted by BM25 score
         """
+        t_bm25_start = time.monotonic()
         try:
             # Parse query into terms
+            t_parse_start = time.monotonic()
             terms = self._parse_query(query)
+            t_parse_ms = (time.monotonic() - t_parse_start) * 1000
             if not terms:
                 logger.debug("No valid search terms extracted")
                 return []
@@ -74,10 +78,12 @@ class BM25Searcher:
             )
 
             # Build query set
+            t_db_start = time.monotonic()
             queryset = self.DocumentChunk.objects.annotate(
                 rank=SearchRank(F('search_vector'), search_query)
             ).filter(
                 search_vector=search_query,
+                node_type='detail',
                 is_deleted=False
             )
 
@@ -88,10 +94,10 @@ class BM25Searcher:
                 else:
                     queryset = queryset.filter(document_id=document_ids)
 
-            # Order by BM25 rank
+            # Order by BM25 rank and execute query
             queryset = queryset.order_by('-rank')[:top_k]
-
-            # Format results
+            
+            # Execute query and fetch results
             results = []
             for chunk in queryset:
                 results.append({
@@ -101,7 +107,14 @@ class BM25Searcher:
                     'content': chunk.content[:300] if chunk.content else '',
                     'source': 'bm25'
                 })
+            
+            t_db_ms = (time.monotonic() - t_db_start) * 1000
+            t_bm25_total = (time.monotonic() - t_bm25_start) * 1000
 
+            logger.info(
+                f"[BM25_PROFILE] query='{query[:40]}...' results={len(results)} | "
+                f"timing: parse={t_parse_ms:.1f}ms, db_query={t_db_ms:.1f}ms, total={t_bm25_total:.1f}ms"
+            )
             logger.debug(f"BM25 search: {len(results)} results for '{query}'")
             return results
 
@@ -145,6 +158,7 @@ class BM25Searcher:
                 rank=SearchRank(F('search_vector'), search_query)
             ).filter(
                 search_vector=search_query,
+                node_type='detail',
                 is_deleted=False
             )
 

@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import math
 import hashlib
+import time
 from django.apps import apps
 from django.core.cache import cache
 from django.conf import settings
@@ -46,6 +47,7 @@ class HybridRetriever:
         top_k: int = 10,
         sparse_k: int = 10,
         document_ids: List[str] = None,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[Dict[str, Any]]:
         """Return merged list of candidate chunks with scores.
 
@@ -72,11 +74,12 @@ class HybridRetriever:
         - Avoids length bias
         - More relevant results for keyword queries
         """
+        t_start = time.monotonic()
         # P2#11: Hash document_ids to prevent cache key fragmentation
         doc_hash = hashlib.md5(
             ','.join(sorted(document_ids or [])).encode()
         ).hexdigest()[:12]
-        cache_key = f"hybrid_retrieval:{query}:{top_k}:{sparse_k}:{doc_hash}"
+        cache_key = f"hybrid_retrieval:v2:detail_only:{query}:{top_k}:{sparse_k}:{doc_hash}"
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -88,6 +91,7 @@ class HybridRetriever:
         candidates: Dict[str, Dict[str, Any]] = {}
         sparse_scores: Dict[str, float] = {}
         dense_scores: Dict[str, float] = {}
+        timing = {}
 
         # 1 & 2) Run Sparse and Dense search in parallel
         import concurrent.futures
@@ -96,9 +100,12 @@ class HybridRetriever:
         lock = threading.Lock()
         max_sparse = [0.0]
         max_dense = [0.0]
+        t_sparse_start = [0.0]
+        t_dense_start = [0.0]
 
         def run_sparse():
             local_max = 0.0
+            t_sparse_start[0] = time.monotonic()
             try:
                 if self.bm25:
                     sparse_results = self.bm25.search(query, top_k=sparse_k, document_ids=document_ids)
@@ -118,7 +125,7 @@ class HybridRetriever:
                             }
                             sparse_scores[cid] = score
                         local_max = max(local_max, score)
-                    logger.debug(f"BM25 sparse search returned {len(sparse_scores)} results")
+                    logger.debug(f"BM25 sparse search returned {len(sparse_scores)} results in {(time.monotonic() - t_sparse_start[0]) * 1000:.1f}ms")
                 else:
                     logger.debug("Using icontains fallback for sparse search")
                     from repositories.document_repository import DocumentRepository
@@ -146,21 +153,32 @@ class HybridRetriever:
                             local_max = max(local_max, score)
             except Exception as e:
                 logger.warning(f"Sparse retrieval error: {e}", exc_info=True)
+            timing['sparse_ms'] = (time.monotonic() - t_sparse_start[0]) * 1000
             max_sparse[0] = local_max
 
         def run_dense():
             local_max = 0.0
+            t_dense_start[0] = time.monotonic()
             try:
-                embedding = self.embedding_client.create_embedding(query)
-                qdrant_filter = None
+                if query_embedding is not None:
+                    embedding = query_embedding
+                    timing['embedding_ms'] = 0.0
+                else:
+                    t_embed_start = time.monotonic()
+                    embedding = self.embedding_client.create_embedding(query)
+                    timing['embedding_ms'] = (time.monotonic() - t_embed_start) * 1000
+                
+                qdrant_filter = {'node_type': 'detail'}
                 if document_ids:
-                    qdrant_filter = {'document_id': document_ids}
+                    qdrant_filter['document_id'] = document_ids
 
+                t_qdrant_start = time.monotonic()
                 dense_results = self.qdrant.search_similar(
                     embedding=embedding,
                     limit=top_k,
                     filter_payload=qdrant_filter,
                 )
+                timing['qdrant_ms'] = (time.monotonic() - t_qdrant_start) * 1000
 
                 for vector_id, score, payload in dense_results:
                     cid = str(payload.get('chunk_id') or vector_id)
@@ -190,6 +208,8 @@ class HybridRetriever:
             future_dense = executor.submit(run_dense)
             future_sparse.result()
             future_dense.result()
+        
+        t_search_done = time.monotonic()
         
         max_sparse_val = max_sparse[0]
         max_dense_val = max_dense[0]
@@ -228,6 +248,17 @@ class HybridRetriever:
         sparse_count = sum(1 for c in sorted_candidates if c['source'] in ['bm25', 'icontains_fallback'])
         dense_count = sum(1 for c in sorted_candidates if c['source'] == 'dense')
         
+        t_total = (time.monotonic() - t_start) * 1000
+        logger.info(
+            f"[RETRIEVAL_PROFILE] "
+            f"query='{query[:40]}...' "
+            f"results={len(sorted_candidates)} "
+            f"(hybrid={hybrid_count}, sparse={sparse_count}, dense={dense_count}) | "
+            f"timing: embedding={timing.get('embedding_ms', 0):.1f}ms, "
+            f"sparse={timing.get('sparse_ms', 0):.1f}ms, "
+            f"qdrant={timing.get('qdrant_ms', 0):.1f}ms, "
+            f"total={t_total:.1f}ms"
+        )
         logger.debug(
             f"Hybrid retrieval: {len(sorted_candidates)} results "
             f"({hybrid_count} hybrid, {sparse_count} sparse, {dense_count} dense)"

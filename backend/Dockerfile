@@ -7,6 +7,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
+# Ensure CUDA-enabled PyTorch is compatible with the host driver and with FlagEmbedding's
+# torch.load safety requirement (torch >= 2.6 for this code path).
+RUN pip install --user --no-cache-dir --upgrade --force-reinstall \
+    torch==2.6.0+cu124 \
+    --index-url https://download.pytorch.org/whl/cu124
+
 
 # Final stage
 FROM python:3.11-slim
