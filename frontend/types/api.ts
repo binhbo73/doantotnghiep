@@ -195,9 +195,24 @@ export const MessageRoleEnum = z.enum(['user', 'assistant', 'system'])
 export type MessageRole = z.infer<typeof MessageRoleEnum>
 
 export const CitationSchema = z.object({
+    id: z.string().optional(),
+    number: z.union([z.number(), z.string()]).optional(),
+    title: z.string().optional(),
+    source_label: z.string().optional(),
     chunk_id: UUIDSchema.optional(),
     document_id: UUIDSchema.optional(),
     text: z.string().optional(),
+    description: z.string().optional(),
+    answer_context: z.string().optional(),
+    excerpt: z.string().optional(),
+    page: z.union([z.number(), z.string()]).optional(),
+    chunk_index: z.number().optional(),
+    line_start: z.number().optional(),
+    line_end: z.number().optional(),
+    start_char: z.number().optional(),
+    end_char: z.number().optional(),
+    source: z.string().optional(),
+    url: z.string().optional(),
     score: z.number().optional(),
 })
 

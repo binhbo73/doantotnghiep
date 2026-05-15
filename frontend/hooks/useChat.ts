@@ -11,6 +11,23 @@ interface UseChatOptions {
     onMessageSent?: (message: MessageDTO) => void
 }
 
+const normalizeCitations = (raw: MessageDTO['citations'] | any): Message['citations'] => {
+    const citations = Array.isArray(raw) ? raw : Array.isArray(raw?.citations) ? raw.citations : []
+
+    if (!citations.length) {
+        return []
+    }
+
+    return citations.map((citation: any, index: number) => ({
+        ...citation,
+        id: String(citation.id || citation.number || `${citation.document_id || 'doc'}-${citation.chunk_id || index}`),
+        number: citation.number || citation.id || index + 1,
+        title: citation.title || citation.document_title || citation.document_name || 'Tai lieu nguon',
+        description: citation.description || citation.excerpt || '',
+        type: citation.type || 'document',
+    }))
+}
+
 export const useChat = (options: UseChatOptions = {}) => {
     const { autoFetchConversations = true, onConversationCreated, onMessageSent } = options
     const { showError, showSuccess } = useToast()
@@ -60,7 +77,7 @@ export const useChat = (options: UseChatOptions = {}) => {
                 id: msg.id,
                 role: msg.role,
                 content: msg.content,
-                citations: msg.citations,
+                citations: normalizeCitations(msg.citations),
                 timestamp: new Date(msg.created_at),
             }))
             setMessages(formattedMessages)
@@ -139,8 +156,6 @@ export const useChat = (options: UseChatOptions = {}) => {
                 setMessages((prev) => [...prev, initialBotMsg])
 
                 // 4. Gọi Stream API — truyền document_ids/folder_ids để backend kích hoạt RAG
-                // attachments.documentIds đã được gắn vào conversation ở bước 1 (attachConversationResources),
-                // nhưng truyền thêm xuống stream để backend không cần query DB thêm 1 lần nữa.
                 let fullContent = ''
                 await ChatService.sendMessageStream(
                     content,
@@ -160,14 +175,24 @@ export const useChat = (options: UseChatOptions = {}) => {
                                 prev.map(msg => msg.id === botMsgId ? { ...msg, content: `_⏳ ${status}_` } : msg)
                             )
                         }
+                    },
+                    (citations) => {
+                        // Nhận citation data từ backend sau khi stream hoàn tất
+                        setMessages((prev) =>
+                            prev.map(msg => msg.id === botMsgId
+                                ? { ...msg, citations: citations }
+                                : msg
+                            )
+                        )
                     }
                 )
 
-                // 5. Cập nhật danh sách hội thoại nếu cần
+                // 5. Cập nhật danh sách hội thoại
+                // KHÔNG gọi fetchMessages ở đây — backend có thể chưa kịp lưu message
+                // xuống DB (xử lý bất đồng bộ), dẫn đến API trả về mảng rỗng và
+                // ghi đè mất toàn bộ messages vừa stream. Messages đã có trong state
+                // local từ stream; selectConversation sẽ fetch khi cần.
                 await fetchConversations()
-                if (convId) {
-                    await fetchMessages(convId)
-                }
 
             } catch (error) {
                 showError('Lỗi kết nối máy chủ. Vui lòng thử lại.')
@@ -176,7 +201,7 @@ export const useChat = (options: UseChatOptions = {}) => {
                 setIsLoading(false)
             }
         },
-        [currentConversationId, createConversation, fetchConversations, fetchMessages, showError]
+        [currentConversationId, createConversation, fetchConversations, showError]
     )
 
     // Provide feedback

@@ -5,12 +5,111 @@ import { api } from '@/services/api/client'
 
 interface WordViewerProps {
     fileUrl: string
+    searchText?: string
     onLoadSuccess: () => void
     onLoadError: (error: Error) => void
     onScrollStatsChange?: (currentPage: number, totalPages: number) => void
 }
 
-export function WordViewer({ fileUrl, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
+function getSearchPhrases(searchText?: string): string[] {
+    const cleaned = (searchText || '')
+        .replace(/\[Nguon:[^\]]+\]/gi, ' ')
+        .replace(/\[[0-9]+\]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+    if (!cleaned) return []
+
+    const chunks = cleaned
+        .split(/(?:[.!?]\s+|\n+|;\s+)/)
+        .map((part) => part.replace(/^[-*\d\s./)]+/, '').trim())
+        .filter((part) => part.length >= 12)
+
+    return Array.from(new Set(chunks))
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 8)
+}
+
+function highlightPreviewHtml(html: string, searchText?: string): string {
+    if (typeof window === 'undefined') return html
+
+    const phrases = getSearchPhrases(searchText)
+    if (phrases.length === 0) return html
+
+    const parser = new DOMParser()
+    const document = parser.parseFromString(`<div>${html}</div>`, 'text/html')
+    const root = document.body.firstElementChild
+    if (!root) return html
+
+    const textNodes: Text[] = []
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            const parentName = node.parentElement?.tagName.toLowerCase()
+            if (!node.nodeValue?.trim() || parentName === 'style' || parentName === 'script' || parentName === 'mark') {
+                return NodeFilter.FILTER_REJECT
+            }
+            return NodeFilter.FILTER_ACCEPT
+        },
+    })
+
+    let currentNode = walker.nextNode()
+    while (currentNode) {
+        textNodes.push(currentNode as Text)
+        currentNode = walker.nextNode()
+    }
+
+    textNodes.forEach((node) => {
+        const text = node.nodeValue || ''
+        const lowerText = text.toLowerCase()
+        const matches: { start: number; end: number }[] = []
+
+        phrases.forEach((phrase) => {
+            const needle = phrase.toLowerCase()
+            let index = lowerText.indexOf(needle)
+            while (index !== -1) {
+                matches.push({ start: index, end: index + phrase.length })
+                index = lowerText.indexOf(needle, index + phrase.length)
+            }
+        })
+
+        if (matches.length === 0) return
+
+        const merged = matches
+            .sort((a, b) => a.start - b.start || b.end - a.end)
+            .reduce<{ start: number; end: number }[]>((items, match) => {
+                const previous = items[items.length - 1]
+                if (previous && match.start <= previous.end) {
+                    previous.end = Math.max(previous.end, match.end)
+                    return items
+                }
+                items.push({ ...match })
+                return items
+            }, [])
+
+        const fragment = document.createDocumentFragment()
+        let cursor = 0
+        merged.forEach((match) => {
+            if (match.start > cursor) {
+                fragment.appendChild(document.createTextNode(text.slice(cursor, match.start)))
+            }
+            const mark = document.createElement('mark')
+            mark.className = 'citation-preview-highlight'
+            mark.textContent = text.slice(match.start, match.end)
+            fragment.appendChild(mark)
+            cursor = match.end
+        })
+
+        if (cursor < text.length) {
+            fragment.appendChild(document.createTextNode(text.slice(cursor)))
+        }
+
+        node.parentNode?.replaceChild(fragment, node)
+    })
+
+    return root.innerHTML
+}
+
+export function WordViewer({ fileUrl, searchText, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
     const [htmlContent, setHtmlContent] = useState<string>('')
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -66,10 +165,11 @@ export function WordViewer({ fileUrl, onLoadSuccess, onLoadError, onScrollStatsC
                         .docx-preview ol { margin: 0 0 1rem 1.5rem; }
                         .docx-preview img { max-width: 100%; height: auto; }
                         .docx-preview blockquote { margin: 0 0 1rem; padding-left: 1rem; border-left: 3px solid #cbd5e1; color: #475569; }
+                        .docx-preview .citation-preview-highlight { background: #fde68a; color: inherit; border-radius: 4px; padding: 0 2px; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.16); }
                     </style>
                 `
 
-                setHtmlContent(inlineStyles + htmlBody)
+                setHtmlContent(inlineStyles + highlightPreviewHtml(htmlBody, searchText))
                 setProgress('Done')
                 onLoadSuccessRef.current()
             } catch (err) {
@@ -91,11 +191,18 @@ export function WordViewer({ fileUrl, onLoadSuccess, onLoadError, onScrollStatsC
         return () => {
             cancelled = true
         }
-    }, [fileUrl])
+    }, [fileUrl, searchText])
 
     useEffect(() => {
         const container = containerRef.current
         if (!container || isLoading || error || !htmlContent) return
+
+        const firstHighlight = container.querySelector('.citation-preview-highlight')
+        if (firstHighlight) {
+            window.setTimeout(() => {
+                firstHighlight.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            }, 100)
+        }
 
         const updateStats = () => {
             const containerTop = container.getBoundingClientRect().top

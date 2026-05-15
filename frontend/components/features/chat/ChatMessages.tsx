@@ -1,11 +1,13 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { formatRelativeTime, formatAbsoluteShort } from '@/lib/time'
-import { Zap, Star, Copy, Share2, Loader } from 'lucide-react'
+import { Zap, Star, Copy, Share2, ExternalLink } from 'lucide-react'
 import { KnowledgeCard } from './KnowledgeCard'
 import { useFeedback } from '@/hooks/useFeedback'
 import { useToast } from '@/hooks/useToast'
+import { buildApiUrl } from '@/config/api'
 
 export interface Message {
     id: string
@@ -13,13 +15,222 @@ export interface Message {
     content: string
     citations?: {
         id: string
+        number?: number | string
         title: string
+        source_label?: string
         description?: string
+        answer_context?: string
+        excerpt?: string
         page?: string | number
-        type?: 'pdf' | 'document' | 'article'
+        chunk_index?: number
+        line_start?: number
+        line_end?: number
+        start_char?: number
+        end_char?: number
+        document_id?: string
+        chunk_id?: string
+        source?: string
+        score?: number
+        url?: string
+        type?: string
     }[]
     timestamp?: Date
     isLoading?: boolean
+}
+
+type Citation = NonNullable<Message['citations']>[number]
+
+const getCitationNumber = (citation: Citation, index: number) => String(citation.number || citation.id || index + 1)
+
+const getCitationMeta = (citation: Citation) => {
+    const parts: string[] = []
+    if (citation.page) parts.push(`Trang ${citation.page}`)
+    if (citation.line_start) {
+        parts.push(citation.line_end && citation.line_end !== citation.line_start ? `dong ${citation.line_start}-${citation.line_end}` : `dong ${citation.line_start}`)
+    } else if (typeof citation.chunk_index === 'number') {
+        parts.push(`chunk ${citation.chunk_index}`)
+    } else if (citation.start_char || citation.end_char) {
+        parts.push(`ky tu ${citation.start_char || 0}-${citation.end_char || ''}`)
+    }
+    return parts.join(', ')
+}
+
+const openCitationSource = async (citation: Citation) => {
+    if (!citation.document_id && !citation.url) return
+
+    if (citation.document_id && typeof window !== 'undefined') {
+        const key = `citation-source-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        sessionStorage.setItem(key, JSON.stringify(citation))
+        window.open(`/dashboard/citation-viewer?key=${encodeURIComponent(key)}`, '_blank')
+        return
+    }
+
+    const popup = window.open('about:blank', '_blank')
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+    const endpoint = citation.url || `/documents/${citation.document_id}/download`
+    const response = await fetch(buildApiUrl(endpoint), {
+        headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+    })
+
+    if (!response.ok) {
+        popup?.close()
+        throw new Error(`Cannot open source: ${response.status}`)
+    }
+
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const pageSuffix = citation.page && blob.type.includes('pdf') ? `#page=${citation.page}` : ''
+    if (popup) {
+        popup.location.href = `${objectUrl}${pageSuffix}`
+    } else {
+        window.open(`${objectUrl}${pageSuffix}`, '_blank', 'noopener,noreferrer')
+    }
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+}
+
+const getCitationAnswerContext = (content: string, citation: Citation, index: number) => {
+    const number = getCitationNumber(citation, index).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const sourcePattern = new RegExp(`(?:\\[(?:Ngu[^\\]:]*|Source):[^\\]]+\\]\\s*)?\\[${number}\\]`, 'i')
+    const match = sourcePattern.exec(content)
+    if (!match) return ''
+
+    const before = content.slice(0, match.index).replace(/\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*$/i, '').trim()
+    const withoutPreviousSource = before.replace(/[\s\S]*\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,3}\]\s*/i, '').trim()
+    const sourceText = withoutPreviousSource || before
+    const paragraphParts = sourceText.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean)
+    const lastParagraph = paragraphParts[paragraphParts.length - 1] || sourceText
+
+    const lines = lastParagraph.split('\n').map((line) => line.trim()).filter(Boolean)
+    if (lines.length > 1) {
+        const selected: string[] = []
+        for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex -= 1) {
+            const line = lines[lineIndex]
+            selected.unshift(line)
+            const selectedText = selected.join('\n')
+            if (line.endsWith(':') || selected.length >= 5 || selectedText.length >= 520) break
+        }
+        return selected.join('\n').trim()
+    }
+
+    const sentenceMatches = Array.from(lastParagraph.matchAll(/[^.!?\n]+[.!?]?/g)).map((item) => item[0].trim()).filter(Boolean)
+    const lastSentence = sentenceMatches[sentenceMatches.length - 1] || lastParagraph
+    return lastSentence.slice(Math.max(0, lastSentence.length - 520)).trim()
+}
+
+const normalizeHighlightText = (value: string) =>
+    value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\u0111/g, 'd')
+        .replace(/\u0110/g, 'd')
+        .toLowerCase()
+
+const getPopupHighlightTerms = (citation: Citation) => {
+    const reference = citation.answer_context || ''
+    if (!reference) return []
+
+    const stopwords = new Set([
+        'nguon', 'trang', 'chunk', 'trong', 'nguoi', 'duoc', 'nhung', 'bang', 'cua', 'cho', 'voi',
+        'this', 'that', 'from', 'with', 'your', 'have',
+    ])
+
+    return Array.from(new Set(
+        normalizeHighlightText(reference)
+            .split(/[^a-z0-9]+/i)
+            .filter((word) => word.length >= 4 && !stopwords.has(word))
+    )).slice(0, 18)
+}
+
+const getLineTermHits = (line: string, terms: string[]) => {
+    const normalizedLine = normalizeHighlightText(line)
+    if (!normalizedLine || /^[-\s_]+$/.test(normalizedLine) || normalizedLine.includes('image image')) {
+        return 0
+    }
+
+    return terms.filter((term) => normalizedLine.includes(term)).length
+}
+
+const shouldHighlightPopupLine = (line: string, citation: Citation) => {
+    const terms = getPopupHighlightTerms(citation)
+    if (!terms.length) return false
+
+    return getLineTermHits(line, terms) >= 2
+}
+
+const renderHighlightedExcerpt = (text: string, citation: Citation) => {
+    const terms = getPopupHighlightTerms(citation)
+    if (!terms.length || !text) return text
+
+    const escapedTerms = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const pattern = new RegExp(`(${escapedTerms.join('|')})`, 'gi')
+    const nodes: React.ReactNode[] = []
+    let lastIndex = 0
+
+    const renderInlineHighlights = (line: string, keyPrefix: string) => {
+        const inlineNodes: React.ReactNode[] = []
+        let inlineLastIndex = 0
+
+        line.replace(pattern, (match, _term, offset) => {
+            if (offset > inlineLastIndex) {
+                inlineNodes.push(<React.Fragment key={`${keyPrefix}-plain-${inlineLastIndex}`}>{line.slice(inlineLastIndex, offset)}</React.Fragment>)
+            }
+            inlineNodes.push(
+                <mark key={`${keyPrefix}-mark-${offset}`} className="rounded-sm bg-amber-200/80 px-0.5 font-semibold text-slate-950">
+                    {match}
+                </mark>
+            )
+            inlineLastIndex = offset + match.length
+            return match
+        })
+
+        if (inlineLastIndex < line.length) {
+            inlineNodes.push(<React.Fragment key={`${keyPrefix}-tail-${inlineLastIndex}`}>{line.slice(inlineLastIndex)}</React.Fragment>)
+        }
+
+        return inlineNodes
+    }
+
+    const lines = text.split(/(\n)/)
+    if (lines.length > 1) {
+        return lines.map((line, index) => {
+            if (line === '\n') return <React.Fragment key={`nl-${index}`}>{line}</React.Fragment>
+
+            if (shouldHighlightPopupLine(line, citation)) {
+                return (
+                    <mark key={`line-${index}`} className="rounded-md bg-amber-200/80 px-1 py-0.5 font-semibold text-slate-950">
+                        {line}
+                    </mark>
+                )
+            }
+
+            if (getLineTermHits(line, terms) >= 2) {
+                return <React.Fragment key={`line-${index}`}>{renderInlineHighlights(line, `line-${index}`)}</React.Fragment>
+            }
+
+            return <React.Fragment key={`line-${index}`}>{line}</React.Fragment>
+        })
+    }
+
+    text.replace(pattern, (match, _term, offset) => {
+        if (offset > lastIndex) {
+            nodes.push(<React.Fragment key={`plain-${lastIndex}`}>{text.slice(lastIndex, offset)}</React.Fragment>)
+        }
+        nodes.push(
+            <mark key={`mark-${offset}`} className="rounded-sm bg-amber-200/80 px-0.5 font-semibold text-slate-950">
+                {match}
+            </mark>
+        )
+        lastIndex = offset + match.length
+        return match
+    })
+
+    if (lastIndex < text.length) {
+        nodes.push(<React.Fragment key={`plain-tail-${lastIndex}`}>{text.slice(lastIndex)}</React.Fragment>)
+    }
+
+    return nodes
 }
 
 interface ChatMessagesProps {
@@ -47,6 +258,12 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
     const [showCommentBox, setShowCommentBox] = useState<string | null>(null)
     const [currentRating, setCurrentRating] = useState<string | null>(null)
     const [hoveredStar, setHoveredStar] = useState<{ [messageId: string]: number }>({})
+    const hideCitationTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const [activeCitation, setActiveCitation] = useState<{
+        key: string
+        citation: Citation
+        rect: DOMRect
+    } | null>(null)
 
     const formatMessageTime = (timestamp?: Date) => {
         return formatRelativeTime(timestamp)
@@ -89,8 +306,212 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
         onCopy?.(content)
     }
 
+    const handleOpenCitation = async (citation: Citation) => {
+        try {
+            await openCitationSource(citation)
+        } catch (error) {
+            console.error('Failed to open citation source:', error)
+            toast({
+                title: 'Khong the mo nguon',
+                description: 'Vui long thu tai lai tai lieu hoac kiem tra quyen truy cap.',
+                variant: 'destructive',
+            })
+        }
+    }
+
+    const cancelHideCitation = () => {
+        if (hideCitationTimer.current) {
+            clearTimeout(hideCitationTimer.current)
+            hideCitationTimer.current = null
+        }
+    }
+
+    const scheduleHideCitation = () => {
+        cancelHideCitation()
+        hideCitationTimer.current = setTimeout(() => {
+            setActiveCitation(null)
+        }, 400)
+    }
+
+    const showCitation = (key: string, citation: Citation, target: HTMLElement) => {
+        cancelHideCitation()
+        setActiveCitation({
+            key,
+            citation,
+            rect: target.getBoundingClientRect(),
+        })
+    }
+
+    // Close popup when clicking outside (but not on citation chips)
+    useEffect(() => {
+        if (!activeCitation) return
+        const handleClickOutside = (e: MouseEvent) => {
+            const target = e.target as HTMLElement
+            if (!target.closest('.citation-popover') && !target.closest('.citation-chip')) {
+                setActiveCitation(null)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [activeCitation])
+
+    const renderCitationChip = (citation: Citation, index: number, occurrenceKey: string) => {
+        const number = getCitationNumber(citation, index)
+
+        return (
+            <span key={occurrenceKey} className="relative mx-0.5 inline-flex align-baseline">
+                <button
+                    type="button"
+                    onMouseEnter={(event) => showCitation(occurrenceKey, citation, event.currentTarget)}
+                    onFocus={(event) => showCitation(occurrenceKey, citation, event.currentTarget)}
+                    onMouseLeave={scheduleHideCitation}
+                    onBlur={scheduleHideCitation}
+                    className="citation-chip inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-slate-900 px-1.5 text-[11px] font-semibold leading-none text-white transition-colors hover:bg-primary focus:outline-none focus:ring-2 focus:ring-primary/40 dark:bg-slate-200 dark:text-slate-900"
+                    aria-label={`Nguon ${number}`}
+                >
+                    {number}
+                </button>
+            </span>
+        )
+    }
+
+    const renderCitationPopover = () => {
+        if (!activeCitation || typeof document === 'undefined') return null
+
+        const { citation, rect } = activeCitation
+        const meta = getCitationMeta(citation)
+        const excerpt = citation.excerpt || citation.description || ''
+        const answerCtx = citation.answer_context || ''
+        const width = Math.min(540, Math.max(320, window.innerWidth - 32))
+        const left = Math.min(Math.max(16, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 16)
+        const estimatedHeight = 360
+        const showBelow = rect.top < estimatedHeight + 24
+        const top = showBelow ? rect.bottom + 10 : Math.max(16, rect.top - estimatedHeight - 10)
+
+        return createPortal(
+            <div
+                className="citation-popover fixed z-[9999] rounded-xl border border-slate-200 bg-white text-left shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+                style={{ left, top, width, maxHeight: 'min(420px, calc(100vh - 32px))' }}
+                onMouseEnter={cancelHideCitation}
+                onMouseLeave={scheduleHideCitation}
+            >
+                <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate mr-2">{citation.title}</span>
+                    <button
+                        type="button"
+                        onClick={() => setActiveCitation(null)}
+                        className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
+                        aria-label="Dong popup"
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+                <div className="max-h-72 overflow-y-auto px-5 py-4 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                    {meta && <div className="mb-3 text-xs font-semibold text-slate-500 dark:text-slate-400">{meta}</div>}
+                    <div className="whitespace-pre-wrap">
+                    {answerCtx && (
+                        <div className="mb-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
+                                Cau tra loi
+                            </div>
+                            <div className="text-slate-900 dark:text-slate-100 font-semibold whitespace-pre-wrap leading-relaxed">
+                                {answerCtx}
+                            </div>
+                        </div>
+                    )}
+                        {excerpt ? renderHighlightedExcerpt(excerpt, citation) : 'Khong co doan trich hien thi.'}
+                    </div>
+                </div>
+                <div className="border-t border-slate-100 px-5 py-4 dark:border-slate-800">
+                    <button
+                        type="button"
+                        onClick={() => handleOpenCitation(citation)}
+                        className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
+                    >
+                        Xem nguon
+                        <ExternalLink size={14} />
+                    </button>
+                </div>
+            </div>,
+            document.body
+        )
+    }
+
+    const renderMessageContent = (content: string, citations: Citation[] = []) => {
+        if (!citations.length) {
+            // Strip raw citation markup when no citation data available
+            return content.replace(/\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,2}\]/gi, '').replace(/\[\d{1,2}\]/g, '').trim()
+        }
+
+        const citationMap = new Map<string, { citation: Citation; index: number }>()
+        citations.forEach((citation, index) => {
+            citationMap.set(getCitationNumber(citation, index), { citation, index })
+        })
+
+        const sourcePattern = /(\[(?:Ngu[^\]:]*|Source):[^\],]*(?:,\s*trang\s*(\d+))?[^\]]*\])(?:\s*\[(\d{1,2})\])?|\[(\d{1,2})\]/gi
+        const nodes: React.ReactNode[] = []
+        let lastIndex = 0
+        let fallbackIndex = 0
+        let occurrenceIndex = 0
+        let match: RegExpExecArray | null
+
+        const pushText = (text: string, key: string) => {
+            if (text) {
+                nodes.push(<React.Fragment key={key}>{text}</React.Fragment>)
+            }
+        }
+
+        while ((match = sourcePattern.exec(content)) !== null) {
+            if (match.index > lastIndex) {
+                pushText(content.slice(lastIndex, match.index), `text-${lastIndex}-${match.index}`)
+            }
+
+            const longSourceText = match[1]
+            const page = match[2]
+            const explicitNumber = match[3] || match[4]
+            let mapped = explicitNumber ? citationMap.get(explicitNumber) : undefined
+
+            if (!mapped && !explicitNumber && page) {
+                const pageMatchIndex = citations.findIndex((citation) => String(citation.page || '') === page)
+                if (pageMatchIndex >= 0) {
+                    mapped = { citation: citations[pageMatchIndex], index: pageMatchIndex }
+                }
+            }
+
+            if (!mapped && !explicitNumber && citations[fallbackIndex]) {
+                mapped = { citation: citations[fallbackIndex], index: fallbackIndex }
+                fallbackIndex += 1
+            }
+
+            if (mapped) {
+                const contextualCitation = {
+                    ...mapped.citation,
+                    answer_context: mapped.citation.answer_context || getCitationAnswerContext(content, mapped.citation, mapped.index),
+                }
+                const chipKey = `citation-${match.index}-${sourcePattern.lastIndex}-${mapped.index}-${occurrenceIndex}`
+                if (longSourceText) {
+                    pushText(longSourceText, `source-${match.index}-${occurrenceIndex}`)
+                    pushText(' ', `space-${match.index}-${occurrenceIndex}`)
+                }
+                nodes.push(renderCitationChip(contextualCitation, mapped.index, chipKey))
+                occurrenceIndex += 1
+            } else {
+                pushText(match[0], `unmatched-${match.index}-${sourcePattern.lastIndex}`)
+            }
+
+            lastIndex = sourcePattern.lastIndex
+        }
+
+        if (lastIndex < content.length) {
+            pushText(content.slice(lastIndex), `text-tail-${lastIndex}`)
+        }
+
+        return nodes
+    }
+
     return (
         <div className="flex-1 overflow-y-auto p-6 md:p-12 space-y-10">
+            {renderCitationPopover()}
             {messages.length === 0 && !isLoading && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
                     <Zap size={48} className="text-primary/20 mb-4" />
@@ -138,7 +559,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                         </div>
                                     ) : (
                                         <p className="text-on-surface dark:text-slate-100 leading-relaxed whitespace-pre-wrap">
-                                            {message.content}
+                                            {renderMessageContent(message.content, message.citations)}
                                         </p>
                                     )}
                                 </div>
@@ -151,8 +572,12 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
 
                                 {message.citations && message.citations.length > 0 && (
                                     <KnowledgeCard
-                                        citations={message.citations}
+                                        citations={message.citations.map((citation, citationIndex) => ({
+                                            ...citation,
+                                            answer_context: citation.answer_context || getCitationAnswerContext(message.content, citation, citationIndex),
+                                        }))}
                                         isLoading={message.isLoading}
+                                        onCitationClick={handleOpenCitation}
                                     />
                                 )}
 

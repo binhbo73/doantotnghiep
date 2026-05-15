@@ -61,7 +61,7 @@ NGUYEN TAC BAT BUOC:
 1. Chi dung "NOI DUNG TAI LIEU THAM KHAO" de tra loi. Khong dung kien thuc ben ngoai, khong suy doan.
 2. Tra loi dung cau hoi hien tai. Bo qua doan tham khao khong tra loi truc tiep cau hoi.
 3. Neu tai lieu khong du thong tin de tra loi, noi ro: "Tai lieu khong co thong tin nay." Neu chi thieu mot phan, tra loi phan co bang chung va noi phan nao khong thay trong tai lieu.
-4. Moi y quan trong phai co trich dan: [Nguon: ten_file, trang X]. Neu khong co trang, dung vi tri/chunk co trong nguon.
+4. Moi y quan trong phai co trich dan day du va ma nguon, dung dang: [Nguon: ten_file, trang X] [1]. Neu NGUON co dong ro rang thi co the them "dong A-B". So [1], [2] phai dung dung so NGUON trong tai lieu tham khao.
 
 CACH LAM VIEC:
 1. Tu xac dinh kieu cau hoi:
@@ -77,7 +77,8 @@ CACH LAM VIEC:
    - Khong rut gon mat y con, vi du, ngoai le, dieu kien, dau (+/-) neu chung tra loi truc tiep cau hoi.
 3. Khi cau hoi khong yeu cau day du, tra loi ngan gon, dung trong tam, van phai co trich dan.
 4. Neu cac doan tai lieu mau thuan nhau, neu ca hai thong tin va trich dan tung nguon; khong tu chon mot ben neu tai lieu khong cho biet.
-5. Khong viet loi dan dai, khong nhac lai quy tac, khong noi ve qua trinh suy luan noi bo."""
+5. Neu nguon khong co trang thi dung vi tri co trong NGUON. Khong goi chunk ky thuat la "doan" trong trich dan hien thi cho nguoi dung.
+6. Khong viet loi dan dai, khong nhac lai quy tac, khong noi ve qua trinh suy luan noi bo."""
 
     def __init__(self):
         """Khởi tạo với các repository và client AI"""
@@ -208,7 +209,7 @@ CACH LAM VIEC:
             base_chunks = DocumentChunk.objects.filter(
                 id__in=chunk_ids_needed,
                 is_deleted=False,
-            ).values('id', 'document_id', 'content', 'page_number', 'chunk_index', 'node_type')
+            ).values('id', 'document_id', 'content', 'page_number', 'chunk_index', 'node_type', 'metadata')
             base_chunk_map = {str(chunk['id']): chunk for chunk in base_chunks}
 
             hydrated: List[Dict[str, Any]] = []
@@ -225,6 +226,7 @@ CACH LAM VIEC:
                 item['snippet'] = chunk.get('content') or source_candidate.get('snippet') or ''
                 item['page'] = chunk.get('page_number') or source_candidate.get('page')
                 item['chunk_index'] = chunk.get('chunk_index')
+                item['metadata'] = chunk.get('metadata') or source_candidate.get('metadata') or {}
                 if source_suffix:
                     item['source'] = f"{source_candidate.get('source', 'retrieval')}_{source_suffix}"
                     item['score'] = float(source_candidate.get('score', 0.0) or 0.0) * 0.92
@@ -249,7 +251,7 @@ CACH LAM VIEC:
                         chunk_index__gte=start_index,
                         chunk_index__lte=end_index,
                     ).order_by('chunk_index').values(
-                        'id', 'document_id', 'content', 'page_number', 'chunk_index', 'node_type'
+                        'id', 'document_id', 'content', 'page_number', 'chunk_index', 'node_type', 'metadata'
                     )
                     for neighbor in neighbor_chunks:
                         suffix = '' if str(neighbor['id']) == str(base_chunk['id']) else 'neighbor'
@@ -266,6 +268,427 @@ CACH LAM VIEC:
         except Exception as e:
             logger.warning(f"[_expand_candidates_with_neighbors] Khong the mo rong context: {e}")
             return candidates[:max_chunks]
+
+    def _metadata_value(self, metadata: Dict[str, Any], *keys: str) -> Any:
+        """Return the first available value from chunk metadata."""
+        if not isinstance(metadata, dict):
+            return None
+        for key in keys:
+            value = metadata.get(key)
+            if value is not None and value != '':
+                return value
+        return None
+
+    def _extract_referenced_citation_numbers(self, text: str) -> set:
+        """Find source chips that the model actually used in the final answer."""
+        numbers = set()
+        for match in re.finditer(r'\[(\d{1,3})\]', text or ''):
+            try:
+                numbers.add(int(match.group(1)))
+            except ValueError:
+                continue
+        return numbers
+
+    def _extract_source_references(self, text: str) -> List[Dict[str, Any]]:
+        """Extract long source labels from the final answer."""
+        references: List[Dict[str, Any]] = []
+        pattern = re.compile(
+            r'\[(?:Ngu[^\]:]*|Source):\s*([^\]]+?)\]\s*\[(\d{1,3})\]',
+            re.IGNORECASE,
+        )
+        for match in pattern.finditer(text or ''):
+            source_text = match.group(1).strip()
+            number = int(match.group(2))
+            page_match = re.search(r'\btrang\s*(\d+)\b', source_text, re.IGNORECASE)
+            title = re.split(r',\s*trang\s*\d+\b', source_text, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+            references.append({
+                'number': number,
+                'title': title,
+                'page': int(page_match.group(1)) if page_match else None,
+            })
+        return references
+
+    def _extract_answer_context_for_citation(self, text: str, citation_id: Any) -> str:
+        """Return the sentence/paragraph that the model attached to a citation chip."""
+        if citation_id is None:
+            return ''
+
+        citation_text = re.escape(str(citation_id))
+        pattern = re.compile(
+            rf'(?:\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*)?\[{citation_text}\]',
+            re.IGNORECASE,
+        )
+        match = pattern.search(text or '')
+        if not match:
+            return ''
+
+        before = (text or '')[:match.start()]
+        before = re.sub(r'\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*$', ' ', before, flags=re.IGNORECASE).strip()
+        before = re.sub(
+            r'[\s\S]*\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,3}\]\s*',
+            ' ',
+            before,
+            flags=re.IGNORECASE,
+        ).strip() or before
+
+        paragraph_parts = [part.strip() for part in re.split(r'\n\s*\n', before) if part.strip()]
+        paragraph = paragraph_parts[-1] if paragraph_parts else before
+        lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+        if len(lines) > 1:
+            selected: List[str] = []
+            for line in reversed(lines):
+                selected.insert(0, line)
+                selected_text = "\n".join(selected)
+                if line.endswith(':') or len(selected) >= 5 or len(selected_text) >= 520:
+                    break
+            return "\n".join(selected).strip()
+
+        sentences = [item.group(0).strip() for item in re.finditer(r'[^.!?\n]+[.!?]?', paragraph) if item.group(0).strip()]
+        context = sentences[-1] if sentences else paragraph
+        return context[-520:].strip()
+
+    def _extract_critical_facts(self, text: str) -> List[str]:
+        """Extract facts that must appear in evidence if present in the cited answer sentence."""
+        if not text:
+            return []
+
+        facts: List[str] = []
+        patterns = [
+            r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
+            r'\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b',
+            r'https?://[^\s\])]+',
+        ]
+        for pattern in patterns:
+            facts.extend(match.group(0).strip() for match in re.finditer(pattern, text))
+
+        normalized_facts = []
+        seen = set()
+        for fact in facts:
+            normalized = self._normalize_query_text(fact)
+            if normalized and normalized not in seen:
+                normalized_facts.append(normalized)
+                seen.add(normalized)
+        return normalized_facts
+
+    def _critical_facts_supported(self, evidence_text: str, answer_context: str) -> bool:
+        """Reject a citation when the answer sentence contains exact facts absent from the chunk."""
+        critical_facts = self._extract_critical_facts(answer_context)
+        if not critical_facts:
+            return True
+
+        evidence_norm = self._normalize_query_text(evidence_text or '')
+        return all(fact in evidence_norm for fact in critical_facts)
+
+    def _build_source_label(
+        self,
+        title: str,
+        page: Any = None,
+        line_start: Any = None,
+        line_end: Any = None,
+        citation_id: Any = None,
+    ) -> str:
+        """Build a user-visible source label without exposing technical chunk indexes as paragraphs."""
+        parts = [f"Nguon: {title}"]
+        if page:
+            parts.append(f"trang {page}")
+        if line_start:
+            line_text = f"dong {line_start}"
+            if line_end and line_end != line_start:
+                line_text += f"-{line_end}"
+            parts.append(line_text)
+        label = f"[{', '.join(parts)}]"
+        return f"{label} [{citation_id}]" if citation_id is not None else label
+
+    def _candidate_answer_overlap(self, candidate: Dict[str, Any], answer_text: str) -> int:
+        """Score how much a candidate snippet overlaps with the final answer."""
+        snippet = self._normalize_query_text(candidate.get('citation_excerpt') or candidate.get('snippet') or '')
+        answer = self._normalize_query_text(self._remove_citation_markup(answer_text or ''))
+        if not snippet or not answer:
+            return 0
+        snippet_terms = {term for term in re.split(r'\W+', snippet) if len(term) >= 4}
+        answer_terms = {term for term in re.split(r'\W+', answer) if len(term) >= 4}
+        return len(snippet_terms & answer_terms)
+
+    def _remove_citation_markup(self, text: str) -> str:
+        """Remove source labels from answer text before matching evidence excerpts."""
+        without_long_sources = re.sub(r'\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,3}\]', ' ', text or '', flags=re.IGNORECASE)
+        return re.sub(r'\[\d{1,3}\]', ' ', without_long_sources)
+
+    def _term_overlap_score(self, text: str, reference_text: str) -> int:
+        text_norm = self._normalize_query_text(text or '')
+        ref_norm = self._normalize_query_text(reference_text or '')
+        if not text_norm or not ref_norm:
+            return 0
+        text_terms = {term for term in re.split(r'\W+', text_norm) if len(term) >= 4}
+        ref_terms = {term for term in re.split(r'\W+', ref_norm) if len(term) >= 4}
+        return len(text_terms & ref_terms)
+
+    def _split_heading_sections(self, text: str) -> List[str]:
+        """Split chunk text into question/heading sections when the document has numbered headings."""
+        if not text:
+            return []
+
+        heading_pattern = re.compile(
+            r'(?m)^\s*(?:[-–—]\s*)?(?:Câu\s*)?\d+\s*[/.)-]\s+.+(?:\?|:)\s*$',
+            re.IGNORECASE,
+        )
+        matches = list(heading_pattern.finditer(text))
+        if not matches:
+            return []
+
+        sections = []
+        for index, match in enumerate(matches):
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+            section = text[start:end].strip()
+            if section:
+                sections.append(section)
+        return sections
+
+    def _split_evidence_units(self, text: str) -> List[str]:
+        """Split a section into display-sized evidence lines/sentences."""
+        if not text:
+            return []
+
+        units: List[str] = []
+        for block in re.split(r'\n+', text):
+            block = block.strip()
+            if not block:
+                continue
+            if re.match(r'^\s*(?:[-+*•]|[-–—]\s*)', block):
+                units.append(block)
+                continue
+            parts = re.split(r'(?<=[.!?。])\s+', block)
+            units.extend(part.strip() for part in parts if part.strip())
+        return units
+
+    def _trim_citation_excerpt(self, snippet: str, answer_text: str, max_chars: int = 900) -> str:
+        """
+        Build a short citation excerpt for UI display only.
+
+        Retrieval still uses full chunks; this trims the popup evidence to the
+        section/sentences most related to the final answer and avoids bleeding
+        into the next numbered question.
+        """
+        snippet = (snippet or '').strip()
+        if not snippet:
+            return ''
+        if len(snippet) <= max_chars:
+            return snippet
+
+        reference_text = self._remove_citation_markup(answer_text or '')
+        sections = self._split_heading_sections(snippet)
+        if sections:
+            best_section = max(
+                sections,
+                key=lambda section: self._term_overlap_score(section, reference_text),
+            )
+            if self._term_overlap_score(best_section, reference_text) > 0:
+                snippet = best_section.strip()
+
+        if len(snippet) <= max_chars:
+            return snippet
+
+        units = self._split_evidence_units(snippet)
+        if not units:
+            return snippet[:max_chars].strip()
+
+        heading_units = [
+            unit for unit in units[:2]
+            if re.match(r'^\s*(?:[-–—]\s*)?(?:Câu\s*)?\d+\s*[/.)-]\s+.+(?:\?|:)\s*$', unit, re.IGNORECASE)
+        ]
+        scored_units = [
+            (index, unit, self._term_overlap_score(unit, reference_text))
+            for index, unit in enumerate(units)
+        ]
+        relevant = [(index, unit) for index, unit, score in scored_units if score > 0]
+        if not relevant:
+            return snippet[:max_chars].strip()
+
+        selected_indexes = set()
+        for unit in heading_units:
+            selected_indexes.add(units.index(unit))
+
+        for index, _unit in sorted(relevant, key=lambda item: item[0]):
+            selected_indexes.add(index)
+            candidate_text = "\n".join(units[i] for i in sorted(selected_indexes))
+            if len(candidate_text) >= max_chars:
+                break
+
+        excerpt_parts = []
+        for index in sorted(selected_indexes):
+            next_text = "\n".join(excerpt_parts + [units[index]])
+            if len(next_text) > max_chars and excerpt_parts:
+                break
+            excerpt_parts.append(units[index])
+
+        return "\n".join(excerpt_parts).strip() or snippet[:max_chars].strip()
+
+    def _build_citation_payload(
+        self,
+        candidates: List[Dict[str, Any]],
+        answer_text: str = '',
+    ) -> List[Dict[str, Any]]:
+        """Convert retrieved chunks into frontend-ready source cards."""
+        citations: List[Dict[str, Any]] = []
+        seen = set()
+        referenced_numbers = self._extract_referenced_citation_numbers(answer_text)
+        source_references = self._extract_source_references(answer_text)
+        source_reference_map = {ref['number']: ref for ref in source_references}
+        doc_name_map: Dict[str, str] = {}
+        missing_doc_ids = list({
+            str(candidate.get('document_id'))
+            for candidate in candidates
+            if candidate.get('document_id')
+            and not (candidate.get('document_title') or candidate.get('title') or candidate.get('document_name'))
+        })
+        if missing_doc_ids:
+            try:
+                Document = apps.get_model('documents', 'Document')
+                docs = Document.objects.filter(id__in=missing_doc_ids, is_deleted=False).values('id', 'original_name', 'filename')
+                doc_name_map = {
+                    str(doc['id']): doc.get('original_name') or doc.get('filename') or f"Tai lieu {doc['id']}"
+                    for doc in docs
+                }
+            except Exception as e:
+                logger.warning(f"[_build_citation_payload] Khong the hydrate document names: {e}")
+
+        for candidate in candidates:
+            chunk_id = candidate.get('chunk_id')
+            document_id = candidate.get('document_id')
+            if not chunk_id or not document_id:
+                continue
+
+            citation_id = candidate.get('citation_id')
+            if answer_text and citation_id is None:
+                continue
+            citation_id = citation_id or len(citations) + 1
+            if referenced_numbers:
+                try:
+                    numeric_citation_id = int(citation_id)
+                except (TypeError, ValueError):
+                    numeric_citation_id = None
+                if numeric_citation_id not in referenced_numbers:
+                    continue
+
+            answer_context = self._extract_answer_context_for_citation(answer_text, citation_id)
+
+            metadata = candidate.get('metadata') or {}
+            title = (
+                candidate.get('document_title')
+                or candidate.get('title')
+                or candidate.get('document_name')
+                or doc_name_map.get(str(document_id))
+                or 'Tai lieu'
+            )
+            page = candidate.get('page')
+            ref = source_reference_map.get(int(citation_id)) if str(citation_id).isdigit() else None
+            if ref and ref.get('page'):
+                replacement_candidates = [
+                    item for item in candidates
+                    if item.get('document_id') == document_id
+                    and item.get('page') is not None
+                    and int(item.get('page')) == int(ref['page'])
+                ]
+                fact_supported_candidates = [
+                    item for item in replacement_candidates
+                    if self._critical_facts_supported(
+                        item.get('citation_excerpt') or item.get('snippet') or '',
+                        answer_context,
+                    )
+                ]
+                replacement = max(
+                    fact_supported_candidates or replacement_candidates,
+                    key=lambda item: self._term_overlap_score(
+                        item.get('citation_excerpt') or item.get('snippet') or '',
+                        answer_context or answer_text,
+                    ),
+                    default=None,
+                )
+                current_overlap = self._term_overlap_score(
+                    candidate.get('citation_excerpt') or candidate.get('snippet') or '',
+                    answer_context or answer_text,
+                )
+                replacement_overlap = self._term_overlap_score(
+                    replacement.get('citation_excerpt') or replacement.get('snippet') or '',
+                    answer_context or answer_text,
+                ) if replacement else 0
+                should_replace = (
+                    replacement
+                    and (
+                        not page
+                        or int(page) != int(ref['page'])
+                        or replacement_overlap > current_overlap
+                        or not self._critical_facts_supported(
+                            candidate.get('citation_excerpt') or candidate.get('snippet') or '',
+                            answer_context,
+                        )
+                    )
+                )
+                if should_replace:
+                    candidate = replacement
+                    chunk_id = candidate.get('chunk_id')
+                    metadata = candidate.get('metadata') or {}
+                    page = candidate.get('page')
+                    title = (
+                        candidate.get('document_title')
+                        or candidate.get('title')
+                        or candidate.get('document_name')
+                        or doc_name_map.get(str(document_id))
+                        or title
+                    )
+
+            key = (str(document_id), str(chunk_id), str(citation_id))
+            if key in seen:
+                continue
+            seen.add(key)
+
+            chunk_index = candidate.get('chunk_index')
+            start_char = self._metadata_value(metadata, 'start_char', 'char_start')
+            end_char = self._metadata_value(metadata, 'end_char', 'char_end')
+            line_start = self._metadata_value(metadata, 'line_start', 'start_line')
+            line_end = self._metadata_value(metadata, 'line_end', 'end_line')
+            raw_excerpt = (candidate.get('citation_excerpt') or candidate.get('snippet') or '').strip()
+
+            if answer_context and not self._critical_facts_supported(raw_excerpt, answer_context):
+                logger.warning(
+                    "[_build_citation_payload] Skip citation %s because critical facts are absent from evidence",
+                    citation_id,
+                )
+                continue
+
+            excerpt = self._trim_citation_excerpt(raw_excerpt, answer_text)
+            source_label = self._build_source_label(
+                title=title,
+                page=page,
+                line_start=line_start,
+                line_end=line_end,
+                citation_id=citation_id,
+            )
+
+            citations.append({
+                'id': f"{document_id}:{chunk_id}",
+                'number': int(citation_id) if str(citation_id).isdigit() else citation_id,
+                'title': title,
+                'source_label': source_label,
+                'description': excerpt[:900],
+                'excerpt': excerpt[:1800],
+                'answer_context': answer_context,
+                'document_id': str(document_id),
+                'chunk_id': str(chunk_id),
+                'page': page,
+                'chunk_index': chunk_index,
+                'line_start': line_start,
+                'line_end': line_end,
+                'start_char': start_char,
+                'end_char': end_char,
+                'type': candidate.get('document_type') or 'document',
+                'source': candidate.get('source', ''),
+                'score': round(float(candidate.get('score', 0) or 0), 3),
+                'url': f"/documents/{document_id}/download",
+            })
+
+        return citations
 
     # =========================================================================
     # HELPERS - Resolve document IDs from DB conversation attachments
@@ -441,13 +864,17 @@ CACH LAM VIEC:
             t_doc_fetch_start = time.monotonic()
             doc_ids_needed = list({c.get('document_id') for c in candidates if c.get('document_id')})
             doc_name_map: Dict[str, str] = {}
+            doc_type_map: Dict[str, str] = {}
             if doc_ids_needed:
                 try:
                     Document = apps.get_model('documents', 'Document')
-                    docs = Document.objects.filter(id__in=doc_ids_needed, is_deleted=False).values('id', 'original_name', 'filename')
+                    docs = Document.objects.filter(id__in=doc_ids_needed, is_deleted=False).values(
+                        'id', 'original_name', 'filename', 'file_type', 'mime_type'
+                    )
                     for doc in docs:
                         name = doc.get('original_name') or doc.get('filename') or f"doc_{doc['id']}"
                         doc_name_map[str(doc['id'])] = name
+                        doc_type_map[str(doc['id'])] = doc.get('file_type') or doc.get('mime_type') or 'document'
                 except Exception as e:
                     logger.warning(f"[_retrieve_context] Không thể lấy tên tài liệu: {e}")
             t_doc_fetch_done = (time.monotonic() - t_doc_fetch_start) * 1000
@@ -463,14 +890,32 @@ CACH LAM VIEC:
                 doc_id = c.get('document_id', '')
                 doc_name = doc_name_map.get(str(doc_id), f'Tài liệu #{i}')
                 page = c.get('page')
-                page_info = f", trang {page}" if page else ''
+                chunk_index = c.get('chunk_index')
                 snippet = (c.get('snippet') or '').strip()[:snippet_chars]
                 if snippet:
                     remaining_chars = max_context_chars - context_chars_used
                     if remaining_chars <= 0:
                         break
                     snippet = snippet[:remaining_chars]
-                    header = f"--- TAI LIEU {i}: {doc_name}{page_info} ---\n"
+                    c['citation_id'] = i
+                    c['document_title'] = doc_name
+                    c['document_type'] = doc_type_map.get(str(doc_id), 'document')
+                    c['citation_excerpt'] = snippet
+                    page_info = f"Trang: {page}\n" if page else ""
+                    chunk_info = f"Doan/Chunk: {chunk_index}\n" if chunk_index is not None else ""
+                    source_label = self._build_source_label(
+                        title=doc_name,
+                        page=page,
+                        citation_id=i,
+                    )
+                    header = (
+                        f"--- NGUON [{i}] ---\n"
+                        f"Tai lieu: {doc_name}\n"
+                        f"{page_info}"
+                        f"{chunk_info}"
+                        f"Cach trich dan bat buoc: {source_label}\n"
+                        "Doan trich:\n"
+                    )
                     part_tokens = self._estimate_tokens(header + snippet)
                     remaining_tokens = max_context_tokens - context_tokens_used
                     if remaining_tokens <= 0:
@@ -574,11 +1019,6 @@ CACH LAM VIEC:
                 snippet_chars=self._get_context_snippet_chars(query),
             )
             
-            context_texts = [context_str] if context_str else []
-            source_docs = list(set([
-                c.get('document_id') for c in rag_candidates if c.get('document_id')
-            ]))
-            
             # 4. Lấy lịch sử
             messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
             if len(messages_for_llm) > 6:
@@ -608,7 +1048,7 @@ CACH LAM VIEC:
             bot_message = self.message_repo.create_bot_message(
                 conversation_id=conversation.id,
                 content=bot_response_text,
-                metadata={'sources': source_docs}
+                metadata=self._build_citation_payload(rag_candidates, bot_response_text)
             )
 
             return bot_response_text, bot_message
@@ -745,6 +1185,7 @@ CACH LAM VIEC:
             # ── BƯỚC 6: Stream LLM ────────────────────────────────────────────
             full_response = ''
             first_chunk = True
+            citations = []
             try:
                 for chunk in self.llama.chat_complete_stream(
                     messages=messages_with_context,
@@ -761,32 +1202,25 @@ CACH LAM VIEC:
                     full_response += chunk
                     yield chunk
 
+
+                # Sau khi stream text hoan tat, gui citation data qua SSE
+                # de frontend hien thi popup nguon tham khao ngay trong phien chat.
+                if full_response and rag_candidates:
+                    citations = self._build_citation_payload(rag_candidates, full_response)
+                    yield {'citations': citations}
+
             finally:
                 # ── BƯỚC 7: Lưu kết quả vào DB (LUÔN chạy kể cả khi client ngắt kết nối) ──
                 if full_response:
                     try:
-                        # Lưu citations vào metadata để frontend hiển thị
-                        citations = []
-                        for c in rag_candidates:
-                            if c.get('document_id'):
-                                citations.append({
-                                    'document_id': c.get('document_id'),
-                                    'chunk_id': c.get('chunk_id'),
-                                    'score': round(float(c.get('score', 0)), 3),
-                                    'source': c.get('source', ''),
-                                    'page': c.get('page'),
-                                })
+                        # Build citations nếu chưa có (client ngắt kết nối giữa stream)
+                        if not citations:
+                            citations = self._build_citation_payload(rag_candidates, full_response)
 
                         self.message_repo.create_bot_message(
                             conversation_id=conversation.id,
                             content=full_response,
-                            metadata={
-                                'direct_chat': not use_rag,
-                                'streaming': True,
-                                'rag_active': use_rag,
-                                'document_ids': resolved_ids,
-                                'citations': citations,
-                            }
+                            metadata=citations
                         )
                         logger.debug(
                             f"✅ Đã lưu tin nhắn Bot vào DB cho conversation {conversation.id} "

@@ -21,10 +21,24 @@ export interface MessageDTO {
 
 export interface CitationDTO {
     id: string
+    number?: number | string
     title: string
+    source_label?: string
     description?: string
-    page?: string
-    type?: 'pdf' | 'document' | 'article'
+    answer_context?: string
+    excerpt?: string
+    page?: string | number
+    chunk_index?: number
+    line_start?: number
+    line_end?: number
+    start_char?: number
+    end_char?: number
+    document_id?: string
+    chunk_id?: string
+    source?: string
+    score?: number
+    url?: string
+    type?: string
 }
 
 export interface SendMessageRequest {
@@ -188,7 +202,8 @@ export class ChatService {
         conversationId?: string,
         documentIds?: string[],
         folderIds?: string[],
-        onStatus?: (status: string) => void
+        onStatus?: (status: string) => void,
+        onCitations?: (citations: any[]) => void
     ): Promise<void> {
         try {
             const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
@@ -238,6 +253,7 @@ export class ChatService {
                             const data = JSON.parse(line.slice(6))
                             if (data.status && onStatus) onStatus(data.status)
                             if (data.text) onChunk(data.text)
+                            if (data.citations && onCitations) onCitations(data.citations)
                             if (data.error) throw new Error(data.error)
                         } catch (e) {
                             console.error('Error parsing stream line:', e)

@@ -1023,6 +1023,9 @@ class ChatStreamView(View):
                         elif 'status' in item:
                             yield f"data: {_json.dumps({'status': item['status']})}\n\n"
                             continue
+                        elif 'citations' in item:
+                            yield f"data: {_json.dumps({'citations': item['citations']})}\n\n"
+                            continue
                     yield f"data: {_json.dumps({'text': item})}\n\n"
 
                 await thread_future

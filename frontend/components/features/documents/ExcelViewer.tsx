@@ -1,10 +1,11 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx'
 
 interface ExcelViewerProps {
     fileUrl: string
+    searchText?: string
     onLoadSuccess: () => void
     onLoadError: (error: Error) => void
     onSheetChange?: (activeSheet: number, totalSheets: number) => void
@@ -15,7 +16,31 @@ interface SheetData {
     data: (string | number)[][]
 }
 
-export function ExcelViewer({ fileUrl, onLoadSuccess, onLoadError, onSheetChange }: ExcelViewerProps) {
+function getExcelSearchTerms(searchText?: string): string[] {
+    const cleaned = (searchText || '')
+        .replace(/\[Nguon:[^\]]+\]/gi, ' ')
+        .replace(/\[[0-9]+\]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+
+    if (!cleaned) return []
+
+    const phrases = cleaned
+        .split(/(?:[.!?]\s+|;\s+)/)
+        .map((part) => part.replace(/^[-*\d\s./)]+/, '').trim())
+        .filter((part) => part.length >= 6)
+
+    const keywords = cleaned
+        .split(/\s+/)
+        .map((part) => part.replace(/[^\p{L}\p{N}@._:/-]/gu, '').trim())
+        .filter((part) => part.length >= 5)
+
+    return Array.from(new Set([...phrases, ...keywords]))
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 12)
+}
+
+export function ExcelViewer({ fileUrl, searchText, onLoadSuccess, onLoadError, onSheetChange }: ExcelViewerProps) {
     const [sheets, setSheets] = useState<SheetData[]>([])
     const [activeSheet, setActiveSheet] = useState(0)
     const [isLoading, setIsLoading] = useState(true)
@@ -23,6 +48,7 @@ export function ExcelViewer({ fileUrl, onLoadSuccess, onLoadError, onSheetChange
     const onLoadSuccessRef = useRef(onLoadSuccess)
     const onLoadErrorRef = useRef(onLoadError)
     const onSheetChangeRef = useRef(onSheetChange)
+    const searchTerms = useMemo(() => getExcelSearchTerms(searchText), [searchText])
 
     useEffect(() => {
         onLoadSuccessRef.current = onLoadSuccess
@@ -95,6 +121,11 @@ export function ExcelViewer({ fileUrl, onLoadSuccess, onLoadError, onSheetChange
     }
 
     const currentSheet = sheets[activeSheet]
+    const isHighlightedCell = (cell: string | number) => {
+        if (searchTerms.length === 0) return false
+        const value = String(cell).toLowerCase()
+        return searchTerms.some((term) => value.includes(term.toLowerCase()))
+    }
 
     return (
         <div className="w-full h-full flex flex-col bg-white">
@@ -125,7 +156,9 @@ export function ExcelViewer({ fileUrl, onLoadSuccess, onLoadError, onSheetChange
                                 {row.map((cell, cellIdx) => (
                                     <td
                                         key={cellIdx}
-                                        className={`border border-slate-300 px-4 py-2 text-left ${rowIdx === 0
+                                        className={`border border-slate-300 px-4 py-2 text-left ${isHighlightedCell(cell)
+                                            ? 'bg-amber-100 font-semibold text-slate-900'
+                                            : rowIdx === 0
                                             ? 'bg-slate-100 font-bold text-slate-900'
                                             : 'bg-white text-slate-700'
                                             } ${cellIdx === 0 ? 'font-medium' : ''}`}
