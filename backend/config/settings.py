@@ -342,6 +342,31 @@ RAG_RAPTOR_BUILD_WORKERS = int(os.environ.get("RAG_RAPTOR_BUILD_WORKERS", "1"))
 RAG_VECTORIZE_PAGE_SECTIONS = os.environ.get("RAG_VECTORIZE_PAGE_SECTIONS", "false").lower() in ["true", "1", "yes"]
 RAG_RAPTOR_TASK_TIME_LIMIT = int(os.environ.get("RAG_RAPTOR_TASK_TIME_LIMIT", "1800"))
 RAG_RAPTOR_TASK_SOFT_TIME_LIMIT = int(os.environ.get("RAG_RAPTOR_TASK_SOFT_TIME_LIMIT", "1500"))
+RAG_SPREADSHEET_RAPTOR_ENABLED = os.environ.get("RAG_SPREADSHEET_RAPTOR_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_SPREADSHEET_RAPTOR_MIN_SHEETS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_SHEETS", "3"))
+RAG_SPREADSHEET_RAPTOR_MIN_ROWS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_ROWS", "200"))
+RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS", "12"))
+
+# ============================================================
+# ASSET PIPELINE (OCR + VL Caption + Image Extraction)
+# ============================================================
+ASSET_PIPELINE_ENABLED = os.environ.get("ASSET_PIPELINE_ENABLED", "true").lower() in ["true", "1", "yes"]
+ASSET_OCR_ENABLED = os.environ.get("ASSET_OCR_ENABLED", "true").lower() in ["true", "1", "yes"]
+ASSET_OCR_LANGUAGES = os.environ.get("ASSET_OCR_LANGUAGES", "vie+eng")
+ASSET_VL_CAPTION_ENABLED = os.environ.get("ASSET_VL_CAPTION_ENABLED", "true").lower() in ["true", "1", "yes"]
+ASSET_EMBED_CAPTIONS = os.environ.get("ASSET_EMBED_CAPTIONS", "true").lower() in ["true", "1", "yes"]
+ASSET_CAPTION_METHOD = os.environ.get("ASSET_CAPTION_METHOD", "vl-model")  # 'vl-model' or 'rule-based'
+ASSET_MAX_IMAGES_PER_DOC = int(os.environ.get("ASSET_MAX_IMAGES_PER_DOC", "50"))
+ASSET_MIN_IMAGE_SIZE_BYTES = int(os.environ.get("ASSET_MIN_IMAGE_SIZE_BYTES", "1024"))
+ASSET_IMAGE_MAX_WIDTH = int(os.environ.get("ASSET_IMAGE_MAX_WIDTH", "2000"))
+QDRANT_ASSET_VECTOR_SIZE = int(os.environ.get("QDRANT_ASSET_VECTOR_SIZE", str(QDRANT_VECTOR_SIZE)))
+
+# VL Model (Qwen2.5-VL-3B) for image captioning
+VL_MODEL_BASE_URL = os.environ.get("VL_MODEL_BASE_URL", "http://llama-vl-server:8081/v1")
+VL_MODEL_NAME = os.environ.get("VL_MODEL_NAME", "Qwen2.5-VL-3B-Instruct")
+VL_MODEL_TIMEOUT = int(os.environ.get("VL_MODEL_TIMEOUT", "120"))
+VL_MODEL_MAX_TOKENS = int(os.environ.get("VL_MODEL_MAX_TOKENS", "256"))
+VL_MODEL_TEMPERATURE = float(os.environ.get("VL_MODEL_TEMPERATURE", "0.3"))
 
 # Query Rewriter (P2#10)
 QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]

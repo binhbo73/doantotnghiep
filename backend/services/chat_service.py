@@ -62,6 +62,7 @@ NGUYEN TAC BAT BUOC:
 2. Tra loi dung cau hoi hien tai. Bo qua doan tham khao khong tra loi truc tiep cau hoi.
 3. Neu tai lieu khong du thong tin de tra loi, noi ro: "Tai lieu khong co thong tin nay." Neu chi thieu mot phan, tra loi phan co bang chung va noi phan nao khong thay trong tai lieu.
 4. Moi y quan trong phai co trich dan day du va ma nguon, dung dang: [Nguon: ten_file, trang X] [1]. Neu NGUON co dong ro rang thi co the them "dong A-B". So [1], [2] phai dung dung so NGUON trong tai lieu tham khao.
+5. Neu cau hoi yeu cau xem/cho hien thi anh va phan "THONG TIN HINH ANH TRONG TAI LIEU" co anh phu hop, phai tra loi rang da tim thay anh va neu vi tri anh. Khong duoc ket luan "Tai lieu khong co thong tin nay" chi vi OCR cua anh xau; neu OCR khong doc ro thi noi "noi dung chu trong anh khong doc ro", nhung van xac nhan co anh.
 
 CACH LAM VIEC:
 1. Tu xac dinh kieu cau hoi:
@@ -70,6 +71,8 @@ CACH LAM VIEC:
    - so sanh: neu diem giong, khac, tieu chi so sanh co trong tai lieu thi trinh bay theo bang hoac bullet.
    - quy trinh/cac buoc: giu dung thu tu buoc trong tai lieu.
    - so lieu/bang bieu: chep dung so, don vi, dieu kien, moc thoi gian; khong lam tron neu tai lieu khong lam tron.
+   - bang tinh/Excel/CSV hoac doan trich co bang markdown: neu cau hoi hoi nhieu dong/cot, tra loi bang markdown, giu ten cot va so lieu dung nhu tai lieu.
+   - hoi xem anh/hinh/minh chung: neu co nguon anh trong tai lieu, tra loi ngan gon "Co anh phu hop" + vi tri anh; anh se duoc hien thi trong giao dien, khong can tao markdown image.
    - cau hoi tai sao/ly do/nguyen nhan: chi neu cac ly do/nguyen nhan duoc tai lieu neu truc tiep.
 2. Khi cau hoi yeu cau day du:
    - Doc tat ca doan tham khao lien quan, ke ca doan/trang/chunk lien tiep.
@@ -129,6 +132,24 @@ CACH LAM VIEC:
             r'^\s*\d+\s*[/.)-]\s*',
         ]
         return any(re.search(pattern, q) for pattern in comprehensive_patterns)
+
+    def _is_image_query(self, query: str) -> bool:
+        """Detect if user asks to LIST ALL images. If they describe a SPECIFIC one, we return False to let RAG rank it."""
+        q = self._normalize_query_text(query)
+        if not q:
+            return False
+        
+        # Keywords that imply "Show me everything"
+        list_all_keywords = ['tat ca', 'liet ke', 'cac', 'nhung', 'toan bo', 'list', 'all']
+        image_keywords = ['hinh anh', 'anh', 'minh chung', 'asset', 'hinh']
+        
+        has_list_intent = any(kw in q for kw in list_all_keywords)
+        has_image = any(kw in q for kw in image_keywords)
+        
+        # Only force-show if they want to see "all" or "list" images.
+        # If they just say "Show me the chart image", has_list_intent will be False, 
+        # and we let the vector search + AI citations do their job to pick the RIGHT one.
+        return has_list_intent and has_image
 
     def _get_rag_top_k(self, query: str, default_top_k: int) -> int:
         """Increase retrieval depth for list-style questions to reduce missing points."""
@@ -282,11 +303,17 @@ CACH LAM VIEC:
     def _extract_referenced_citation_numbers(self, text: str) -> set:
         """Find source chips that the model actually used in the final answer."""
         numbers = set()
-        for match in re.finditer(r'\[(\d{1,3})\]', text or ''):
-            try:
-                numbers.add(int(match.group(1)))
-            except ValueError:
-                continue
+        if not text:
+            return numbers
+            
+        # 1. Standard format: [1], [2]
+        for match in re.finditer(r'\[(\d{1,3})\]', text):
+            numbers.add(int(match.group(1)))
+            
+        # 2. Source label format: [Nguon: abc.docx] 2 or [Nguon: abc.docx] 2.
+        for match in re.finditer(r'\]\s*(\d{1,3})(?:[.\s]|$)', text):
+            numbers.add(int(match.group(1)))
+            
         return numbers
 
     def _extract_source_references(self, text: str) -> List[Dict[str, Any]]:
@@ -546,6 +573,7 @@ CACH LAM VIEC:
         self,
         candidates: List[Dict[str, Any]],
         answer_text: str = '',
+        query: str = '',
     ) -> List[Dict[str, Any]]:
         """Convert retrieved chunks into frontend-ready source cards."""
         citations: List[Dict[str, Any]] = []
@@ -554,6 +582,7 @@ CACH LAM VIEC:
         source_references = self._extract_source_references(answer_text)
         source_reference_map = {ref['number']: ref for ref in source_references}
         doc_name_map: Dict[str, str] = {}
+        doc_file_type_map: Dict[str, str] = {}
         missing_doc_ids = list({
             str(candidate.get('document_id'))
             for candidate in candidates
@@ -563,15 +592,155 @@ CACH LAM VIEC:
         if missing_doc_ids:
             try:
                 Document = apps.get_model('documents', 'Document')
-                docs = Document.objects.filter(id__in=missing_doc_ids, is_deleted=False).values('id', 'original_name', 'filename')
+                docs = Document.objects.filter(id__in=missing_doc_ids, is_deleted=False).values('id', 'original_name', 'filename', 'file_type')
                 doc_name_map = {
                     str(doc['id']): doc.get('original_name') or doc.get('filename') or f"Tai lieu {doc['id']}"
+                    for doc in docs
+                }
+                doc_file_type_map = {
+                    str(doc['id']): doc.get('file_type') or ''
                     for doc in docs
                 }
             except Exception as e:
                 logger.warning(f"[_build_citation_payload] Khong the hydrate document names: {e}")
 
+        DocumentAsset = None
+        sheet_asset_cache: Dict[tuple, List[Any]] = {}
+
+        def _get_sheet_assets(document_id: str, sheet_name: Optional[str] = None):
+            nonlocal DocumentAsset
+            cache_key = (str(document_id), str(sheet_name or ''))
+            if cache_key in sheet_asset_cache:
+                return sheet_asset_cache[cache_key]
+
+            if DocumentAsset is None:
+                DocumentAsset = apps.get_model('documents', 'DocumentAsset')
+
+            queryset = DocumentAsset.objects.filter(document_id=document_id, is_deleted=False)
+            if sheet_name:
+                queryset = queryset.filter(sheet_name=sheet_name)
+
+            assets = list(queryset.order_by('sheet_name', 'anchor_cell', 'page_number', 'created_at'))
+            sheet_asset_cache[cache_key] = assets
+            return assets
+
         for candidate in candidates:
+            # ── Asset citations ──────────────────────────────
+            if candidate.get('source') == 'asset':
+                asset_id = candidate.get('asset_id', '')
+                doc_id = candidate.get('document_id', '')
+                citation_id = candidate.get('citation_id')
+                
+                # SMART FILTER: Only include asset if it's referenced in the answer
+                # OR if the user question explicitly asks for images/proofs.
+                is_explicit_request = self._is_image_query(query)
+                
+                if answer_text and citation_id:
+                    try:
+                        numeric_id = int(citation_id)
+                        # 1. Trích xuất danh sách số được nhắc tới (Chỉ dùng trong phạm vi hàm này)
+                        referenced_numbers = self._extract_referenced_citation_numbers(answer_text)
+                        is_referenced = numeric_id in referenced_numbers
+                        
+                        # 2. Điểm số tương đồng (Dựa trên mô tả ảnh từ Qwen 2.5)
+                        score = float(candidate.get('score', 0) or 0)
+                        
+                        # LOGIC SIẾT CHẶT:
+                        # - Nếu được AI trích dẫn đích danh ([1], [2]...): LUÔN HIỆN
+                        if is_referenced:
+                            pass # Tiếp tục xử lý
+                        else:
+                            # - Nếu KHÔNG được trích dẫn: 
+                            #   + Chỉ hiện nếu là yêu cầu xem ảnh ĐÍCH DANH và điểm số phải cao (> 0.85)
+                            #   + Hoặc điểm số phải CỰC CAO (> 0.95) để tránh hiện nhầm icon.
+                            if is_explicit_request and score > 0.85:
+                                pass
+                            elif score > 0.95:
+                                pass
+                            else:
+                                continue
+                    except (ValueError, TypeError):
+                        pass
+
+                key = ('asset', str(asset_id))
+                if key in seen or not asset_id:
+                    continue
+                seen.add(key)
+                citations.append({
+                    'id': str(asset_id),
+                    'number': int(citation_id) if str(citation_id).isdigit() else (len(citations) + 1),
+                    'title': candidate.get('asset_caption', 'Document Asset')[:100],
+                    'source_label': '',
+                    'description': candidate.get('asset_caption', '')[:900],
+                    'excerpt': candidate.get('asset_caption', '')[:900],
+                    'document_id': str(doc_id),
+                    'chunk_id': '',
+                    'asset_id': asset_id,
+                    'asset_caption': candidate.get('asset_caption', ''),
+                    'asset_image_path': candidate.get('asset_image_path', ''),
+                    'asset_page_number': candidate.get('asset_page_number'),
+                    'asset_sheet_name': candidate.get('asset_sheet_name'),
+                    'asset_anchor_cell': candidate.get('asset_anchor_cell'),
+                    'page': candidate.get('asset_page_number'),
+                    'type': 'asset',
+                    'source': 'asset',
+                    'document_title': doc_name_map.get(str(doc_id)),
+                    'document_file_type': doc_file_type_map.get(str(doc_id)) or candidate.get('document_file_type'),
+                    'score': round(float(candidate.get('score', 0) or 0), 3),
+                    'asset': {
+                        'id': asset_id,
+                        'image_url': '/api/v1/assets/' + asset_id + '/image',
+                        'thumbnail_url': '/api/v1/assets/' + asset_id + '/thumbnail',
+                        'caption': candidate.get('asset_caption', ''),
+                        'page_number': candidate.get('asset_page_number'),
+                        'sheet_name': candidate.get('asset_sheet_name'),
+                        'anchor_cell': candidate.get('asset_anchor_cell'),
+                    },
+                })
+
+                if (doc_file_type_map.get(str(doc_id)) in {'xlsx', 'xls'}) and candidate.get('asset_sheet_name'):
+                    # For Excel, if the main asset is cited, we might want to keep siblings, 
+                    # but only if the main one is actually relevant.
+                    for sibling in _get_sheet_assets(str(doc_id), candidate.get('asset_sheet_name')):
+                        sibling_id = str(sibling.id)
+                        sibling_key = ('asset', sibling_id)
+                        if sibling_key in seen or sibling_id == str(asset_id):
+                            continue
+                        seen.add(sibling_key)
+                        sibling_caption = (getattr(sibling, 'caption', '') or '')
+                        citations.append({
+                            'id': str(sibling_id),
+                            'number': len(citations) + 1,
+                            'title': sibling_caption[:100] or 'Document Asset',
+                            'source_label': '',
+                            'description': sibling_caption[:900],
+                            'excerpt': sibling_caption[:900],
+                            'document_id': str(doc_id),
+                            'chunk_id': '',
+                            'asset_id': sibling_id,
+                            'asset_caption': sibling_caption,
+                            'asset_image_path': getattr(sibling, 'image_path', '') or '',
+                            'asset_page_number': getattr(sibling, 'page_number', None),
+                            'asset_sheet_name': getattr(sibling, 'sheet_name', None),
+                            'asset_anchor_cell': getattr(sibling, 'anchor_cell', None),
+                            'page': getattr(sibling, 'page_number', None),
+                            'type': 'asset',
+                            'source': 'asset',
+                            'document_title': doc_name_map.get(str(doc_id)),
+                            'document_file_type': doc_file_type_map.get(str(doc_id)) or candidate.get('document_file_type'),
+                            'score': round(float(candidate.get('score', 0) or 0), 3),
+                            'asset': {
+                                'id': sibling_id,
+                                'image_url': '/api/v1/assets/' + sibling_id + '/image',
+                                'thumbnail_url': '/api/v1/assets/' + sibling_id + '/thumbnail',
+                                'caption': sibling_caption,
+                                'page_number': getattr(sibling, 'page_number', None),
+                                'sheet_name': getattr(sibling, 'sheet_name', None),
+                                'anchor_cell': getattr(sibling, 'anchor_cell', None),
+                            },
+                        })
+                continue
+
             chunk_id = candidate.get('chunk_id')
             document_id = candidate.get('document_id')
             if not chunk_id or not document_id:
@@ -664,8 +833,8 @@ CACH LAM VIEC:
             chunk_index = candidate.get('chunk_index')
             start_char = self._metadata_value(metadata, 'start_char', 'char_start')
             end_char = self._metadata_value(metadata, 'end_char', 'char_end')
-            line_start = self._metadata_value(metadata, 'line_start', 'start_line')
-            line_end = self._metadata_value(metadata, 'line_end', 'end_line')
+            line_start = self._metadata_value(metadata, 'row_start', 'line_start', 'start_line')
+            line_end = self._metadata_value(metadata, 'row_end', 'line_end', 'end_line')
             raw_excerpt = (candidate.get('citation_excerpt') or candidate.get('snippet') or '').strip()
 
             if answer_context and not self._critical_facts_supported(raw_excerpt, answer_context):
@@ -876,7 +1045,11 @@ CACH LAM VIEC:
             # Retrieval payloads only carry short previews. Fetch the selected
             # chunks before prompt building so key facts are not truncated.
             t_chunk_fetch_start = time.monotonic()
-            candidates = self._expand_candidates_with_neighbors(candidates, query)
+            # Separate assets from chunks before neighbor expansion
+            asset_candidates_ctx = [c for c in candidates if c.get('source') == 'asset']
+            chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
+            chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
+            candidates = chunk_candidates_ctx + asset_candidates_ctx
             t_chunk_fetch_done = (time.monotonic() - t_chunk_fetch_start) * 1000
 
             t_doc_fetch_start = time.monotonic()
@@ -909,6 +1082,9 @@ CACH LAM VIEC:
                 doc_name = doc_name_map.get(str(doc_id), f'Tài liệu #{i}')
                 page = c.get('page')
                 chunk_index = c.get('chunk_index')
+                metadata = c.get('metadata') or {}
+                line_start = self._metadata_value(metadata, 'row_start', 'line_start', 'start_line')
+                line_end = self._metadata_value(metadata, 'row_end', 'line_end', 'end_line')
                 snippet = (c.get('snippet') or '').strip()[:snippet_chars]
                 if snippet:
                     remaining_chars = max_context_chars - context_chars_used
@@ -920,16 +1096,20 @@ CACH LAM VIEC:
                     c['document_type'] = doc_type_map.get(str(doc_id), 'document')
                     c['citation_excerpt'] = snippet
                     page_info = f"Trang: {page}\n" if page else ""
+                    line_info = f"Dong: {line_start}-{line_end}\n" if line_start and line_end and line_end != line_start else (f"Dong: {line_start}\n" if line_start else "")
                     chunk_info = f"Doan/Chunk: {chunk_index}\n" if chunk_index is not None else ""
                     source_label = self._build_source_label(
                         title=doc_name,
                         page=page,
+                        line_start=line_start,
+                        line_end=line_end,
                         citation_id=i,
                     )
                     header = (
                         f"--- NGUON [{i}] ---\n"
                         f"Tai lieu: {doc_name}\n"
                         f"{page_info}"
+                        f"{line_info}"
                         f"{chunk_info}"
                         f"Cach trich dan bat buoc: {source_label}\n"
                         "Doan trich:\n"
@@ -959,10 +1139,44 @@ CACH LAM VIEC:
             if not context_parts:
                 return '', candidates
 
-            context_str = "\n\n".join(context_parts)
+            # ── Add asset captions to context ────────────────
+            asset_parts = []
+            for i, c in enumerate(candidates, start=1):
+                if c.get('source') == 'asset' and c.get('asset_caption'):
+                    # Assign citation_id to asset so LLM can reference it
+                    c['citation_id'] = i
+                    cap = c['asset_caption'][:300]
+                    loc = ''
+                    if c.get('asset_sheet_name'):
+                        loc += f"Sheet {c['asset_sheet_name']}"
+                    if c.get('asset_anchor_cell'):
+                        loc += f" cell {c['asset_anchor_cell']}"
+                    if c.get('asset_page_number'):
+                        loc += f" trang {c['asset_page_number']}"
+                    
+                    source_label = self._build_source_label(
+                        title=doc_name_map.get(str(c.get('document_id')), 'Hinh anh'),
+                        page=c.get('asset_page_number'),
+                        citation_id=i
+                    )
+                    
+                    prefix = f"--- HINH ANH [{i}] ---\n"
+                    if loc:
+                        prefix += f"Vi tri: {loc.strip()}\n"
+                    prefix += f"Cach trich dan: {source_label}\n"
+                    
+                    asset_parts.append(f"{prefix}Mo ta: {cap}")
+
+            if asset_parts:
+                asset_context = "=== THONG TIN HINH ANH TRONG TAI LIEU (CHI TRICH DAN KHI THUC SU LIEN QUAN) ===\n" + "\n\n".join(asset_parts) + "\n=== HET HINH ANH ==="
+                context_parts.append(asset_context)
+
+            if not context_parts:
+                return '', candidates
+
             full_context = (
                 "=== NOI DUNG TAI LIEU THAM KHAO (CHI DUOC DUNG THONG TIN NAY) ===\n"
-                + context_str +
+                + "\n\n".join(context_parts) +
                 "\n=== HET TAI LIEU ==="
             )
             t_ctx_build_done = (time.monotonic() - t_ctx_build_start) * 1000
@@ -1066,7 +1280,7 @@ CACH LAM VIEC:
             bot_message = self.message_repo.create_bot_message(
                 conversation_id=conversation.id,
                 content=bot_response_text,
-                metadata=self._build_citation_payload(rag_candidates, bot_response_text)
+                metadata=self._build_citation_payload(rag_candidates, bot_response_text, query)
             )
 
             return bot_response_text, bot_message
@@ -1224,7 +1438,7 @@ CACH LAM VIEC:
                 # Sau khi stream text hoan tat, gui citation data qua SSE
                 # de frontend hien thi popup nguon tham khao ngay trong phien chat.
                 if full_response and rag_candidates:
-                    citations = self._build_citation_payload(rag_candidates, full_response)
+                    citations = self._build_citation_payload(rag_candidates, full_response, query)
                     yield {'citations': citations}
 
             finally:
@@ -1233,7 +1447,7 @@ CACH LAM VIEC:
                     try:
                         # Build citations nếu chưa có (client ngắt kết nối giữa stream)
                         if not citations:
-                            citations = self._build_citation_payload(rag_candidates, full_response)
+                            citations = self._build_citation_payload(rag_candidates, full_response, query)
 
                         self.message_repo.create_bot_message(
                             conversation_id=conversation.id,

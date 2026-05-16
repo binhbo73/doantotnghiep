@@ -1,61 +1,39 @@
-// components/features/ChatBubble.tsx - Chat message bubbles with citation
+// components/features/ChatBubble.tsx - Chat message bubbles with citation + asset support
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Body, Small } from '@/components/ui/text'
 import { HTMLAttributes } from 'react'
+import { AssetThumbnail, DocumentAsset } from './AssetThumbnail'
 
 interface Citation {
     documentId: string
     documentName: string
     chapter?: string
+    /** Asset citation - nếu có, hiển thị thumbnail ảnh */
+    asset?: DocumentAsset
 }
 
 interface ChatBubbleProps extends HTMLAttributes<HTMLDivElement> {
-    /**
-     * Message content
-     */
     content: string
-
-    /**
-     * Message sender
-     */
     sender: 'user' | 'ai'
-
-    /**
-     * Source documents for AI responses
-     */
     citations?: Citation[]
-
-    /**
-     * Timestamp
-     */
     timestamp?: string
+    onViewDocument?: (documentId: string) => void
 }
 
 /**
- * ChatBubble - Display chat message with styling based on sender
+ * ChatBubble - Display chat message with styling based on sender.
  *
- * Design: Linear-inspired chat interface
- * - User messages: Purple bubble (right-aligned)
- * - AI messages: Dark card with border (left-aligned)
- * - Citations: Inline badge links to source documents
- *
- * @example
- * // User message
- * <ChatBubble sender="user" content="What's in the budget?" />
- *
- * // AI response with citations
- * <ChatBubble
- *   sender="ai"
- *   content="Based on the 2026 budget..."
- *   citations={[{ documentId: '1', documentName: 'Budget 2026' }]}
- * />
+ * Hỗ trợ 2 loại citation:
+ * - Document citation: badge link tới tài liệu
+ * - Asset citation: thumbnail ảnh từ OCR/VL pipeline
  */
 export const ChatBubble = ({
     content,
     sender,
     citations,
     timestamp,
+    onViewDocument,
     ...props
 }: ChatBubbleProps) => {
     return (
@@ -64,14 +42,8 @@ export const ChatBubble = ({
             {...props}
         >
             {sender === 'user' ? (
-                // User message: Purple bubble, right-aligned
                 <div className="max-w-[70%]">
-                    <div
-                        className={`
-              bg-primary text-primary-foreground rounded-[12px] px-4 py-3
-              ${sender === 'user' && 'rounded-br-[4px]'}
-            `}
-                    >
+                    <div className="bg-primary text-primary-foreground rounded-[12px] rounded-br-[4px] px-4 py-3">
                         <Body variant="base" className="text-primary-foreground">
                             {content}
                         </Body>
@@ -87,7 +59,6 @@ export const ChatBubble = ({
                     )}
                 </div>
             ) : (
-                // AI message: Card with border, left-aligned
                 <div className="max-w-[70%]">
                     <Card
                         elevation="base"
@@ -100,19 +71,41 @@ export const ChatBubble = ({
 
                         {/* Citations */}
                         {citations && citations.length > 0 && (
-                            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border">
-                                {citations.map((citation, idx) => (
-                                    <Badge
-                                        key={idx}
-                                        variant="primary"
-                                        size="sm"
-                                        shape="rounded"
-                                        className="cursor-pointer hover:opacity-80 transition-opacity"
-                                        title={`View: ${citation.documentName}${citation.chapter ? ` - ${citation.chapter}` : ''}`}
-                                    >
-                                        📄 {citation.documentName}
-                                    </Badge>
-                                ))}
+                            <div className="flex flex-col gap-3 mt-3 pt-3 border-t border-border">
+                                {/* Asset thumbnails */}
+                                {citations.some(c => c.asset) && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {citations
+                                            .filter(c => c.asset)
+                                            .map((citation, idx) => (
+                                                <AssetThumbnail
+                                                    key={`asset-${idx}`}
+                                                    asset={citation.asset!}
+                                                    onViewDocument={onViewDocument}
+                                                />
+                                            ))}
+                                    </div>
+                                )}
+
+                                {/* Document badges */}
+                                {citations.some(c => !c.asset) && (
+                                    <div className="flex flex-wrap gap-2">
+                                        {citations
+                                            .filter(c => !c.asset)
+                                            .map((citation, idx) => (
+                                                <Badge
+                                                    key={`doc-${idx}`}
+                                                    variant="primary"
+                                                    size="sm"
+                                                    shape="rounded"
+                                                    className="cursor-pointer hover:opacity-80 transition-opacity"
+                                                    title={`View: ${citation.documentName}${citation.chapter ? ` - ${citation.chapter}` : ''}`}
+                                                >
+                                                    📄 {citation.documentName}
+                                                </Badge>
+                                            ))}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </Card>

@@ -69,6 +69,12 @@ from api.views.document_views import (
     DocumentStatusView,
     DocumentReprocessView,
 )
+from api.views.asset_views import (
+    DocumentAssetsListView,
+    DocumentAssetDetailView,
+    DocumentAssetImageView,
+    DocumentAssetThumbnailView,
+)
 from api.views.chat_views import (
     ConversationListCreateView,
     ConversationDetailView,
@@ -282,6 +288,21 @@ urlpatterns = [
     
     # 10. POST /api/v1/documents/{doc_id}/reprocess - Re-index document
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/reprocess/?$", DocumentReprocessView.as_view(), name="document_reprocess"),
+
+    # ============================================================
+    # ASSET ENDPOINTS (Asset Pipeline - OCR + VL Caption)
+    # ============================================================
+    # GET /api/v1/documents/{doc_id}/assets - List all assets of a document
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/assets/?$", DocumentAssetsListView.as_view(), name="document_assets_list"),
+
+    # GET /api/v1/assets/{asset_id} - Get asset detail
+    re_path(rf"^assets/(?P<asset_id>{UUID_PATTERN})/?$", DocumentAssetDetailView.as_view(), name="asset_detail"),
+
+    # GET /api/v1/assets/{asset_id}/image - Get original asset image
+    re_path(rf"^assets/(?P<asset_id>{UUID_PATTERN})/image/?$", DocumentAssetImageView.as_view(), name="asset_image"),
+
+    # GET /api/v1/assets/{asset_id}/thumbnail - Get asset thumbnail image
+    re_path(rf"^assets/(?P<asset_id>{UUID_PATTERN})/thumbnail/?$", DocumentAssetThumbnailView.as_view(), name="asset_thumbnail"),
     
     # ============================================================
     # CHAT ENDPOINTS (Phase 5 - RAG Chat with Real-time Messaging)

@@ -1,9 +1,16 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # 1. PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: rag_postgres
     restart: always
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rag_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -20,11 +27,12 @@ services:
     networks:
       - rag_network
 
-  # 2. Qdrant - Vector Database (Embeddings & Search) - Production-ready alternative to ChromaDB
+  # 2. Qdrant - Vector Database
   qdrant:
     image: qdrant/qdrant:latest
     container_name: rag_qdrant
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${QDRANT_PORT:-6333}:6333"
       - "6334:6334"
@@ -43,53 +51,36 @@ services:
       dockerfile: Dockerfile
     container_name: rag_backend
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     environment:
-      # PostgreSQL Database
       POSTGRES_DB: ${POSTGRES_DB:-rag_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-
-      # Redis Cache
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      
-      # Django Settings
       SECRET_KEY: ${SECRET_KEY:-django-insecure-change-me-in-production}
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
-      
-      # App Config
       APP_NAME: RAG System API
       APP_VERSION: 1.0.0
       ENVIRONMENT: ${ENVIRONMENT:-development}
-      
-      # CORS
       CORS_ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000","http://localhost:8000"]}
-      
-      # File Upload
       MAX_FILE_SIZE: 52428800
       UPLOAD_DIR: /app/uploads
-      
-      # Qdrant (Vector Database)
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
       QDRANT_PERSIST_DIRECTORY: /app/qdrant_data
-      
-      # LLM Configuration (Switching from Ollama to llama.cpp server)
-      # llama-server sử dụng URL chuẩn OpenAI /v1
+      QDRANT_ASSET_VECTOR_SIZE: "1024"
       LLM_BASE_URL: http://llama-server:8080/v1
       LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
       EMBEDDING_BACKEND: flag
       EMBEDDING_MODEL: /app/models/bge-m3
       EMBEDDING_DEVICE: auto
-      # EMBEDDING_BASE_URL không dùng khi backend=flag
-      
-      # Embedding chunk configuration to fit llama.cpp token limits
       CHUNK_TOKEN_SIZE_PDF: "160"
       CHUNK_TOKEN_OVERLAP_PDF: "32"
       CHUNK_TOKEN_SIZE_DOC: "240"
@@ -104,13 +95,29 @@ services:
       RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD: "false"
       RAG_RAPTOR_BUILD_WORKERS: "1"
       RAG_VECTORIZE_PAGE_SECTIONS: "false"
+      RAG_SPREADSHEET_RAPTOR_ENABLED: "true"
+      RAG_SPREADSHEET_RAPTOR_MIN_SHEETS: "3"
+      RAG_SPREADSHEET_RAPTOR_MIN_ROWS: "200"
+      RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS: "12"
       CELERY_TASK_TIME_LIMIT: "1800"
       CELERY_TASK_SOFT_TIME_LIMIT: "1500"
       RAG_RAPTOR_TASK_TIME_LIMIT: "1800"
       RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
       CELERY_ENABLED: "true"
-      
-      # Email Configuration (Gmail SMTP)
+      # Asset Pipeline
+      ASSET_PIPELINE_ENABLED: "true"
+      ASSET_OCR_ENABLED: "true"
+      ASSET_OCR_LANGUAGES: "vie+eng"
+      ASSET_VL_CAPTION_ENABLED: "true"
+      ASSET_EMBED_CAPTIONS: "true"
+      ASSET_CAPTION_METHOD: "vlm"
+      VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
+      VL_MODEL_NAME: "Qwen2.5-VL-3B-Instruct"
+      VL_MODEL_TIMEOUT: "120"
+      VL_MODEL_MAX_TOKENS: "256"
+      VL_MODEL_TEMPERATURE: "0.3"
+      LLM_CONTEXT_WINDOW: "8192"
+      # Email
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       SMTP_HOST: smtp.gmail.com
       SMTP_PORT: 587
@@ -120,7 +127,6 @@ services:
       EMAIL_SENDER: phuongbinh732004@gmail.com
       APP_URL: http://localhost:3000
       FRONTEND_URL: http://localhost:3000
-      
     volumes:
       - ./backend:/app
       - ./models:/app/models:ro
@@ -155,13 +161,14 @@ services:
     networks:
       - rag_network
 
-  # 4. Celery Worker - Background task processing for async summarization
+  # 4. Celery Worker
   celery:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: rag_celery_worker
     restart: unless-stopped
+    logging: *default-logging
     command: celery -A config worker --loglevel=info --concurrency=1
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rag_system}
@@ -174,6 +181,7 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+      QDRANT_ASSET_VECTOR_SIZE: "1024"
       LLM_BASE_URL: http://llama-server:8080/v1
       LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
       EMBEDDING_BACKEND: flag
@@ -186,18 +194,17 @@ services:
       CHUNK_TOKEN_SIZE_TEXT: "200"
       CHUNK_TOKEN_OVERLAP_TEXT: "40"
       RAG_RAPTOR_THRESHOLD_PAGES: "3"
-      RAG_UPLOAD_FAST_MODE: "false"
-      RAG_DEFER_SUMMARY_ON_UPLOAD: "false"
-      RAG_BUILD_RAPTOR_ON_UPLOAD: "true"
-      RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD: "false"
-      RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD: "false"
-      RAG_RAPTOR_BUILD_WORKERS: "1"
-      RAG_VECTORIZE_PAGE_SECTIONS: "false"
       CELERY_ENABLED: "true"
       CELERY_TASK_TIME_LIMIT: "1800"
       CELERY_TASK_SOFT_TIME_LIMIT: "1500"
       RAG_RAPTOR_TASK_TIME_LIMIT: "1800"
       RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
+      ASSET_PIPELINE_ENABLED: "true"
+      ASSET_OCR_ENABLED: "true"
+      ASSET_VL_CAPTION_ENABLED: "true"
+      ASSET_EMBED_CAPTIONS: "true"
+      ASSET_CAPTION_METHOD: "vlm"
+      VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
     volumes:
       - ./backend:/app
       - ./models:/app/models:ro
@@ -220,7 +227,7 @@ services:
       llama-server:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME --timeout=10 | grep -q OK"]
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME | grep -q pong"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -228,11 +235,12 @@ services:
     networks:
       - rag_network
 
-  # 5. Redis - Caching & Task Queue Broker
+  # 5. Redis
   redis:
     image: redis:7-alpine
     container_name: rag_redis
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "6379:6379"
     volumes:
@@ -245,11 +253,12 @@ services:
     networks:
       - rag_network
 
-  # 5. Llama.cpp Server - Specialized GGUF Runner
+  # 6. Llama.cpp Server - Text LLM (Qwen3-4B)
   llama-server:
     image: ghcr.io/ggml-org/llama.cpp:full-cuda12-b7869
     container_name: rag_llama_server
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "11435:8080"
     volumes:
@@ -258,12 +267,44 @@ services:
       LLAMA_ARG_MODEL: /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: 8080
-      LLAMA_ARG_CTX_SIZE: 4096
+      LLAMA_ARG_CTX_SIZE: 8192
       LLAMA_ARG_N_GPU_LAYERS: 35
       LLAMA_ARG_EMBEDDING: "false"
       LLAMA_ARG_BATCH: "1024"
       LLAMA_ARG_UBATCH: "1024"
-    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 4096 --n-gpu-layers 35 --batch-size 1024 --ubatch-size 1024
+    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 8192 --n-gpu-layers 35 --batch-size 1024 --ubatch-size 1024
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - rag_network
+
+  # 7. Llama.cpp Server - Vision Model (Qwen2.5-VL-3B)
+  llama-vl-server:
+    # profiles:
+    #   - vl
+    image: ghcr.io/ggml-org/llama.cpp:full-cuda12-b7869
+    container_name: rag_llama_vl_server
+    restart: unless-stopped
+    logging: *default-logging
+    ports:
+      - "11436:8081"
+    volumes:
+      - ./models:/models
+    command: >
+      --server
+      -m /models/Qwen2.5-VL-3B-Instruct-q4_k_m.gguf
+      --mmproj /models/Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf
+      --host 0.0.0.0
+      --port 8081
+      --ctx-size 8192
+      --n-gpu-layers 0
+      --batch-size 512
+      --ubatch-size 512
     deploy:
       resources:
         reservations:

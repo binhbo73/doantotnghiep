@@ -374,6 +374,71 @@ class LlamaClient:
         except Exception as e:
             logger.error(f"Chat stream error: {str(e)}", exc_info=True)
             raise LLMServiceError(f"Failed to chat stream: {str(e)}")
+
+    def describe_image(
+        self,
+        image_bytes: bytes,
+        prompt: str = "Describe this image in detail, including any text, objects, and overall context.",
+        max_tokens: int = 256,
+        temperature: float = 0.2,
+    ) -> str:
+        """
+        Generate a text description of an image using VLM.
+        
+        Args:
+            image_bytes: Raw image data
+            prompt: Question or instruction for the VLM
+            max_tokens: Max output tokens
+            temperature: Sampling temperature
+            
+        Returns:
+            Text description
+        """
+        import base64
+        try:
+            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+            
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            data = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "stream": False,
+            }
+            
+            response = self._request_with_retry(
+                "POST",
+                f"{self.api_url}/chat/completions",
+                json=data,
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "choices" in result and len(result["choices"]) > 0:
+                    text = result["choices"][0]["message"].get("content", "").strip()
+                    return text
+                
+            raise LLMServiceError(f"VLM API failed: {response.status_code} {response.text}")
+            
+        except Exception as e:
+            logger.error(f"Error describing image: {e}")
+            raise LLMServiceError(f"Failed to describe image: {e}")
     
     def score_candidates(
         self,

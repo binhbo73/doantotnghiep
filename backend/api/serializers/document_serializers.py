@@ -321,3 +321,31 @@ class DocumentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = ['original_name', 'folder', 'department', 'access_scope', 'description', 'tags']
+
+
+class DocumentAssetSerializer(serializers.ModelSerializer):
+    """Serializer for DocumentAsset model."""
+
+    image_url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
+
+    class Meta:
+        from apps.documents.models import DocumentAsset
+        model = DocumentAsset
+        fields = [
+            'id', 'document_id', 'chunk_id', 'asset_type',
+            'page_number', 'sheet_name', 'anchor_cell', 'anchor_row',
+            'paragraph_index', 'position_in_document',
+            'image_url', 'thumbnail_url',
+            'image_width', 'image_height', 'image_size_bytes', 'image_format',
+            'ocr_text', 'ocr_confidence', 'ocr_language',
+            'caption', 'caption_model',
+            'context_text',
+            'processing_status', 'processed_at', 'created_at',
+        ]
+
+    def get_image_url(self, obj):
+        return f"/api/v1/assets/{obj.id}/image"
+
+    def get_thumbnail_url(self, obj):
+        return f"/api/v1/assets/{obj.id}/thumbnail"

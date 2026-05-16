@@ -95,6 +95,9 @@ class Reranker:
             overlap = len(q_tokens & s_tokens)
             # combine existing score with overlap (preserve existing score + add overlap bonus)
             base = float(c.get('score', 0.0) or 0.0)
+            # Asset bonus: ensure image assets rank high when query mentions images
+            if c.get('source') == 'asset':
+                base += 0.5
             intent_bonus = 0.0
             if asks_reason:
                 if any(marker in snippet_lower for marker in reason_markers):

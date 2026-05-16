@@ -126,6 +126,12 @@ class ParsingStage(PipelineStage):
             context.metadata['page_count'] = getattr(page_aware_text, 'total_pages', 1)
             context.metadata['text_length'] = len(page_aware_text.text)
             context.metadata['parsed_at'] = datetime.now().isoformat()
+            spreadsheet_metadata = getattr(page_aware_text, 'metadata', {}) or {}
+            if spreadsheet_metadata:
+                context.metadata['spreadsheet'] = spreadsheet_metadata
+                context.metadata['spreadsheet_sheet_count'] = spreadsheet_metadata.get('sheet_count', 0)
+                context.metadata['spreadsheet_total_rows'] = spreadsheet_metadata.get('total_non_empty_rows', 0)
+                context.metadata['spreadsheet_total_cells'] = spreadsheet_metadata.get('total_non_empty_cells', 0)
             
             # Detailed logging
             page_count = context.metadata['page_count']
@@ -152,6 +158,62 @@ class ParsingStage(PipelineStage):
 
 class ChunkingStage(PipelineStage):
     """Split text into chunks with embeddings."""
+
+    def _is_spreadsheet(self, file_ext: str) -> bool:
+        return (file_ext or '').lower() in {'.xlsx', '.xls', '.csv'}
+
+    def _should_apply_raptor_before_chunking(self, context: PipelineContext, page_count: int) -> bool:
+        file_ext = context.metadata.get('file_extension', '').lower()
+        if not self._is_spreadsheet(file_ext):
+            threshold = getattr(settings, 'RAG_RAPTOR_THRESHOLD_PAGES', 3)
+            return page_count >= threshold
+
+        if not getattr(settings, 'RAG_SPREADSHEET_RAPTOR_ENABLED', True):
+            return False
+
+        sheet_count = int(context.metadata.get('spreadsheet_sheet_count') or page_count or 0)
+        total_rows = int(context.metadata.get('spreadsheet_total_rows') or 0)
+        min_sheets = int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_SHEETS', 3))
+        min_rows = int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_ROWS', 200))
+
+        return sheet_count >= min_sheets or total_rows >= min_rows
+
+    def _should_apply_raptor_after_chunking(
+        self,
+        context: PipelineContext,
+        chunks: List[Dict[str, Any]],
+        pre_decision: bool,
+    ) -> bool:
+        file_ext = context.metadata.get('file_extension', '').lower()
+        if not self._is_spreadsheet(file_ext):
+            return pre_decision
+
+        if not getattr(settings, 'RAG_SPREADSHEET_RAPTOR_ENABLED', True):
+            context.metadata['spreadsheet_raptor_reason'] = 'disabled'
+            return False
+
+        sheet_count = int(context.metadata.get('spreadsheet_sheet_count') or context.metadata.get('page_count') or 0)
+        total_rows = int(context.metadata.get('spreadsheet_total_rows') or 0)
+        chunk_count = len(chunks or [])
+        min_sheets = int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_SHEETS', 3))
+        min_rows = int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_ROWS', 200))
+        min_chunks = int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS', 12))
+
+        if sheet_count >= min_sheets:
+            context.metadata['spreadsheet_raptor_reason'] = f'sheet_count>={min_sheets}'
+            return True
+        if total_rows >= min_rows:
+            context.metadata['spreadsheet_raptor_reason'] = f'total_rows>={min_rows}'
+            return True
+        if chunk_count >= min_chunks:
+            context.metadata['spreadsheet_raptor_reason'] = f'chunk_count>={min_chunks}'
+            return True
+
+        context.metadata['spreadsheet_raptor_reason'] = (
+            f'skipped: sheets={sheet_count}/{min_sheets}, '
+            f'rows={total_rows}/{min_rows}, chunks={chunk_count}/{min_chunks}'
+        )
+        return False
     
     def execute(self, context: PipelineContext) -> PipelineContext:
         """Chunk document and generate embeddings.
@@ -192,13 +254,13 @@ class ChunkingStage(PipelineStage):
             # DECISION: Only apply RAPTOR logic (summaries + hierarchy) if document exceeds page threshold
             page_count = context.metadata.get('page_count', 1)
             raptor_threshold = getattr(settings, 'RAG_RAPTOR_THRESHOLD_PAGES', 3)
-            should_apply_raptor = page_count >= raptor_threshold
+            should_apply_raptor_pre = self._should_apply_raptor_before_chunking(context, page_count)
             fast_upload_mode = getattr(settings, 'RAG_UPLOAD_FAST_MODE', True)
             defer_summaries = getattr(settings, 'RAG_DEFER_SUMMARY_ON_UPLOAD', True)
             build_raptor_on_upload = getattr(settings, 'RAG_BUILD_RAPTOR_ON_UPLOAD', False)
-            generate_summaries = should_apply_raptor and not defer_summaries
+            generate_summaries = should_apply_raptor_pre and not defer_summaries
 
-            if not should_apply_raptor:
+            if not should_apply_raptor_pre:
                 self.logger.info(
                     f"ℹ️  [CHUNKING] Document has {page_count} pages (threshold: {raptor_threshold}). "
                     f"Applying Flat RAG (no RAPTOR)."
@@ -221,10 +283,11 @@ class ChunkingStage(PipelineStage):
                     'page_count': page_count,
                     'word_count': len(text.split()) if text else 0,
                     'source_name': os.path.basename(context.file_path),
-                    'raptor_applied': should_apply_raptor,
+                    'raptor_applied': should_apply_raptor_pre,
+                    'spreadsheet': context.metadata.get('spreadsheet'),
                 },
                 # If not applying RAPTOR, don't pass page_aware_text to skip hierarchy creation
-                page_aware_text=context.metadata.get('page_aware_text') if should_apply_raptor else None,
+                page_aware_text=context.metadata.get('page_aware_text') if should_apply_raptor_pre else None,
                 generate_summaries=generate_summaries,
                 summary_mode='async'
             )
@@ -255,6 +318,11 @@ class ChunkingStage(PipelineStage):
             page_distribution = ", ".join([f"Page {p}:{cnt}" for p, cnt in sorted(page_chunks.items())])
             
             # Pass decision to next stages via metadata
+            should_apply_raptor = self._should_apply_raptor_after_chunking(
+                context,
+                chunks,
+                should_apply_raptor_pre,
+            )
             context.metadata['raptor_applied'] = should_apply_raptor
             
             self.logger.info(
@@ -270,7 +338,8 @@ class ChunkingStage(PipelineStage):
                 f"[UPLOAD_PROFILE] stage=chunking document={context.document_id} "
                 f"clients={client_init_ms:.1f}ms chunker={chunker_init_ms:.1f}ms "
                 f"process={chunk_ms:.1f}ms total={(time.monotonic() - t_start) * 1000:.1f}ms "
-                f"summaries={'on' if generate_summaries else 'deferred'}"
+                f"summaries={'on' if generate_summaries else 'deferred'} "
+                f"spreadsheet_raptor_reason={context.metadata.get('spreadsheet_raptor_reason', 'n/a')}"
             )
             return context
         

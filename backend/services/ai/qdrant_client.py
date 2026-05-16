@@ -6,42 +6,10 @@ Vector database client for embedding storage + search
 Features:
 - Store embeddings in Qdrant collection
 - Search similar embeddings (semantic search)
+- Asset collection management
 - Delete embeddings
 - Batch operations
 - Error handling + retry logic
-
-Configuration (from settings.py):
-    QDRANT_URL = "http://qdrant:6333"
-    QDRANT_COLLECTION = "documents"
-    QDRANT_VECTOR_SIZE = 1536
-    QDRANT_SIMILARITY_THRESHOLD = 0.7
-
-Collection schema:
-    - name: "documents"
-    - vector_size: 1536 (Qwen model output)
-    - similarity: Cosine
-    - payload: {chunk_id, chunk_text, metadata}
-
-Usage:
-    client = QdrantClient()
-    
-    # Store embedding
-    vector_id = client.add_embedding(
-        chunk_id=123,
-        embedding=[0.1, -0.2, ..., 0.5],
-        payload={"text": "...", "document_id": 1}
-    )
-    
-    # Search similar
-    results = client.search_similar(
-        embedding=[0.1, -0.2, ..., 0.5],
-        limit=5,
-        score_threshold=0.7
-    )
-    # Returns: [(vector_id, score, payload), ...]
-    
-    # Delete
-    client.delete_embedding(vector_id)
 """
 
 import logging
@@ -57,34 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 class QdrantClient:
-    """
-    Qdrant vector database client
-    
-    Wraps HTTP API with:
-    - Retry logic
-    - Error handling
-    - Logging
-    - Batch operations
-    """
-    
+    """Qdrant vector database client."""
+
+    ASSET_COLLECTION_NAME = "document_assets"
+
     def __init__(
-        self,
-        url: str = None,
-        collection: str = None,
-        vector_size: int = None,
-        timeout: int = None,
-        retry_times: int = None,
+        self, url: str = None, collection: str = None,
+        vector_size: int = None, timeout: int = None, retry_times: int = None,
     ):
-        """
-        Initialize Qdrant client
-        
-        Args:
-            url: Qdrant API URL (default from settings.QDRANT_URL)
-            collection: Collection name (default from settings.QDRANT_COLLECTION)
-            vector_size: Vector dimension (default from settings.QDRANT_VECTOR_SIZE)
-            timeout: Request timeout in seconds (default 30)
-            retry_times: Number of retries (default 3)
-        """
         self.url = url or getattr(settings, 'QDRANT_URL', None)
         self.collection = collection or getattr(settings, 'QDRANT_COLLECTION', 'documents')
         self.vector_size = vector_size or getattr(settings, 'QDRANT_VECTOR_SIZE', 1536)
@@ -95,460 +43,357 @@ class QdrantClient:
         self.search_ef = getattr(settings, 'QDRANT_SEARCH_EF', 128)
         self.full_scan_threshold = getattr(settings, 'QDRANT_FULL_SCAN_THRESHOLD', 100)
         self.quantization = getattr(settings, 'QDRANT_QUANTIZATION', None) or None
-        
+
         if not self.url:
             raise VectorDatabaseError("QDRANT_URL not configured in settings")
-        
-        # Ensure collection exists
+
         self._ensure_collection()
         logger.info(f"QdrantClient initialized: {self.url} collection={self.collection}")
-    
+
     # ============================================================================
     # CORE OPERATIONS
     # ============================================================================
-    
+
     def add_embedding(
-        self,
-        embedding: List[float],
-        chunk_id: int = None,
-        payload: Dict[str, Any] = None,
-        vector_id: str = None,
+        self, embedding: List[float], chunk_id: int = None,
+        payload: Dict[str, Any] = None, vector_id: str = None,
     ) -> str:
-        """
-        Add embedding to collection
-        
-        Args:
-            embedding: Vector list (must match vector_size)
-            chunk_id: DocumentChunk ID (for reference)
-            payload: Additional metadata dict
-            vector_id: Custom vector ID (default: auto UUID)
-        
-        Returns:
-            Vector ID (UUID string)
-        
-        Raises:
-            VectorDatabaseError: If storage fails
-        
-        Example:
-            vector_id = client.add_embedding(
-                embedding=[0.1, -0.2, 0.3, ...],
-                chunk_id=42,
-                payload={"document_id": 1, "text": "..."}
-            )
-        """
+        """Add embedding to collection. Returns vector_id."""
         t_start = time.monotonic()
         try:
-            # Validate embedding size
             if len(embedding) != self.vector_size:
-                raise VectorDatabaseError(
-                    f"Embedding size {len(embedding)} != {self.vector_size}"
-                )
-            
-            # Generate vector ID if not provided
+                raise VectorDatabaseError(f"Embedding size mismatch: {len(embedding)} != {self.vector_size}")
+
             if not vector_id:
                 vector_id = str(uuid.uuid4())
-            
-            # Build point
-            point = {
-                "id": vector_id,
-                "vector": embedding,
-                "payload": payload or {}
-            }
-            
-            # If chunk_id provided, add to payload
+
+            point = {"id": vector_id, "vector": embedding, "payload": payload or {}}
             if chunk_id:
                 point["payload"]["chunk_id"] = chunk_id
-            
-            # Store
+
             response = self._request_with_retry(
-                "PUT",
-                f"{self.url}/collections/{self.collection}/points",
+                "PUT", f"{self.url}/collections/{self.collection}/points",
                 json={"points": [point]}
             )
-            
+
             if response.status_code == 200:
-                logger.info(
-                    f"[QDRANT_UPLOAD_PROFILE] action=add_embedding vector_id={vector_id} "
-                    f"chunk_id={chunk_id} time={(time.monotonic() - t_start) * 1000:.1f}ms"
-                )
+                logger.info(f"[QDRANT] add_embedding vector_id={vector_id} time={(time.monotonic()-t_start)*1000:.1f}ms")
                 return vector_id
             else:
-                raise VectorDatabaseError(
-                    f"Failed to store embedding: {response.status_code}"
-                )
-        
+                raise VectorDatabaseError(f"Failed to store embedding: {response.status_code}")
         except Exception as e:
             logger.error(f"Error adding embedding: {str(e)}", exc_info=True)
             raise VectorDatabaseError(f"Failed to add embedding: {str(e)}")
-    
+
     def batch_add_embeddings(
         self,
         embeddings: List[Tuple[List[float], Dict[str, Any]]],
     ) -> List[str]:
-        """
-        Add multiple embeddings at once
-        
-        Args:
-            embeddings: List of (embedding_vector, payload) tuples
-        
-        Returns:
-            List of vector IDs
-        """
+        """Add multiple embeddings to the main collection."""
         t_start = time.monotonic()
         try:
             points = []
             vector_ids = []
-            
             for embedding, payload in embeddings:
                 if len(embedding) != self.vector_size:
-                    raise VectorDatabaseError(f"Invalid embedding size")
-                
+                    raise VectorDatabaseError(
+                        f"Embedding size mismatch: {len(embedding)} != {self.vector_size}"
+                    )
                 vector_id = str(uuid.uuid4())
                 vector_ids.append(vector_id)
-                
                 points.append({
                     "id": vector_id,
                     "vector": embedding,
-                    "payload": payload or {}
+                    "payload": payload or {},
                 })
-            
-            # Batch store
+
+            if not points:
+                return []
+
             response = self._request_with_retry(
-                "PUT",
-                f"{self.url}/collections/{self.collection}/points",
-                json={"points": points}
+                "PUT", f"{self.url}/collections/{self.collection}/points",
+                json={"points": points},
             )
-            
             if response.status_code == 200:
                 logger.info(
-                    f"[QDRANT_UPLOAD_PROFILE] action=batch_add_embeddings count={len(vector_ids)} "
-                    f"time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                    "[QDRANT] batch_add_embeddings count=%s time=%.1fms",
+                    len(vector_ids),
+                    (time.monotonic() - t_start) * 1000,
                 )
                 return vector_ids
-            else:
-                raise VectorDatabaseError(f"Batch store failed: {response.status_code}")
-        
+            raise VectorDatabaseError(f"Batch store failed: {response.status_code}")
         except Exception as e:
-            logger.error(f"Error batch adding: {str(e)}", exc_info=True)
+            logger.error(f"Error batch adding embeddings: {str(e)}", exc_info=True)
             raise VectorDatabaseError(f"Failed to batch add embeddings: {str(e)}")
-    
+
     def search_similar(
-        self,
-        embedding: List[float],
-        limit: int = 5,
-        score_threshold: float = None,
-        filter_payload: Dict[str, Any] = None,
+        self, embedding: List[float], limit: int = 5,
+        score_threshold: float = None, filter_payload: Dict[str, Any] = None,
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
-        """
-        Search for similar embeddings
-        
-        Args:
-            embedding: Query vector
-            limit: Number of results
-            score_threshold: Minimum similarity score (0.0-1.0)
-            filter_payload: Filter by payload (e.g., {"document_id": 1})
-        
-        Returns:
-            List of (vector_id, score, payload) tuples sorted by score DESC
-        
-        Example:
-            results = client.search_similar(
-                embedding=[0.1, -0.2, 0.3, ...],
-                limit=10,
-                score_threshold=0.7
-            )
-            
-            for vector_id, score, payload in results:
-                print(f"ID: {vector_id}, Score: {score:.3f}")
-                print(f"  Chunk ID: {payload.get('chunk_id')}")
-        """
+        """Search similar embeddings."""
         t_start = time.monotonic()
         try:
-            if len(embedding) != self.vector_size:
-                raise VectorDatabaseError(f"Query vector size mismatch")
-            
-            # Build search payload
-            search_data = {
-                "vector": embedding,
-                "limit": limit,
-                "with_payload": True,
-            }
-            
-            # Add score threshold if provided
+            search_data = {"vector": embedding, "limit": limit, "with_payload": True}
             if score_threshold is not None:
                 search_data["score_threshold"] = score_threshold
-            
-            # Add filter if provided
             if filter_payload:
                 must_conditions = []
                 for k, v in filter_payload.items():
-                    if isinstance(v, list):
-                        must_conditions.append({"key": k, "match": {"any": v}})
-                    else:
-                        must_conditions.append({"key": k, "match": {"value": v}})
-                
-                search_data["filter"] = {
-                    "must": must_conditions
-                }
-            
-            # Search
-            # Use ef for better recall during semantic search
+                    must_conditions.append({"key": k, "match": {"any": v} if isinstance(v, list) else {"value": v}})
+                search_data["filter"] = {"must": must_conditions}
+
             search_data["search_params"] = {"hnsw_ef": self.search_ef}
             response = self._request_with_retry(
-                "POST",
-                f"{self.url}/collections/{self.collection}/points/search",
+                "POST", f"{self.url}/collections/{self.collection}/points/search",
                 json=search_data
             )
-            
+
             if response.status_code == 200:
-                data = response.json()
                 results = []
-                
-                for result in data.get("result", []):
-                    vector_id = str(result.get("id"))
-                    score = float(result.get("score", 0.0))
-                    payload = result.get("payload", {})
-                    
-                    results.append((vector_id, score, payload))
-                
-                logger.info(
-                    f"[QDRANT_SEARCH_PROFILE] limit={limit} results={len(results)} "
-                    f"time={(time.monotonic() - t_start) * 1000:.1f}ms"
-                )
+                for r in response.json().get("result", []):
+                    results.append((str(r.get("id")), float(r.get("score", 0)), r.get("payload", {})))
+                logger.info(f"[QDRANT_SEARCH] results={len(results)} time={(time.monotonic()-t_start)*1000:.1f}ms")
                 return results
             else:
                 raise VectorDatabaseError(f"Search failed: {response.status_code}")
-        
         except Exception as e:
-            logger.error(f"Error searching embeddings: {str(e)}", exc_info=True)
-            raise VectorDatabaseError(f"Failed to search embeddings: {str(e)}")
-    
+            logger.error(f"Error searching: {str(e)}", exc_info=True)
+            raise VectorDatabaseError(f"Failed to search: {str(e)}")
+
     def delete_embedding(self, vector_id: str) -> bool:
-        """
-        Delete embedding by ID
-        
-        Args:
-            vector_id: Vector ID to delete
-        
-        Returns:
-            True if deleted
-        """
+        """Delete embedding by ID."""
         try:
             response = self._request_with_retry(
-                "DELETE",
-                f"{self.url}/collections/{self.collection}/points",
-                json={"points_selector": {"points": [vector_id]}}
+                "POST", f"{self.url}/collections/{self.collection}/points/delete",
+                params={"wait": "true"},
+                json={"points": [vector_id]},
             )
-            
-            if response.status_code == 200:
-                logger.debug(f"Embedding deleted: {vector_id}")
-                return True
-            else:
-                raise VectorDatabaseError(f"Delete failed: {response.status_code}")
-        
+            return response.status_code in (200, 202)
         except Exception as e:
             logger.error(f"Error deleting embedding: {str(e)}")
             return False
-    
+
     def batch_delete_embeddings(self, vector_ids: List[str]) -> int:
-        """
-        Delete multiple embeddings
-        
-        Args:
-            vector_ids: List of vector IDs to delete
-        
-        Returns:
-            Number deleted
-        """
+        """Delete multiple embeddings from the main collection."""
+        if not vector_ids:
+            return 0
         try:
             response = self._request_with_retry(
-                "DELETE",
-                f"{self.url}/collections/{self.collection}/points",
-                json={"points_selector": {"points": vector_ids}}
+                "POST", f"{self.url}/collections/{self.collection}/points/delete",
+                params={"wait": "true"},
+                json={"points": vector_ids},
             )
-            
-            if response.status_code == 200:
-                logger.debug(f"Batch deleted {len(vector_ids)} embeddings")
+            if response.status_code in (200, 202):
+                logger.debug("Batch deleted %s embeddings", len(vector_ids))
                 return len(vector_ids)
-            else:
-                raise VectorDatabaseError(f"Batch delete failed: {response.status_code}")
-        
+            raise VectorDatabaseError(f"Batch delete failed: {response.status_code}")
         except Exception as e:
-            logger.error(f"Error batch deleting: {str(e)}")
+            logger.error(f"Error batch deleting embeddings: {str(e)}")
             return 0
-    
+
     def delete_by_filter(self, filter_payload: Dict[str, Any]) -> int:
-        """
-        Delete embeddings matching filter
-        
-        Args:
-            filter_payload: Filter criteria (e.g., {"document_id": 1})
-        
-        Returns:
-            Number deleted
-        
-        Example:
-            count = client.delete_by_filter({"document_id": 123})
-        """
+        """Delete embeddings matching a payload filter from the main collection."""
         try:
-            # Build filter
             filter_query = {
                 "must": [
-                    {"key": k, "match": {"value": v}}
-                    for k, v in filter_payload.items()
+                    {"key": key, "match": {"any": value} if isinstance(value, list) else {"value": value}}
+                    for key, value in (filter_payload or {}).items()
                 ]
             }
-            
             response = self._request_with_retry(
-                "DELETE",
-                f"{self.url}/collections/{self.collection}/points",
-                json={"filter": filter_query}
+                "POST", f"{self.url}/collections/{self.collection}/points/delete",
+                params={"wait": "true"},
+                json={"filter": filter_query},
             )
-            
-            if response.status_code == 200:
-                logger.debug(f"Delete by filter succeeded")
-                return 1  # Qdrant returns status, not count
-            else:
-                raise VectorDatabaseError(f"Delete by filter failed: {response.status_code}")
-        
+            if response.status_code in (200, 202):
+                logger.debug("Delete by filter succeeded: %s", filter_payload)
+                return 1
+            raise VectorDatabaseError(f"Delete by filter failed: {response.status_code}")
         except Exception as e:
             logger.error(f"Error deleting by filter: {str(e)}")
             return 0
-    
-    # ============================================================================
-    # COLLECTION MANAGEMENT
-    # ============================================================================
-    
-    def _ensure_collection(self):
-        """Ensure collection exists, create if needed"""
-        try:
-            # Check if collection exists
-            response = requests.get(
-                f"{self.url}/collections/{self.collection}",
-                timeout=self.timeout
-            )
-            
-            if response.status_code == 200:
-                logger.debug(f"Collection '{self.collection}' exists")
-                return
-            
-            # Create collection
-            logger.info(f"Creating collection '{self.collection}'...")
-            
-            create_payload = {
-                "vectors": {
-                    "size": self.vector_size,
-                    "distance": "Cosine",
-                    "hnsw_config": {
-                        "m": self.hnsw_m,
-                        "ef_construct": self.hnsw_ef_construction,
-                        "full_scan_threshold": self.full_scan_threshold,
-                    }
-                }
-            }
-            if self.quantization:
-                create_payload["vectors"]["quantization_config"] = {
-                    "type": self.quantization
-                }
 
-            create_response = requests.put(
-                f"{self.url}/collections/{self.collection}",
-                json=create_payload,
-                timeout=self.timeout
+    # ============================================================================
+    # ASSET COLLECTION (document_assets)
+    # ============================================================================
+
+    def _asset_vector_size(self) -> int:
+        return int(getattr(settings, 'QDRANT_ASSET_VECTOR_SIZE', self.vector_size))
+
+    def ensure_asset_collection(self) -> str:
+        """Create document_assets collection if not exists."""
+        try:
+            resp = requests.get(f"{self.url}/collections/{self.ASSET_COLLECTION_NAME}", timeout=self.timeout)
+            if resp.status_code == 200:
+                return self.ASSET_COLLECTION_NAME
+        except Exception:
+            pass
+
+        logger.info(f"Creating asset collection '{self.ASSET_COLLECTION_NAME}'...")
+        resp = requests.put(
+            f"{self.url}/collections/{self.ASSET_COLLECTION_NAME}",
+            json={"vectors": {"size": self._asset_vector_size(), "distance": "Cosine"}},
+            timeout=self.timeout,
+        )
+        if resp.status_code != 200:
+            raise VectorDatabaseError(f"Failed to create asset collection: {resp.status_code}")
+        return self.ASSET_COLLECTION_NAME
+
+    def add_asset_embedding(
+        self, embedding: List[float], asset_id: str, document_id: str,
+        chunk_id: str = None, caption: str = '', page_number: int = None,
+        sheet_name: str = None, anchor_cell: str = None, image_path: str = '',
+    ) -> str:
+        """Add asset caption embedding to document_assets collection."""
+        self.ensure_asset_collection()
+        expected_size = self._asset_vector_size()
+        if len(embedding) != expected_size:
+            raise VectorDatabaseError(
+                f"Asset embedding size mismatch: {len(embedding)} != {expected_size}"
             )
-            
-            if create_response.status_code != 200:
-                raise VectorDatabaseError(
-                    f"Failed to create collection: {create_response.status_code}"
-                )
-            
-            logger.info(f"Collection '{self.collection}' created")
-        
+        vector_id = str(uuid.uuid4())
+
+        payload = {
+            'asset_id': str(asset_id), 'document_id': str(document_id),
+            'chunk_id': str(chunk_id) if chunk_id else None,
+            'caption': caption[:500], 'page_number': page_number,
+            'sheet_name': sheet_name, 'anchor_cell': anchor_cell,
+            'image_path': image_path, 'asset_type': 'document_asset',
+        }
+        payload = {k: v for k, v in payload.items() if v is not None}
+
+        resp = requests.put(
+            f"{self.url}/collections/{self.ASSET_COLLECTION_NAME}/points",
+            json={"points": [{"id": vector_id, "vector": embedding, "payload": payload}]},
+            timeout=self.timeout,
+        )
+        if resp.status_code == 200:
+            logger.debug(f"Asset embedding added: asset={asset_id}, vector={vector_id}")
+            return vector_id
+        raise VectorDatabaseError(f"Failed to add asset embedding: {resp.status_code}")
+
+    def search_assets(
+        self, embedding: List[float], limit: int = 5,
+        score_threshold: float = 0.5, document_ids: List[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search assets by embedding. Returns empty list on any error."""
+        try:
+            self.ensure_asset_collection()
+            search_data = {"vector": embedding, "limit": limit, "with_payload": True}
+            if score_threshold is not None:
+                search_data["score_threshold"] = score_threshold
+            if document_ids:
+                search_data["filter"] = {"must": [{"key": "document_id", "match": {"any": document_ids}}]}
+
+            resp = requests.post(
+                f"{self.url}/collections/{self.ASSET_COLLECTION_NAME}/points/search",
+                json=search_data, timeout=self.timeout,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"Asset search HTTP {resp.status_code}: {resp.text[:200]}")
+                return []
+
+            assets = []
+            for hit in (resp.json() or {}).get("result", []) or []:
+                p = hit.get("payload", {}) or {}
+                assets.append({
+                    'vector_id': str(hit.get("id", "")),
+                    'score': float(hit.get("score", 0)),
+                    'asset_id': p.get('asset_id'),
+                    'document_id': p.get('document_id'),
+                    'chunk_id': p.get('chunk_id'),
+                    'caption': p.get('caption', ''),
+                    'page_number': p.get('page_number'),
+                    'sheet_name': p.get('sheet_name'),
+                    'anchor_cell': p.get('anchor_cell'),
+                    'image_path': p.get('image_path', ''),
+                })
+            return assets
         except Exception as e:
-            logger.error(f"Error ensuring collection: {str(e)}")
-            raise VectorDatabaseError(f"Failed to ensure collection: {str(e)}")
-    
+            logger.warning(f"Asset search failed (non-fatal): {e}")
+            return []
+
+    def delete_asset_embeddings(self, document_id: str) -> int:
+        """Delete all asset embeddings for a document."""
+        try:
+            resp = requests.post(
+                f"{self.url}/collections/{self.ASSET_COLLECTION_NAME}/points/delete",
+                params={"wait": "true"},
+                json={"filter": {"must": [{"key": "document_id", "match": {"value": str(document_id)}}]}},
+                timeout=self.timeout,
+            )
+            if resp.status_code in (200, 202):
+                logger.info(f"Deleted asset embeddings for document {document_id}")
+                return 1
+            return 0
+        except Exception as e:
+            logger.warning(f"Failed to delete asset embeddings: {e}")
+            return 0
+
     def get_collection_info(self) -> Dict[str, Any]:
-        """Get collection statistics"""
+        """Get main collection metadata and statistics."""
         try:
             response = requests.get(
                 f"{self.url}/collections/{self.collection}",
-                timeout=self.timeout
+                timeout=self.timeout,
             )
-            
             if response.status_code == 200:
                 return response.json()
-            else:
-                raise VectorDatabaseError(f"Failed to get collection info")
-        
+            raise VectorDatabaseError(f"Failed to get collection info: {response.status_code}")
         except Exception as e:
             logger.error(f"Error getting collection info: {str(e)}")
             return {}
-    
+
     # ============================================================================
-    # INTERNAL - RETRY LOGIC
+    # INTERNAL - RETRY LOGIC & COLLECTION
     # ============================================================================
-    
-    def _request_with_retry(
-        self,
-        method: str,
-        url: str,
-        **kwargs
-    ) -> requests.Response:
-        """
-        HTTP request with retry logic
-        
-        Retry strategy:
-        - Exponential backoff: 1s, 2s, 4s
-        - Retry on: ConnectionError, Timeout, 500-503
-        """
+
+    def _ensure_collection(self):
+        """Ensure main collection exists."""
+        try:
+            response = requests.get(f"{self.url}/collections/{self.collection}", timeout=self.timeout)
+            if response.status_code == 200:
+                return
+        except Exception:
+            pass
+
+        logger.info(f"Creating collection '{self.collection}'...")
+        create_payload = {
+            "vectors": {"size": self.vector_size, "distance": "Cosine",
+                         "hnsw_config": {"m": self.hnsw_m, "ef_construct": self.hnsw_ef_construction,
+                                         "full_scan_threshold": self.full_scan_threshold}}
+        }
+        if self.quantization:
+            create_payload["vectors"]["quantization_config"] = {"type": self.quantization}
+
+        resp = requests.put(f"{self.url}/collections/{self.collection}", json=create_payload, timeout=self.timeout)
+        if resp.status_code != 200:
+            raise VectorDatabaseError(f"Failed to create collection: {resp.status_code}")
+        logger.info(f"Collection '{self.collection}' created")
+
+    def _request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
+        """HTTP request with retry logic."""
         last_error = None
-        
         for attempt in range(self.retry_times):
             try:
-                logger.debug(f"Qdrant request ({attempt + 1}/{self.retry_times}): {method} {url}")
-                
-                # Add timeout if not present
                 if 'timeout' not in kwargs:
                     kwargs['timeout'] = self.timeout
-                
                 response = requests.request(method, url, **kwargs)
-                
-                # Retry on 5xx errors
-                if response.status_code >= 500:
+                if response.status_code >= 500 and attempt < self.retry_times - 1:
                     last_error = f"Server error {response.status_code}"
-                    if attempt < self.retry_times - 1:
-                        wait_time = 2 ** attempt
-                        logger.warning(f"Qdrant error, retrying in {wait_time}s: {last_error}")
-                        time.sleep(wait_time)
-                        continue
-                
+                    time.sleep(2 ** attempt)
+                    continue
                 return response
-            
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_error = str(e)
                 if attempt < self.retry_times - 1:
-                    wait_time = 2 ** attempt
-                    logger.warning(f"Connection error, retrying in {wait_time}s: {last_error}")
-                    time.sleep(wait_time)
+                    time.sleep(2 ** attempt)
                     continue
-                else:
-                    raise
-            
-            except Exception as e:
-                last_error = str(e)
                 raise
-        
-        raise VectorDatabaseError(
-            f"Qdrant API failed after {self.retry_times} retries: {last_error}"
-        )
-    
-    # ============================================================================
-    # UTILITY METHODS
-    # ============================================================================
-    
+        raise VectorDatabaseError(f"Qdrant API failed after {self.retry_times} retries: {last_error}")
+
     def health_check(self) -> bool:
-        """Check if Qdrant server is healthy"""
+        """Check if Qdrant server is healthy."""
         try:
             response = requests.get(f"{self.url}/health", timeout=self.timeout)
             return response.status_code == 200

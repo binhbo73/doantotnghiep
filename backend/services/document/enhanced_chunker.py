@@ -139,7 +139,8 @@ class EnhancedDocumentChunker:
             if page_aware_text:
                 for idx, chunk_dict in enumerate(chunks):
                     # Check if 'page_number' exists in chunk, otherwise use the sequence logic
-                    p_num = chunk_dict.get('page_number')
+                    chunk_metadata = chunk_dict.get('metadata') or {}
+                    p_num = chunk_dict.get('page_number') or chunk_metadata.get('page_number')
                     if p_num is None:
                         # Fallback: estimate from chunk sequence if missing
                         logger.warning(f"⚠️ Chunk {idx} missing page_number, estimating...")
@@ -149,8 +150,8 @@ class EnhancedDocumentChunker:
                 
                 logger.info(f"📦 [CHUNKING] Grouped into {len(page_groups)} pages for RAPTOR processing")
             else:
-                logger.warning("❗ No page_aware_text provided. All chunks will be assigned to Page 0 (General).")
-                page_groups[0] = chunks
+                logger.warning("❗ No page_aware_text provided. All chunks will be assigned to Page 1 (General).")
+                page_groups[1] = chunks
 
             for page_number in sorted(page_groups.keys()):
                 page_chunks = page_groups[page_number]
@@ -273,10 +274,22 @@ class EnhancedDocumentChunker:
                 for page_idx, chunk_dict in enumerate(page_chunks):
                     try:
                         chunk_text = chunk_dict['text']
-                        page_number = chunk_dict.get('page_number', page_number)
+                        chunk_metadata = chunk_dict.get('metadata') or {}
+                        page_number = chunk_dict.get('page_number') or chunk_metadata.get('page_number') or page_number or 1
                         
                         # ✅ IDEMPOTENCY FIX: Check if this detail chunk already exists
                         chunk_content_hash = hashlib.md5(chunk_text.encode()).hexdigest()
+                        persisted_metadata = {
+                            **chunk_metadata,
+                            'start_char': chunk_dict.get('start_char', chunk_metadata.get('start_char', 0)),
+                            'end_char': chunk_dict.get('end_char', chunk_metadata.get('end_char', 0)),
+                            'line_start': chunk_dict.get('line_start', chunk_metadata.get('line_start')),
+                            'line_end': chunk_dict.get('line_end', chunk_metadata.get('line_end')),
+                            'hierarchy_level': 2,
+                            'page_container_id': str(page_container.id) if page_container else None,
+                            'content_hash': chunk_content_hash,
+                            'source': 'enhanced_chunker'
+                        }
                         
                         chunk_obj, created = DocumentChunk.objects.get_or_create(
                             document_id=document_id,
@@ -289,14 +302,7 @@ class EnhancedDocumentChunker:
                                 'token_count': chunk_dict.get('token_count', self.base_chunker._estimate_token_count(chunk_text)),
                                 'parent_node': page_container,
                                 'prev_chunk': prev_chunk_obj,
-                                'metadata': {
-                                    'start_char': chunk_dict.get('start_char', 0),
-                                    'end_char': chunk_dict.get('end_char', 0),
-                                    'hierarchy_level': 2,
-                                    'page_container_id': str(page_container.id) if page_container else None,
-                                    'content_hash': chunk_content_hash,
-                                    'source': 'enhanced_chunker'
-                                }
+                                'metadata': persisted_metadata
                             }
                         )
 
@@ -324,6 +330,9 @@ class EnhancedDocumentChunker:
                                     'chunk_id': str(chunk_obj.id),
                                     'page_number': page_number,
                                     'page_index': chunk_dict.get('page_index', page_idx),
+                                    'sheet_name': persisted_metadata.get('sheet_name'),
+                                    'row_start': persisted_metadata.get('row_start'),
+                                    'row_end': persisted_metadata.get('row_end'),
                                     'text_preview': chunk_text[:200],
                                     'node_type': 'detail',
                                 }
@@ -377,6 +386,7 @@ class EnhancedDocumentChunker:
                             'page_index': chunk_dict.get('page_index', page_idx),
                             'parent_node_id': str(page_container.id) if page_container else None,
                             'text': chunk_text,
+                            'metadata': chunk_obj.metadata or persisted_metadata,
                         })
 
                         prev_chunk_obj = chunk_obj

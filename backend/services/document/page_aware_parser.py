@@ -18,6 +18,7 @@ import logging
 import re
 from typing import List, Dict, Tuple, Optional, Any
 from pathlib import Path
+from datetime import date, datetime
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,11 @@ class PageBoundary:
 
 class PageAwareText:
     """Text with explicit page mapping."""
-    def __init__(self, text: str, boundaries: List[PageBoundary], total_pages: int):
+    def __init__(self, text: str, boundaries: List[PageBoundary], total_pages: int, metadata: Optional[Dict[str, Any]] = None):
         self.text = text
         self.boundaries = sorted(boundaries, key=lambda b: b.char_start)
         self.total_pages = total_pages
+        self.metadata = metadata or {}
 
         # Fill end positions so page lookup works reliably.
         for index, boundary in enumerate(self.boundaries):
@@ -271,6 +273,7 @@ class PageAwareParserEnhancer:
         """
         try:
             import openpyxl
+            from openpyxl.utils import get_column_letter
             
             workbook = openpyxl.load_workbook(file_path, data_only=True)
             
@@ -278,6 +281,11 @@ class PageAwareParserEnhancer:
             page_num = 1
             boundaries = []
             char_pos = 0
+            sheet_stats = []
+            total_non_empty_rows = 0
+            total_non_empty_cells = 0
+            total_merged_ranges = 0
+            total_embedded_images = 0
             
             for sheet in workbook.sheetnames:
                 ws = workbook[sheet]
@@ -287,22 +295,156 @@ class PageAwareParserEnhancer:
                 text_parts.append(sheet_header)
                 boundaries.append(PageBoundary(page_num, char_pos))
                 char_pos += len(sheet_header)
-                
-                # Extract cell values
-                for row in ws.iter_rows(values_only=True):
-                    row_text = " | ".join(str(cell) if cell else "" for cell in row) + "\n"
+
+                min_row, max_row, min_col, max_col = self._excel_used_bounds(ws)
+                if min_row is None:
+                    sheet_stats.append({
+                        "sheet_name": sheet,
+                        "page_number": page_num,
+                        "non_empty_rows": 0,
+                        "non_empty_cells": 0,
+                        "max_row": 0,
+                        "max_col": 0,
+                        "merged_ranges": 0,
+                        "embedded_images": 0,
+                    })
+                    empty_text = "(empty sheet)\n\n"
+                    text_parts.append(empty_text)
+                    char_pos += len(empty_text)
+                    page_num += 1
+                    continue
+
+                merge_ranges = [str(merge_range) for merge_range in ws.merged_cells.ranges]
+                total_merged_ranges += len(merge_ranges)
+                if merge_ranges:
+                    merge_text = f"Merged cells: {', '.join(merge_ranges)}\n\n"
+                    text_parts.append(merge_text)
+                    char_pos += len(merge_text)
+
+                image_cells = []
+                for image in getattr(ws, "_images", []) or []:
+                    marker = getattr(getattr(image, "anchor", None), "_from", None)
+                    if marker is not None:
+                        image_cells.append(f"{get_column_letter(marker.col + 1)}{marker.row + 1}")
+                total_embedded_images += len(image_cells)
+                if image_cells:
+                    image_text = f"Embedded images anchored at: {', '.join(image_cells)}\n\n"
+                    text_parts.append(image_text)
+                    char_pos += len(image_text)
+
+                col_letters = [get_column_letter(col_idx) for col_idx in range(min_col, max_col + 1)]
+                header_cells = ["Excel row"] + col_letters
+                separator_cells = ["---"] * len(header_cells)
+                header_text = "| " + " | ".join(header_cells) + " |\n"
+                separator_text = "| " + " | ".join(separator_cells) + " |\n"
+                text_parts.append(header_text)
+                text_parts.append(separator_text)
+                char_pos += len(header_text) + len(separator_text)
+
+                for row_idx in range(min_row, max_row + 1):
+                    row_values = [str(row_idx)]
+                    has_content = False
+                    row_non_empty_cells = 0
+                    for col_idx in range(min_col, max_col + 1):
+                        value = self._format_excel_cell(ws.cell(row=row_idx, column=col_idx).value)
+                        if value:
+                            has_content = True
+                            row_non_empty_cells += 1
+                        row_values.append(value)
+
+                    if not has_content:
+                        continue
+                    total_non_empty_rows += 1
+                    total_non_empty_cells += row_non_empty_cells
+
+                    row_text = "| " + " | ".join(row_values) + " |\n"
                     text_parts.append(row_text)
                     char_pos += len(row_text)
+
+                text_parts.append("\n")
+                char_pos += 1
+                sheet_stats.append({
+                    "sheet_name": sheet,
+                    "page_number": page_num,
+                    "non_empty_rows": sum(
+                        1
+                        for row_idx in range(min_row, max_row + 1)
+                        if any(ws.cell(row=row_idx, column=col_idx).value is not None for col_idx in range(min_col, max_col + 1))
+                    ),
+                    "non_empty_cells": sum(
+                        1
+                        for row_idx in range(min_row, max_row + 1)
+                        for col_idx in range(min_col, max_col + 1)
+                        if ws.cell(row=row_idx, column=col_idx).value is not None
+                    ),
+                    "max_row": max_row,
+                    "max_col": max_col,
+                    "merged_ranges": len(merge_ranges),
+                    "embedded_images": len(image_cells),
+                })
                 
                 page_num += 1
             
             text = "".join(text_parts)
             
-            return PageAwareText(text, boundaries, page_num - 1)
+            spreadsheet_metadata = {
+                "content_format": "spreadsheet_markdown",
+                "sheet_count": len(workbook.sheetnames),
+                "total_non_empty_rows": total_non_empty_rows,
+                "total_non_empty_cells": total_non_empty_cells,
+                "total_merged_ranges": total_merged_ranges,
+                "total_embedded_images": total_embedded_images,
+                "sheets": sheet_stats,
+            }
+
+            return PageAwareText(text, boundaries, page_num - 1, metadata=spreadsheet_metadata)
         
         except Exception as e:
             logger.error(f"Error in Excel page-aware parsing: {str(e)}")
             return None
+
+    def _excel_used_bounds(self, ws):
+        """Return used worksheet bounds including merged cells and image anchors."""
+        min_row = min_col = None
+        max_row = max_col = None
+
+        def include_cell(row_idx: int, col_idx: int):
+            nonlocal min_row, min_col, max_row, max_col
+            min_row = row_idx if min_row is None else min(min_row, row_idx)
+            max_row = row_idx if max_row is None else max(max_row, row_idx)
+            min_col = col_idx if min_col is None else min(min_col, col_idx)
+            max_col = col_idx if max_col is None else max(max_col, col_idx)
+
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    include_cell(cell.row, cell.column)
+
+        for merge_range in ws.merged_cells.ranges:
+            for row_idx in (merge_range.min_row, merge_range.max_row):
+                for col_idx in (merge_range.min_col, merge_range.max_col):
+                    include_cell(row_idx, col_idx)
+
+        for image in getattr(ws, "_images", []) or []:
+            marker = getattr(getattr(image, "anchor", None), "_from", None)
+            if marker is not None:
+                include_cell(marker.row + 1, marker.col + 1)
+
+        return min_row, max_row, min_col, max_col
+
+    def _format_excel_cell(self, value: Any) -> str:
+        """Format an Excel cell value for markdown-table chunks."""
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        if isinstance(value, date):
+            return value.strftime("%Y-%m-%d")
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        text = str(value).replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        return text.replace("|", "\\|")
     
     def enhance_text(self, file_path: str) -> Optional[PageAwareText]:
         """

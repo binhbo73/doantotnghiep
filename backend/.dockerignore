@@ -41,6 +41,8 @@ logs/
 postgres_data/
 mongodb_data/
 chroma_data/
+qdrant_data/
+redis_data/
 
 # Frontend build
 dist/
@@ -50,6 +52,29 @@ out/
 
 # Uploads
 uploads/
+media/
+staticfiles/
+
+# Caches and local artifacts
+.cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage.xml
+.coverage
+tmp/
+temp/
+
+# Large model/checkpoint files should be mounted, not copied into images
+models/
+*.gguf
+*.bin
+*.onnx
+*.weights
+*.h5
+*.pth
+*.pt
+*.pkl
 
 # OS
 Thumbs.db

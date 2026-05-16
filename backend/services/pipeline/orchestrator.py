@@ -20,6 +20,7 @@ from .stages import (
     SummarizationStage,
     PersistenceStage
 )
+from .asset_stage import AssetPipelineStage
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class DocumentIngestPipeline:
             ValidationStage(name="validation"),
             ParsingStage(name="parsing"),
             ChunkingStage(name="chunking"),
+            AssetPipelineStage(name="asset_extraction"),
             SummarizationStage(name="summarization"),
             PersistenceStage(name="persistence"),
         ]
@@ -46,30 +48,7 @@ class DocumentIngestPipeline:
         document_id: Optional[str] = None,
         metadata: Optional[dict] = None
     ) -> tuple[bool, PipelineContext]:
-        """Execute document ingestion pipeline.
-        
-        Args:
-            file_path: Path to uploaded file
-            user_id: User ID performing upload
-            document_id: Optional existing document ID to update
-            metadata: Optional additional metadata
-        
-        Returns:
-            (success: bool, context: PipelineContext)
-        
-        Example:
-            pipeline = DocumentIngestPipeline()
-            success, context = pipeline.execute(
-                file_path="/tmp/document.pdf",
-                user_id="user123"
-            )
-            
-            if success:
-                print(f"Uploaded as document {context.document_id}")
-            else:
-                print(f"Errors: {context.errors}")
-        """
-        # Create context
+        """Execute document ingestion pipeline."""
         context = PipelineContext(
             file_path=file_path,
             document_id=document_id or str(uuid.uuid4()),
@@ -83,10 +62,8 @@ class DocumentIngestPipeline:
             f"Starting pipeline: file={file_path}, user={user_id}"
         )
         
-        # Execute
         success = self.orchestrator.execute(context)
         
-        # Log results
         if success:
             self.logger.info(
                 f"Pipeline succeeded. "
@@ -135,14 +112,7 @@ class DocumentIngestPipeline:
         context.document_id = str(doc.id)
 
     def get_stage_status(self, stage_name: str) -> Optional[dict]:
-        """Get status of a specific stage.
-        
-        Args:
-            stage_name: Name of stage
-        
-        Returns:
-            Stage info or None if not found
-        """
+        """Get status of a specific stage."""
         stage = self.orchestrator.get_stage(stage_name)
         if stage:
             return {
@@ -152,11 +122,7 @@ class DocumentIngestPipeline:
         return None
 
     def list_stages(self) -> list[dict]:
-        """List all pipeline stages.
-        
-        Returns:
-            List of stage info dicts
-        """
+        """List all pipeline stages."""
         return [
             {
                 "name": stage.name,
@@ -172,6 +138,7 @@ __all__ = [
     'PipelineOrchestrator',
     'ValidationStage',
     'ParsingStage',
+    'AssetPipelineStage',
     'ChunkingStage',
     'SummarizationStage',
     'PersistenceStage',

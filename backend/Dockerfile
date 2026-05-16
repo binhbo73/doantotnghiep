@@ -19,17 +19,27 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Cài đặt các package hệ thống cần thiết cho docling/opencv
+# Cài đặt các package hệ thống cần thiết cho docling/opencv + OCR + image processing
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     default-jre-headless \
     libreoffice-writer \
+    tesseract-ocr \
+    tesseract-ocr-vie \
+    tesseract-ocr-eng \
+    poppler-utils \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
     libxrender1 \
+    libgomp1 \
+    libjpeg62-turbo \
+    libpng16-16 \
+    libtiff6 \
+    libwebp7 \
+    libopenjp2-7 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages từ builder
@@ -43,8 +53,8 @@ ENV PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbi
 # Copy application code
 COPY . .
 
-# Tạo thư mục logs, uploads, static files
-RUN mkdir -p logs uploads chroma_data staticfiles media
+# Tạo thư mục logs, uploads, static files, media, models
+RUN mkdir -p logs uploads chroma_data staticfiles media media/document_assets
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

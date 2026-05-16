@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.postgres.indexes import GinIndex
 from django.contrib.postgres.search import SearchVectorField
 from apps.users.models import Account, Department
 from core.models import BaseModel
@@ -244,7 +245,7 @@ class DocumentChunk(BaseModel):
         blank=True,
         help_text="Additional metadata (position, heading, etc.)"
     )
-    search_vector = SearchVectorField(null=True, blank=True, help_text="FTS search vector for BM25 retrieval")
+    search_vector = SearchVectorField(null=True, blank=True, verbose_name="FTS Search Vector")
 
     class Meta:
         db_table = "document_chunks"
@@ -258,6 +259,7 @@ class DocumentChunk(BaseModel):
             models.Index(fields=['prev_chunk_id'], name='idx_chunk_prev'),
             models.Index(fields=['next_chunk_id'], name='idx_chunk_next'),
             models.Index(fields=['is_deleted']),
+            GinIndex(fields=['search_vector'], name='docchunk_search_vec_gin'),
         ]
 
     def __str__(self):
@@ -469,3 +471,119 @@ class DocumentEmbedding(BaseModel):
     def __str__(self):
         return f"Embedding for chunk {self.chunk.chunk_index}"
 
+
+class DocumentAsset(BaseModel):
+    """
+    Ảnh / embedded object trích xuất từ tài liệu (PDF, DOCX, XLSX).
+
+    Mỗi asset chứa:
+    - Ảnh gốc (lưu file)
+    - Kết quả OCR từ Tesseract (text trong ảnh)
+    - Caption từ Qwen2.5-VL (mô tả ảnh bằng vision model)
+    - Vector embedding của caption (lưu trong Qdrant collection document_assets)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # ── Liên kết ────────────────────────────────────────────
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.CASCADE,
+        related_name='assets',
+        help_text="Tài liệu cha chứa asset này"
+    )
+    chunk = models.ForeignKey(
+        DocumentChunk,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assets',
+        help_text="DocumentChunk gần nhất chứa asset"
+    )
+
+    # ── Loại asset ──────────────────────────────────────────
+    asset_type = models.CharField(
+        max_length=50,
+        choices=[
+            ('pdf_embedded', 'PDF Embedded Image'),
+            ('pdf_page_render', 'PDF Page Render'),
+            ('docx_inline', 'DOCX Inline Image'),
+            ('docx_header', 'DOCX Header Image'),
+            ('xlsx_image', 'XLSX Embedded Image'),
+            ('xls_image', 'XLS Embedded Image'),
+            ('other', 'Other'),
+        ],
+        help_text="Loại asset (nguồn gốc)"
+    )
+
+    # ── Định vị trong tài liệu ─────────────────────────────
+    page_number = models.IntegerField(null=True, blank=True, help_text="Số trang (PDF) hoặc sheet index (Excel)")
+    sheet_name = models.CharField(max_length=255, null=True, blank=True, help_text="Tên sheet (Excel)")
+    anchor_cell = models.CharField(max_length=20, null=True, blank=True, help_text="Ô anchor Excel: G9, F8")
+    anchor_row = models.IntegerField(null=True, blank=True, help_text="Số dòng anchor trong Excel")
+    paragraph_index = models.IntegerField(null=True, blank=True, help_text="Thứ tự paragraph trong DOCX")
+    position_in_document = models.JSONField(default=dict, blank=True, help_text="{x, y, width, height} trên trang")
+
+    # ── File ảnh ───────────────────────────────────────────
+    image_path = models.TextField(help_text="Đường dẫn: media/document_assets/{doc_id}/...")
+    image_format = models.CharField(max_length=10, default='png', help_text="png, jpg, webp")
+    image_width = models.IntegerField(null=True, blank=True, help_text="Chiều rộng pixels")
+    image_height = models.IntegerField(null=True, blank=True, help_text="Chiều cao pixels")
+    image_size_bytes = models.IntegerField(default=0, help_text="Kích thước file bytes")
+
+    # ── OCR ────────────────────────────────────────────────
+    ocr_text = models.TextField(null=True, blank=True, help_text="Kết quả OCR từ Tesseract")
+    ocr_confidence = models.FloatField(null=True, blank=True, help_text="Độ tin cậy OCR trung bình (0-100)")
+    ocr_language = models.CharField(max_length=20, default='vie', help_text="vie, eng, vie+eng")
+
+    # ── Caption (VL model) ─────────────────────────────────
+    caption = models.TextField(null=True, blank=True, help_text="Caption từ Qwen2.5-VL: mô tả nội dung ảnh")
+    caption_model = models.CharField(max_length=100, default='qwen25-vl-3b', help_text="Model tạo caption")
+    caption_raw_response = models.TextField(null=True, blank=True, help_text="Response gốc từ VL model")
+
+    # ── Context xung quanh ảnh ─────────────────────────────
+    context_text = models.TextField(null=True, blank=True, help_text="Text xung quanh ảnh (paragraph/sheet/row)")
+    context_range = models.JSONField(default=dict, blank=True, help_text="{start_char, end_char}")
+
+    # ── Embedding ──────────────────────────────────────────
+    caption_embedding_id = models.CharField(max_length=255, null=True, blank=True, help_text="Vector ID trong Qdrant (collection: document_assets)")
+    embedding_model = models.CharField(max_length=100, default='bge-m3', help_text="Model embed caption")
+    embedding_dimension = models.IntegerField(default=1024, help_text="Số chiều vector embedding")
+
+    # ── Trạng thái xử lý ──────────────────────────────────
+    processing_status = models.CharField(
+        max_length=50, default='pending',
+        choices=[
+            ('pending', 'Pending'),
+            ('extracted', 'Extracted'),
+            ('ocr_done', 'OCR Done'),
+            ('captioned', 'Captioned'),
+            ('embedded', 'Embedded'),
+            ('failed', 'Failed'),
+        ],
+        help_text="Trạng thái xử lý asset"
+    )
+    processing_error = models.TextField(null=True, blank=True, help_text="Lỗi nếu failed")
+    processed_at = models.DateTimeField(null=True, blank=True, help_text="Thời điểm xử lý xong")
+
+    class Meta:
+        db_table = "document_assets"
+        verbose_name = "Document Asset"
+        verbose_name_plural = "Document Assets"
+        indexes = [
+            models.Index(fields=['document_id']),
+            models.Index(fields=['chunk_id']),
+            models.Index(fields=['asset_type']),
+            models.Index(fields=['processing_status']),
+            models.Index(fields=['page_number']),
+            models.Index(fields=['sheet_name', 'anchor_cell']),
+            models.Index(fields=['caption_embedding_id']),
+            models.Index(fields=['is_deleted']),
+        ]
+        ordering = ['page_number', 'paragraph_index']
+
+    def __str__(self):
+        location = (
+            f"Sheet={self.sheet_name}, Cell={self.anchor_cell}"
+            if self.sheet_name
+            else f"Page={self.page_number}"
+        )
+        return f"Asset {self.asset_type} at {location} of {self.document.original_name}"

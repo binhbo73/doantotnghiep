@@ -22,6 +22,22 @@ type CitationViewerPayload = {
     excerpt?: string
     description?: string
     url?: string
+    viewer_mode?: 'asset' | 'source'
+    asset_id?: string
+    asset_caption?: string
+    asset_image_path?: string
+    asset_page_number?: number | string
+    asset_sheet_name?: string
+    asset_anchor_cell?: string
+    asset?: {
+        id?: string
+        image_url?: string | null
+        thumbnail_url?: string | null
+        caption?: string | null
+        page_number?: number | null
+        sheet_name?: string | null
+        anchor_cell?: string | null
+    }
 }
 
 type SearchTextSource = 'chunk' | 'excerpt' | 'description' | 'answer_context' | 'none'
@@ -51,10 +67,22 @@ type CitationChunkSource = {
     content: string
     chunk_index?: number
     page_number?: number
+    sheet_name?: string
+    row_start?: number
+    row_end?: number
     start_char?: number
     end_char?: number
     line_start?: number
     line_end?: number
+}
+
+type DocumentAssetSource = {
+    id: string
+    sheet_name?: string | null
+    anchor_cell?: string | null
+    caption?: string | null
+    image_url?: string | null
+    thumbnail_url?: string | null
 }
 
 function normalizeForSectionMatch(value?: string) {
@@ -189,6 +217,11 @@ function getViewerLabel(kind?: ViewerKind): string {
     }
 }
 
+function normalizeApiEndpoint(endpoint?: string | null): string {
+    if (!endpoint) return ''
+    return endpoint.startsWith('/api/v1/') ? endpoint.slice('/api/v1'.length) : endpoint
+}
+
 function CitationViewerContent() {
     const searchParams = useSearchParams()
     const [viewer, setViewer] = useState<ViewerState | null>(null)
@@ -196,12 +229,15 @@ function CitationViewerContent() {
     const [pageCount, setPageCount] = useState(0)
     const [searchDebug, setSearchDebug] = useState<{ source: SearchTextSource, len: number, preview: string } | null>(null)
     const [chunkSource, setChunkSource] = useState<CitationChunkSource | null>(null)
+    const [documentAssets, setDocumentAssets] = useState<DocumentAssetSource[]>([])
+    const [isAssetsLoading, setIsAssetsLoading] = useState(true)
 
     const payload = useMemo<CitationViewerPayload>(() => {
         const storageKey = searchParams.get('key')
         if (storageKey && typeof window !== 'undefined') {
             try {
                 const raw = sessionStorage.getItem(storageKey)
+                console.log(`[CitationViewer] sessionStorage key=${storageKey}, raw payload:`, raw ? JSON.parse(raw) : 'NULL')
                 if (raw) return JSON.parse(raw)
             } catch (err) {
                 console.error('Failed to read citation payload:', err)
@@ -217,8 +253,14 @@ function CitationViewerContent() {
         }
     }, [searchParams])
 
+    const assetId = payload.asset_id || payload.asset?.id
+    const hasAsset = payload.type === 'asset' || Boolean(assetId)
+    const shouldOpenAssetImage = hasAsset && payload.viewer_mode !== 'source'
+
+    console.log(`[CitationViewer] Payload analysis: document_id=${payload.document_id}, type=${payload.type}, asset_id=${assetId}, hasAsset=${hasAsset}, viewer_mode=${payload.viewer_mode}, shouldOpenAssetImage=${shouldOpenAssetImage}`)
+
     useEffect(() => {
-        if (!payload.document_id || !payload.chunk_id) {
+        if (shouldOpenAssetImage || !payload.document_id || !payload.chunk_id) {
             setChunkSource(null)
             return
         }
@@ -251,7 +293,53 @@ function CitationViewerContent() {
         loadChunkSource()
 
         return () => controller.abort()
-    }, [payload.document_id, payload.chunk_id])
+    }, [shouldOpenAssetImage, payload.document_id, payload.chunk_id])
+
+    useEffect(() => {
+        if (shouldOpenAssetImage || !payload.document_id) {
+            setDocumentAssets([])
+            setIsAssetsLoading(false)
+            return
+        }
+
+        setIsAssetsLoading(true)
+        const controller = new AbortController()
+        const loadDocumentAssets = async () => {
+            try {
+                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/assets`), {
+                    headers: {
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    signal: controller.signal,
+                })
+
+                if (!response.ok) {
+                    setDocumentAssets([])
+                    return
+                }
+
+                const body = await response.json()
+                const data = body?.data || body
+                const assetsArray = Array.isArray(data) ? data : []
+                console.log(`[CitationViewer] Loaded ${assetsArray.length} assets for document ${payload.document_id}:`)
+                assetsArray.forEach((a, idx) => {
+                    console.log(`  [${idx}] id=${a.id}, type=${a.asset_type}, page=${a.page_number}, sheet=${a.sheet_name}, anchor=${a.anchor_cell}, image_url=${a.image_url}`)
+                })
+                setDocumentAssets(assetsArray)
+            } catch (err) {
+                if ((err as Error).name !== 'AbortError') {
+                    setDocumentAssets([])
+                }
+            } finally {
+                setIsAssetsLoading(false)
+            }
+        }
+
+        loadDocumentAssets()
+
+        return () => controller.abort()
+    }, [shouldOpenAssetImage, payload.document_id])
 
     const initialPage = Number(chunkSource?.page_number || payload.page || 1)
     const preferredCitationText = payload.answer_context || payload.excerpt || payload.description || ''
@@ -291,10 +379,92 @@ function CitationViewerContent() {
             preview: searchText.substring(0, 150).replace(/\n/g, ' ')
         } : null)
     }, [searchText, chunkText, payload])
-    const title = payload.title || 'Tai lieu nguon'
-    const guessedKind = classifyFileType(payload.type, title)
+    const title = payload.title || payload.asset_caption || payload.asset?.caption || 'Tai lieu nguon'
+    const guessedKind = shouldOpenAssetImage ? 'image' : classifyFileType(payload.type, title)
+    const excelAssetImages = useMemo(() => {
+        console.log(`[CitationViewer excelAssetImages] documentAssets:`, documentAssets)
+        const mapped = documentAssets.map((item) => ({
+            id: item.id,
+            sheetName: item.sheet_name || undefined,
+            anchorCell: item.anchor_cell || undefined,
+            imageEndpoint: item.image_url ? normalizeApiEndpoint(item.image_url) : `/assets/${item.id}/image`,
+            caption: item.caption || undefined,
+        }))
+
+        // If we have a payload asset but it's not in documentAssets, 
+        // we already handle finding a replacement in currentAsset.
+        // If NO documentAssets were loaded at all (e.g. error or empty), 
+        // and loading is finished, then we fallback to the payload asset.
+        if (!isAssetsLoading && mapped.length === 0 && hasAsset && assetId) {
+            mapped.push({
+                id: assetId,
+                sheetName: payload.asset_sheet_name || payload.asset?.sheet_name || undefined,
+                anchorCell: payload.asset_anchor_cell || payload.asset?.anchor_cell || undefined,
+                imageEndpoint: `/assets/${assetId}/image`,
+                caption: payload.asset_caption || payload.asset?.caption || payload.title,
+            })
+        }
+
+        return mapped
+    }, [assetId, documentAssets, hasAsset, payload, isAssetsLoading])
+
+    const currentAsset = useMemo(() => {
+        if (!hasAsset || !assetId) return undefined
+        
+        // If still loading, we shouldn't prematurely resolve to the stale ID
+        if (isAssetsLoading) return undefined
+        
+        // Try to find the actual asset from documentAssets first (more reliable IDs)
+        const targetSheet = payload.asset_sheet_name || payload.asset?.sheet_name
+        const targetAnchor = payload.asset_anchor_cell || payload.asset?.anchor_cell
+        
+        // Find if this specific assetId still exists in the document's assets
+        const exactMatch = documentAssets.find(a => a.id === assetId)
+        if (exactMatch) {
+            return {
+                id: exactMatch.id,
+                sheetName: exactMatch.sheet_name || undefined,
+                anchorCell: exactMatch.anchor_cell || undefined,
+                imageEndpoint: exactMatch.image_url ? normalizeApiEndpoint(exactMatch.image_url) : `/assets/${exactMatch.id}/image`,
+                caption: exactMatch.caption || undefined,
+            }
+        }
+
+        // If not found by ID, try to find a replacement at the same sheet/cell
+        if (targetSheet && targetAnchor) {
+            const anchorMatch = documentAssets.find(a => 
+                a.sheet_name === targetSheet && 
+                a.anchor_cell === targetAnchor
+            )
+            if (anchorMatch) {
+                console.log(`[CitationViewer] Found replacement for stale asset ${assetId} at ${targetSheet} ${targetAnchor}: ${anchorMatch.id}`)
+                return {
+                    id: anchorMatch.id,
+                    sheetName: anchorMatch.sheet_name || undefined,
+                    anchorCell: anchorMatch.anchor_cell || undefined,
+                    imageEndpoint: anchorMatch.image_url ? normalizeApiEndpoint(anchorMatch.image_url) : `/assets/${anchorMatch.id}/image`,
+                    caption: anchorMatch.caption || undefined,
+                }
+            }
+        }
+
+        // Fallback to what we have (might 404 if stale)
+        return {
+            id: assetId,
+            sheetName: targetSheet || undefined,
+            anchorCell: targetAnchor || undefined,
+            imageEndpoint: `/assets/${assetId}/image`,
+            caption: payload.asset_caption || payload.asset?.caption || payload.title,
+        }
+    }, [hasAsset, assetId, payload, documentAssets])
+
+    // Derived asset ID to use for fetching (fixed if stale)
+    const resolvedAssetId = currentAsset?.id || assetId
 
     useEffect(() => {
+        // Wait until assets are loaded before attempting to open an asset image
+        if (shouldOpenAssetImage && isAssetsLoading) return
+
         let objectUrl = ''
         const controller = new AbortController()
 
@@ -303,6 +473,35 @@ function CitationViewerContent() {
                 setError(null)
                 setViewer(null)
                 const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                if (shouldOpenAssetImage) {
+                    const assetEndpoint = resolvedAssetId ? `/assets/${resolvedAssetId}/image` : normalizeApiEndpoint(payload.asset?.image_url)
+                    const fallbackEndpoint = normalizeApiEndpoint(payload.asset?.thumbnail_url) || (resolvedAssetId ? `/assets/${resolvedAssetId}/thumbnail` : '')
+                    const endpoint = assetEndpoint || fallbackEndpoint
+                    if (!endpoint) {
+                        throw new Error('Khong co asset_id de mo anh minh chung')
+                    }
+
+                    const response = await fetch(buildApiUrl(endpoint), {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                        signal: controller.signal,
+                    })
+
+                    if (!response.ok) {
+                        throw new Error(`Khong the tai anh minh chung: ${response.status}`)
+                    }
+
+                    const blob = await response.blob()
+                    objectUrl = URL.createObjectURL(blob)
+                    setViewer({
+                        kind: 'image',
+                        fileUrl: objectUrl,
+                        fileType: response.headers.get('content-type') || 'image',
+                    })
+                    return
+                }
+
                 const endpoint = payload.url || (payload.document_id ? `/documents/${payload.document_id}/download` : '')
                 if (!endpoint) {
                     throw new Error('Khong co document_id de mo nguon')
@@ -371,7 +570,7 @@ function CitationViewerContent() {
             controller.abort()
             if (objectUrl) URL.revokeObjectURL(objectUrl)
         }
-    }, [payload.document_id, payload.type, payload.url, title])
+    }, [resolvedAssetId, shouldOpenAssetImage, payload, title, isAssetsLoading])
 
     return (
         <div className="flex h-screen flex-col bg-slate-100">
@@ -380,15 +579,21 @@ function CitationViewerContent() {
                     <h1 className="truncate text-base font-bold text-slate-900">{title}</h1>
                     <p className="mt-1 text-xs font-medium text-slate-500">
                         {getViewerLabel(viewer?.kind || guessedKind)}
+                        {hasAsset && (payload.asset_sheet_name || payload.asset?.sheet_name) && (
+                            <span className="ml-2 text-slate-600">Sheet {payload.asset_sheet_name || payload.asset?.sheet_name}</span>
+                        )}
+                        {hasAsset && (payload.asset_anchor_cell || payload.asset?.anchor_cell) && (
+                            <span className="ml-2 text-slate-600">cell {payload.asset_anchor_cell || payload.asset?.anchor_cell}</span>
+                        )}
                         {(viewer?.kind || guessedKind) === 'pdf' && ` - Trang ${initialPage || 1}${pageCount ? ` / ${pageCount}` : ''}`}
                         {targetLabel && <span className="ml-2 text-slate-600">Nguon: {targetLabel}</span>}
-                        {searchDebug ? (
+                        {!shouldOpenAssetImage && searchDebug ? (
                             <span className="ml-2 text-green-600">
                                 Tim: {searchDebug.source} ({searchDebug.len} ky tu)
                             </span>
-                        ) : (
+                        ) : !shouldOpenAssetImage ? (
                             <span className="ml-2 text-red-500">Khong co noi dung tim kiem</span>
-                        )}
+                        ) : null}
                     </p>
                 </div>
                 <button
@@ -439,12 +644,24 @@ function CitationViewerContent() {
                 )}
 
                 {!error && viewer?.kind === 'excel' && (
-                    <ExcelViewer
-                        fileUrl={viewer.fileUrl}
-                        searchText={searchText}
-                        onLoadSuccess={() => setPageCount(0)}
-                        onLoadError={(err) => setError(err.message)}
-                    />
+                    <>
+                        {console.log(`[CitationViewer] Rendering ExcelViewer with ${excelAssetImages.length} assetImages and currentAsset:`, currentAsset)}
+                        {isAssetsLoading ? (
+                            <div className="flex h-full items-center justify-center p-8 text-sm font-medium text-slate-500">
+                                Dang dong bo hinh anh...
+                            </div>
+                        ) : (
+                            <ExcelViewer
+                                fileUrl={viewer.fileUrl}
+                                searchText={searchText}
+                                initialSheet={initialPage}
+                                assetImage={currentAsset}
+                                assetImages={excelAssetImages}
+                                onLoadSuccess={() => setPageCount(0)}
+                                onLoadError={(err) => setError(err.message)}
+                            />
+                        )}
+                    </>
                 )}
 
                 {!error && viewer?.kind === 'image' && (

@@ -39,6 +39,21 @@ export interface CitationDTO {
     score?: number
     url?: string
     type?: string
+    asset_id?: string
+    asset_caption?: string
+    asset_image_path?: string
+    asset_page_number?: number | string
+    asset_sheet_name?: string
+    asset_anchor_cell?: string
+    asset?: {
+        id: string
+        image_url?: string | null
+        thumbnail_url?: string | null
+        caption?: string | null
+        page_number?: number | null
+        sheet_name?: string | null
+        anchor_cell?: string | null
+    }
 }
 
 export interface SendMessageRequest {

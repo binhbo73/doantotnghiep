@@ -30,7 +30,7 @@ Usage:
 import logging
 import re
 from bisect import bisect_right
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from django.conf import settings
 from django.apps import apps
 from core.exceptions import DocumentProcessingError
@@ -198,6 +198,9 @@ class DocumentChunker:
             file_type = (merged_metadata.get('file_type') or '').lower()
             self._apply_chunk_profile(file_type)
 
+            if self._is_spreadsheet_file_type(file_type):
+                return self._chunk_spreadsheet_text(text, merged_metadata)
+
             word_spans = self._build_word_spans(text)
 
             # Fallback to char windows when text has no word spans (edge cases)
@@ -273,6 +276,8 @@ class DocumentChunker:
             merged_metadata = metadata or {}
             file_type = (merged_metadata.get('file_type') or '').lower()
             self._apply_chunk_profile(file_type)
+            if self._is_spreadsheet_file_type(file_type):
+                return self._chunk_spreadsheet_text(text, merged_metadata)
             
             logger.info(
                 f"🔍 [CHUNK_BY_PAGES] Starting hierarchical chunking\n"
@@ -590,26 +595,7 @@ class DocumentChunker:
     def _apply_chunk_profile(self, file_type: str) -> None:
         """Select a file-type-aware chunk profile, keeping a safe default for unknown inputs."""
         normalized = (file_type or '').lower().strip()
-        
-        # Handle both MIME types and file extensions
-        mime_to_ext = {
-            'application/pdf': 'pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
-            'application/msword': 'doc',
-            'text/plain': 'txt',
-            'text/markdown': 'md',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
-            'application/vnd.ms-excel': 'xls',
-        }
-        
-        # Convert MIME to extension if needed, or use as-is if already extension
-        if normalized in mime_to_ext:
-            ext = mime_to_ext[normalized]
-        elif normalized in mime_to_ext.values():
-            ext = normalized
-        else:
-            # Try to extract extension
-            ext = normalized.split('.')[-1] if '.' in normalized else normalized
+        ext = self._normalize_file_extension(normalized)
 
         if ext == 'pdf':
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 160)
@@ -644,6 +630,176 @@ class DocumentChunker:
         logger.info(
             f"Chunk profile selected: file_type={normalized} (ext={ext}), strategy={self.strategy_name}"
         )
+
+    def _normalize_file_extension(self, file_type: str) -> str:
+        """Normalize a MIME type or extension into a short extension label."""
+        normalized = (file_type or '').lower().strip()
+        mime_to_ext = {
+            'application/pdf': 'pdf',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'application/msword': 'doc',
+            'text/plain': 'txt',
+            'text/markdown': 'md',
+            'text/csv': 'csv',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+            'application/vnd.ms-excel': 'xls',
+        }
+
+        if normalized in mime_to_ext:
+            return mime_to_ext[normalized]
+        if normalized in mime_to_ext.values():
+            return normalized
+        return normalized.split('.')[-1] if '.' in normalized else normalized
+
+    def _is_spreadsheet_file_type(self, file_type: str) -> bool:
+        return self._normalize_file_extension(file_type) in {'xlsx', 'xls', 'csv'}
+
+    def _chunk_spreadsheet_text(self, text: str, metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Chunk spreadsheet markdown by complete table rows, preserving headers."""
+        lines = text.splitlines()
+        if not lines:
+            return []
+
+        line_offsets = []
+        cursor = 0
+        for line in lines:
+            line_offsets.append(cursor)
+            cursor += len(line) + 1
+
+        sheet_pattern = re.compile(r'^--- Sheet:\s*(.*?)\s*\(Page\s*(\d+)\)\s*---$')
+        sheet_starts = [idx for idx, line in enumerate(lines) if sheet_pattern.match(line.strip())]
+        if not sheet_starts:
+            sheet_starts = [0]
+
+        result_chunks = []
+        sequence = 0
+        overlap_rows = min(2, max(0, self.chunk_overlap // 80))
+
+        for sheet_order, start_line in enumerate(sheet_starts):
+            end_line = sheet_starts[sheet_order + 1] if sheet_order + 1 < len(sheet_starts) else len(lines)
+            sheet_lines = lines[start_line:end_line]
+            sheet_match = sheet_pattern.match(lines[start_line].strip()) if start_line < len(lines) else None
+            sheet_name = sheet_match.group(1).strip() if sheet_match else metadata.get('source_name', 'Sheet')
+            page_number = int(sheet_match.group(2)) if sheet_match else int(metadata.get('page_number') or 1)
+
+            table_header_index = None
+            for local_idx, line in enumerate(sheet_lines):
+                if line.startswith('|') and 'Excel row' in line:
+                    table_header_index = local_idx
+                    break
+
+            if table_header_index is None:
+                sheet_text = "\n".join(sheet_lines).strip()
+                if not sheet_text:
+                    continue
+                start_char = line_offsets[start_line]
+                end_char = line_offsets[end_line - 1] + len(lines[end_line - 1]) if end_line > start_line else start_char + len(sheet_text)
+                result_chunks.append({
+                    'text': sheet_text,
+                    'start_char': start_char,
+                    'end_char': end_char,
+                    'token_start': 0,
+                    'token_end': len(sheet_text.split()),
+                    'token_count': self._estimate_token_count(sheet_text),
+                    'metadata': {
+                        **metadata,
+                        'page_number': page_number,
+                        'sheet_name': sheet_name,
+                        'content_format': 'spreadsheet_markdown',
+                    },
+                    'sequence': sequence,
+                    'page_number': page_number,
+                    'line_start': start_line + 1,
+                    'line_end': end_line,
+                })
+                sequence += 1
+                continue
+
+            header_local_end = min(table_header_index + 2, len(sheet_lines))
+            sheet_context = [
+                line for line in sheet_lines[:table_header_index]
+                if line.strip().startswith('--- Sheet:')
+            ]
+            repeated_header = sheet_context + [
+                line for line in sheet_lines[table_header_index:header_local_end]
+                if line.strip()
+            ]
+            data_local_indices = [
+                idx for idx in range(header_local_end, len(sheet_lines))
+                if self._spreadsheet_row_number(sheet_lines[idx]) is not None
+            ]
+
+            if not data_local_indices:
+                continue
+
+            chunk_start_pos = 0
+            while chunk_start_pos < len(data_local_indices):
+                chunk_data_indices = []
+                token_total = self._estimate_token_count("\n".join(repeated_header))
+                pos = chunk_start_pos
+
+                while pos < len(data_local_indices):
+                    local_idx = data_local_indices[pos]
+                    row_tokens = self._estimate_token_count(sheet_lines[local_idx])
+                    if chunk_data_indices and token_total + row_tokens > self.chunk_size:
+                        break
+                    chunk_data_indices.append(local_idx)
+                    token_total += row_tokens
+                    pos += 1
+
+                if not chunk_data_indices:
+                    chunk_data_indices.append(data_local_indices[pos])
+                    pos += 1
+
+                chunk_lines = repeated_header + [sheet_lines[idx] for idx in chunk_data_indices]
+                chunk_text = "\n".join(chunk_lines).strip()
+                first_global_line = start_line + chunk_data_indices[0]
+                last_global_line = start_line + chunk_data_indices[-1]
+                start_char = line_offsets[first_global_line]
+                end_char = line_offsets[last_global_line] + len(lines[last_global_line])
+                row_numbers = [
+                    self._spreadsheet_row_number(sheet_lines[idx])
+                    for idx in chunk_data_indices
+                ]
+                row_numbers = [row for row in row_numbers if row is not None]
+
+                result_chunks.append({
+                    'text': chunk_text,
+                    'start_char': start_char,
+                    'end_char': end_char,
+                    'token_start': 0,
+                    'token_end': len(chunk_text.split()),
+                    'token_count': self._estimate_token_count(chunk_text),
+                    'metadata': {
+                        **metadata,
+                        'page_number': page_number,
+                        'sheet_name': sheet_name,
+                        'row_start': min(row_numbers) if row_numbers else None,
+                        'row_end': max(row_numbers) if row_numbers else None,
+                        'line_start': first_global_line + 1,
+                        'line_end': last_global_line + 1,
+                        'content_format': 'spreadsheet_markdown',
+                    },
+                    'sequence': sequence,
+                    'page_number': page_number,
+                    'line_start': first_global_line + 1,
+                    'line_end': last_global_line + 1,
+                })
+                sequence += 1
+
+                if pos >= len(data_local_indices):
+                    break
+                chunk_start_pos = max(pos - overlap_rows, chunk_start_pos + 1)
+
+        logger.info(
+            f"Chunked spreadsheet into {len(result_chunks)} row-preserving chunks "
+            f"(strategy={self.strategy_name})"
+        )
+        return result_chunks
+
+    def _spreadsheet_row_number(self, line: str) -> Optional[int]:
+        match = re.match(r'^\|\s*(\d+)\s*\|', line or '')
+        return int(match.group(1)) if match else None
     
     def _build_word_spans(self, text: str) -> List[tuple[int, int]]:
         """Return exact character spans for token-like units (non-whitespace sequences)."""

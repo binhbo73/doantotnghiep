@@ -33,6 +33,24 @@ export interface Message {
         score?: number
         url?: string
         type?: string
+        document_title?: string
+        document_file_type?: string
+        viewer_mode?: 'asset' | 'source'
+        asset_id?: string
+        asset_caption?: string
+        asset_image_path?: string
+        asset_page_number?: number | string
+        asset_sheet_name?: string
+        asset_anchor_cell?: string
+        asset?: {
+            id: string
+            image_url?: string | null
+            thumbnail_url?: string | null
+            caption?: string | null
+            page_number?: number | null
+            sheet_name?: string | null
+            anchor_cell?: string | null
+        }
     }[]
     timestamp?: Date
     isLoading?: boolean
@@ -40,10 +58,56 @@ export interface Message {
 
 type Citation = NonNullable<Message['citations']>[number]
 
+const normalizeApiEndpoint = (endpoint?: string | null) => {
+    if (!endpoint) return ''
+    return endpoint.startsWith('/api/v1/') ? endpoint.slice('/api/v1'.length) : endpoint
+}
+
+const getAssetId = (citation: Citation) => citation.asset_id || citation.asset?.id
+
+const getAssetImageEndpoint = (citation: Citation) => {
+    const assetId = getAssetId(citation)
+    if (assetId) return `/assets/${assetId}/image`
+    return normalizeApiEndpoint(citation.asset?.image_url)
+}
+
+const getAssetThumbnailEndpoint = (citation: Citation) => {
+    const assetId = getAssetId(citation)
+    if (assetId) return `/assets/${assetId}/thumbnail`
+    return normalizeApiEndpoint(citation.asset?.thumbnail_url)
+}
+
+const getAssetCaption = (citation: Citation) => (
+    citation.asset_caption || citation.asset?.caption || citation.description || citation.title || 'Anh minh chung'
+)
+
+const getAssetLocation = (citation: Citation) => {
+    const parts: string[] = []
+    const sheet = citation.asset_sheet_name || citation.asset?.sheet_name
+    const cell = citation.asset_anchor_cell || citation.asset?.anchor_cell
+    const page = citation.asset_page_number || citation.asset?.page_number || citation.page
+    if (sheet) parts.push(`Sheet ${sheet}`)
+    if (cell) parts.push(`cell ${cell}`)
+    if (page) parts.push(`Trang ${page}`)
+    return parts.join(', ')
+}
+
 const getCitationNumber = (citation: Citation, index: number) => String(citation.number || citation.id || index + 1)
 
 const getCitationMeta = (citation: Citation) => {
     const parts: string[] = []
+    if (citation.type === 'asset') {
+        if (citation.asset_sheet_name || citation.asset?.sheet_name) {
+            parts.push(`Sheet ${citation.asset_sheet_name || citation.asset?.sheet_name}`)
+        }
+        if (citation.asset_anchor_cell || citation.asset?.anchor_cell) {
+            parts.push(`cell ${citation.asset_anchor_cell || citation.asset?.anchor_cell}`)
+        }
+        if (citation.asset_page_number || citation.asset?.page_number) {
+            parts.push(`Trang ${citation.asset_page_number || citation.asset?.page_number}`)
+        }
+        return parts.join(', ')
+    }
     if (citation.page) parts.push(`Trang ${citation.page}`)
     if (citation.line_start) {
         parts.push(citation.line_end && citation.line_end !== citation.line_start ? `dong ${citation.line_start}-${citation.line_end}` : `dong ${citation.line_start}`)
@@ -89,7 +153,15 @@ const openCitationSource = async (citation: Citation) => {
 
     if (citation.document_id && typeof window !== 'undefined') {
         const key = `citation-source-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        sessionStorage.setItem(key, JSON.stringify(citation))
+        const sourceCitation = citation.type === 'asset'
+            ? {
+                ...citation,
+                title: citation.document_title || citation.source_label || citation.title,
+                type: citation.document_file_type || undefined,
+                viewer_mode: 'source',
+            }
+            : citation
+        sessionStorage.setItem(key, JSON.stringify(sourceCitation))
         window.open(`/dashboard/citation-viewer?key=${encodeURIComponent(key)}`, '_blank')
         return
     }
@@ -117,6 +189,26 @@ const openCitationSource = async (citation: Citation) => {
         window.open(`${objectUrl}${pageSuffix}`, '_blank', 'noopener,noreferrer')
     }
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+}
+
+const openAssetImage = (citation: Citation) => {
+    if (typeof window === 'undefined') return
+    const assetId = getAssetId(citation)
+    if (!assetId) return
+
+    const key = `citation-asset-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    sessionStorage.setItem(key, JSON.stringify({
+        ...citation,
+        type: 'asset',
+        asset_id: assetId,
+        asset: {
+            ...(citation.asset || {}),
+            id: assetId,
+            image_url: `/api/v1/assets/${assetId}/image`,
+            thumbnail_url: `/api/v1/assets/${assetId}/thumbnail`,
+        },
+    }))
+    window.open(`/dashboard/citation-viewer?key=${encodeURIComponent(key)}`, '_blank')
 }
 
 const getCitationAnswerContext = (content: string, citation: Citation, index: number) => {
@@ -267,6 +359,102 @@ const renderHighlightedExcerpt = (text: string, citation: Citation) => {
     }
 
     return nodes
+}
+
+function AuthenticatedInlineAssetImage({ citation }: { citation: Citation }) {
+    const endpoint = getAssetImageEndpoint(citation) || getAssetThumbnailEndpoint(citation)
+    const [src, setSrc] = useState<string | null>(null)
+    const [failed, setFailed] = useState(false)
+
+    useEffect(() => {
+        if (!endpoint) return
+        let objectUrl: string | null = null
+        let cancelled = false
+
+        const load = async () => {
+            try {
+                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const response = await fetch(buildApiUrl(endpoint), {
+                    headers: {
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                })
+                if (!response.ok) throw new Error(`Cannot load asset image: ${response.status}`)
+                const blob = await response.blob()
+                objectUrl = URL.createObjectURL(blob)
+                if (!cancelled) setSrc(objectUrl)
+            } catch {
+                if (!cancelled) setFailed(true)
+            }
+        }
+
+        load()
+        return () => {
+            cancelled = true
+            if (objectUrl) URL.revokeObjectURL(objectUrl)
+        }
+    }, [endpoint])
+
+    if (!endpoint || failed) {
+        return (
+            <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-900/50">
+                Khong tai duoc anh minh chung
+            </div>
+        )
+    }
+
+    if (!src) {
+        return <div className="h-56 animate-pulse rounded-lg bg-slate-200 dark:bg-slate-700" />
+    }
+
+    return (
+        <button
+            type="button"
+            onClick={() => openAssetImage(citation)}
+            className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-primary/40 dark:border-slate-700 dark:bg-slate-900/40"
+            title="Mo anh lon"
+        >
+            <img
+                src={src}
+                alt={getAssetCaption(citation)}
+                className="max-h-[520px] w-full object-contain"
+            />
+        </button>
+    )
+}
+
+function InlineAssetGallery({ citations = [], messageContent = '' }: { citations?: Citation[], messageContent?: string }) {
+    const assets = citations
+        .filter((citation) => {
+            if (citation.type !== 'asset' && !getAssetId(citation)) return false;
+            
+            // Chỉ hiện ảnh nếu số thứ tự của nó (ví dụ [2]) có xuất hiện trong nội dung tin nhắn
+            const citationNumber = String(citation.number || '');
+            if (!citationNumber) return true; // Fallback nếu không có số
+            
+            const escapedNumber = citationNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = new RegExp(`\\[${escapedNumber}\\]|\\]\\s*${escapedNumber}(?:[.\\s]|$)`, 'i');
+            return pattern.test(messageContent);
+        })
+        .filter((citation, index, list) => {
+            const key = getAssetId(citation) || citation.asset_image_path || citation.title
+            return list.findIndex((item) => (getAssetId(item) || item.asset_image_path || item.title) === key) === index
+        })
+
+    if (!assets.length) return null
+
+    return (
+        <div className="not-prose space-y-3">
+            {assets.map((citation, index) => (
+                <figure key={`${getAssetId(citation) || citation.id || index}-inline`} className="space-y-2">
+                    <AuthenticatedInlineAssetImage citation={citation} />
+                    <figcaption className="text-xs text-slate-500 dark:text-slate-400">
+                        {getAssetLocation(citation) || getAssetCaption(citation)}
+                    </figcaption>
+                </figure>
+            ))}
+        </div>
+    )
 }
 
 interface ChatMessagesProps {
@@ -599,6 +787,13 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                         </p>
                                     )}
                                 </div>
+
+                                {!message.isLoading && message.citations && (
+                                    <InlineAssetGallery 
+                                        citations={message.citations} 
+                                        messageContent={message.content}
+                                    />
+                                )}
 
                                 {message.timestamp && !message.isLoading && (
                                     <p className="text-[11px] text-slate-400" title={formatAbsoluteShort(message.timestamp)}>

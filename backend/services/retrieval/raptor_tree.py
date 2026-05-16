@@ -40,9 +40,52 @@ class RaptorTreeBuilder:
             
         return 0 # Return 0 instead of 1 to signal "not determined"
 
+    def _is_spreadsheet_document(self, document) -> bool:
+        metadata = document.metadata or {}
+        file_type = (getattr(document, 'file_type', '') or '').lower()
+        mime_type = (getattr(document, 'mime_type', '') or '').lower()
+        return (
+            file_type in {'xlsx', 'xls', 'csv'}
+            or 'spreadsheet' in mime_type
+            or mime_type == 'text/csv'
+            or bool(metadata.get('spreadsheet'))
+        )
+
+    def _should_build_spreadsheet(self, document) -> bool:
+        if not getattr(settings, 'RAG_SPREADSHEET_RAPTOR_ENABLED', True):
+            return False
+
+        metadata = document.metadata or {}
+        spreadsheet = metadata.get('spreadsheet') or {}
+        sheet_count = int(
+            metadata.get('spreadsheet_sheet_count')
+            or spreadsheet.get('sheet_count')
+            or self._get_exact_page_count(document)
+            or 0
+        )
+        total_rows = int(
+            metadata.get('spreadsheet_total_rows')
+            or spreadsheet.get('total_non_empty_rows')
+            or 0
+        )
+        total_chunks = int(
+            metadata.get('chunk_count')
+            or document.chunks.filter(is_deleted=False, node_type='detail').count()
+            or 0
+        )
+
+        return (
+            sheet_count >= int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_SHEETS', 3))
+            or total_rows >= int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_ROWS', 200))
+            or total_chunks >= int(getattr(settings, 'RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS', 12))
+        )
+
     def should_build(self, document) -> bool:
         """Decide whether RAPTOR should be applied to a document."""
         try:
+            if self._is_spreadsheet_document(document):
+                return self._should_build_spreadsheet(document)
+
             # Use the global threshold from settings
             threshold = getattr(settings, 'RAG_RAPTOR_THRESHOLD_PAGES', 3)
             
@@ -136,6 +179,7 @@ class RaptorTreeBuilder:
                     'summary': summary_text[:4000],
                     'chunk_index': chunks[0].chunk_index if chunks else 0,
                     'metadata': {
+                        **self._summary_metadata_for_chunks(chunks),
                         'raptor_level': 1, 
                         'child_chunk_count': len(chunks),
                         'content_hash': content_hash
@@ -195,6 +239,7 @@ class RaptorTreeBuilder:
                     'summary': section_text[:4000],
                     'chunk_index': getattr(group[0], 'chunk_index', 0),
                     'metadata': {
+                        **self._summary_metadata_for_chunks(group),
                         'raptor_level': 2,
                         'child_summary_count': len(group),
                         'page_range': [getattr(group[0], 'page_number', 1), getattr(group[-1], 'page_number', 1)],
@@ -251,6 +296,7 @@ class RaptorTreeBuilder:
                 'page_number': getattr(section_objs[0], 'page_number', 1),
                 'chunk_index': getattr(section_objs[0], 'chunk_index', 0),
                 'metadata': {
+                    **self._summary_metadata_for_chunks(section_objs),
                     'raptor_level': 3,
                     'child_section_count': len(section_objs),
                     'page_range': [getattr(section_objs[0], 'page_number', 1), getattr(section_objs[-1], 'page_number', 1)],
@@ -302,6 +348,9 @@ class RaptorTreeBuilder:
                 'text': chunk_obj.content[:500],
                 'node_type': chunk_obj.node_type,
                 'raptor_level': chunk_obj.metadata.get('raptor_level', 0),
+                'sheet_name': chunk_obj.metadata.get('sheet_name'),
+                'row_start': chunk_obj.metadata.get('row_start'),
+                'row_end': chunk_obj.metadata.get('row_end'),
                 'access_scope': getattr(doc_obj, 'access_scope', 'company'),
                 'department_id': str(doc_obj.department_id) if getattr(doc_obj, 'department_id', None) else None,
             }
@@ -340,6 +389,9 @@ class RaptorTreeBuilder:
         thay vi chi concatenate thuan tuy. Concatenation tao ra chuoi dai cac cau
         roi rac, khong co tinh mach lac. LLM synthesis cho summary chat luong cao hon.
         """
+        if self._is_table_chunk_group(chunks):
+            return self._compose_table_summary_text(chunks)
+
         parts = []
         for chunk in chunks:
             summary_text = getattr(chunk, 'summary', None)
@@ -360,6 +412,89 @@ class RaptorTreeBuilder:
                 logger.warning(f'LLM synthesis failed, using concatenation: {e}')
         
         return combined
+
+    def _is_table_chunk_group(self, chunks: List[Any]) -> bool:
+        for chunk in chunks:
+            metadata = getattr(chunk, 'metadata', None) or {}
+            content = getattr(chunk, 'content', '') or ''
+            if metadata.get('content_format') == 'spreadsheet_markdown' or '| Excel row |' in content:
+                return True
+        return False
+
+    def _summary_metadata_for_chunks(self, chunks: List[Any]) -> Dict[str, Any]:
+        sheet_names = []
+        row_starts = []
+        row_ends = []
+        content_formats = set()
+
+        for chunk in chunks:
+            metadata = getattr(chunk, 'metadata', None) or {}
+            sheet_name = metadata.get('sheet_name')
+            if sheet_name and sheet_name not in sheet_names:
+                sheet_names.append(sheet_name)
+            for key, target in (('row_start', row_starts), ('row_end', row_ends)):
+                value = metadata.get(key)
+                if value is not None:
+                    try:
+                        target.append(int(value))
+                    except (TypeError, ValueError):
+                        pass
+            if metadata.get('content_format'):
+                content_formats.add(metadata['content_format'])
+
+        summary_metadata: Dict[str, Any] = {}
+        if sheet_names:
+            summary_metadata['sheet_name'] = sheet_names[0] if len(sheet_names) == 1 else ', '.join(sheet_names[:5])
+            summary_metadata['sheet_names'] = sheet_names[:20]
+        if row_starts:
+            summary_metadata['row_start'] = min(row_starts)
+        if row_ends:
+            summary_metadata['row_end'] = max(row_ends)
+        if content_formats:
+            summary_metadata['content_format'] = 'spreadsheet_summary' if 'spreadsheet_markdown' in content_formats else sorted(content_formats)[0]
+        return summary_metadata
+
+    def _split_markdown_row(self, line: str) -> List[str]:
+        cells = [cell.strip().replace('\\|', '|') for cell in (line or '').strip().strip('|').split('|')]
+        return cells
+
+    def _compose_table_summary_text(self, chunks: List[Any]) -> str:
+        """Create a deterministic, table-aware summary for spreadsheet chunks."""
+        metadata = self._summary_metadata_for_chunks(chunks)
+        sheet_label = metadata.get('sheet_name') or 'spreadsheet'
+        row_start = metadata.get('row_start')
+        row_end = metadata.get('row_end')
+        row_label = f"rows {row_start}-{row_end}" if row_start and row_end else "rows unknown"
+
+        columns = []
+        row_summaries = []
+        for chunk in chunks:
+            content = getattr(chunk, 'content', '') or ''
+            for line in content.splitlines():
+                if not line.startswith('|'):
+                    continue
+                cells = self._split_markdown_row(line)
+                if len(cells) < 2:
+                    continue
+                if cells[0].lower() == 'excel row':
+                    columns = cells
+                    continue
+                if cells[0].isdigit():
+                    values = [cell for cell in cells[1:] if cell]
+                    if values:
+                        row_summaries.append(f"row {cells[0]}: {'; '.join(values[:6])}")
+                if len(row_summaries) >= 10:
+                    break
+            if len(row_summaries) >= 10:
+                break
+
+        column_text = f"Columns: {', '.join(columns)}." if columns else ""
+        rows_text = " | ".join(row_summaries[:10])
+        summary = (
+            f"Spreadsheet summary for sheet {sheet_label}, {row_label}. "
+            f"{column_text} Key rows: {rows_text}"
+        ).strip()
+        return summary[:4000]
     
     def _llm_synthesize_summary(self, text: str) -> str:
         """Goi LLM de synthesize summary tu concatenated child summaries.

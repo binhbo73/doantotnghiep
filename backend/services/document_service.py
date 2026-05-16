@@ -1137,8 +1137,11 @@ class DocumentService(BaseService):
                 'metadata': metadata,
                 'start_char': metadata.get('start_char') or metadata.get('char_start'),
                 'end_char': metadata.get('end_char') or metadata.get('char_end'),
-                'line_start': metadata.get('line_start') or metadata.get('start_line'),
-                'line_end': metadata.get('line_end') or metadata.get('end_line'),
+                'line_start': metadata.get('row_start') or metadata.get('line_start') or metadata.get('start_line'),
+                'line_end': metadata.get('row_end') or metadata.get('line_end') or metadata.get('end_line'),
+                'sheet_name': metadata.get('sheet_name'),
+                'row_start': metadata.get('row_start'),
+                'row_end': metadata.get('row_end'),
             }
 
         except Exception as e:
