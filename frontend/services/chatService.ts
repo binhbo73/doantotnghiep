@@ -237,6 +237,7 @@ export class ChatService {
 
             const reader = response.body?.getReader()
             const decoder = new TextDecoder()
+            let bufferedText = ''
 
             if (!reader) return
 
@@ -244,13 +245,16 @@ export class ChatService {
                 const { done, value } = await reader.read()
                 if (done) break
 
-                const chunk = decoder.decode(value)
-                const lines = chunk.split('\n')
+                bufferedText += decoder.decode(value, { stream: true })
+                const lines = bufferedText.split(/\r?\n/)
+                bufferedText = lines.pop() || ''
 
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
+                        const payload = line.slice(6).trim()
+                        if (!payload) continue
                         try {
-                            const data = JSON.parse(line.slice(6))
+                            const data = JSON.parse(payload)
                             if (data.status && onStatus) onStatus(data.status)
                             if (data.text) onChunk(data.text)
                             if (data.citations && onCitations) onCitations(data.citations)
@@ -259,6 +263,23 @@ export class ChatService {
                             console.error('Error parsing stream line:', e)
                         }
                     }
+                }
+            }
+
+            bufferedText += decoder.decode()
+            const tailLines = bufferedText.split(/\r?\n/)
+            for (const line of tailLines) {
+                if (!line.startsWith('data: ')) continue
+                const payload = line.slice(6).trim()
+                if (!payload) continue
+                try {
+                    const data = JSON.parse(payload)
+                    if (data.status && onStatus) onStatus(data.status)
+                    if (data.text) onChunk(data.text)
+                    if (data.citations && onCitations) onCitations(data.citations)
+                    if (data.error) throw new Error(data.error)
+                } catch (e) {
+                    console.error('Error parsing stream line:', e)
                 }
             }
         } catch (error) {

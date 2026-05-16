@@ -323,13 +323,8 @@ CACH LAM VIEC:
             return ''
 
         before = (text or '')[:match.start()]
-        before = re.sub(r'\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*$', ' ', before, flags=re.IGNORECASE).strip()
-        before = re.sub(
-            r'[\s\S]*\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,3}\]\s*',
-            ' ',
-            before,
-            flags=re.IGNORECASE,
-        ).strip() or before
+        before = re.sub(r'\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*$', ' ', before, flags=re.IGNORECASE)
+        before = self._strip_trailing_source_lines(before)
 
         paragraph_parts = [part.strip() for part in re.split(r'\n\s*\n', before) if part.strip()]
         paragraph = paragraph_parts[-1] if paragraph_parts else before
@@ -346,6 +341,29 @@ CACH LAM VIEC:
         sentences = [item.group(0).strip() for item in re.finditer(r'[^.!?\n]+[.!?]?', paragraph) if item.group(0).strip()]
         context = sentences[-1] if sentences else paragraph
         return context[-520:].strip()
+
+    def _strip_trailing_source_lines(self, text: str) -> str:
+        """Remove citation-only source lines before extracting answer context."""
+        lines = (text or '').replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        source_line_pattern = re.compile(
+            r'^\s*\[(?:Ngu[^\]:]*|Source):[^\]]+\](?:\s*\[\d{1,3}\])?\s*$',
+            re.IGNORECASE,
+        )
+        source_tail_pattern = re.compile(r'\btrang\s*\d+\]?\s*\[\d{1,3}\]\s*$', re.IGNORECASE)
+
+        while lines and not lines[-1].strip():
+            lines.pop()
+
+        while lines:
+            tail = lines[-1].strip()
+            if not source_line_pattern.search(tail) and not source_tail_pattern.search(tail):
+                break
+
+            lines.pop()
+            while lines and not lines[-1].strip():
+                lines.pop()
+
+        return '\n'.join(lines).strip()
 
     def _extract_critical_facts(self, text: str) -> List[str]:
         """Extract facts that must appear in evidence if present in the cited answer sentence."""

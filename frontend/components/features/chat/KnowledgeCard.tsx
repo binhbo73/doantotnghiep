@@ -15,6 +15,8 @@ interface Citation {
     chunk_index?: number
     line_start?: number
     line_end?: number
+    start_char?: number
+    end_char?: number
     document_id?: string
     chunk_id?: string
     source?: string

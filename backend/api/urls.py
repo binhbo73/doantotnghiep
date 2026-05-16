@@ -62,6 +62,7 @@ from api.views.document_views import (
     DocumentDeleteView,
     DocumentDownloadView,
     DocumentPreviewView,
+    DocumentChunkSourceView,
     DocumentPermissionsListView,
     DocumentPermissionsView,
     DocumentPermissionDetailView,
@@ -266,6 +267,8 @@ urlpatterns = [
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/download/?$", DocumentDownloadView.as_view(), name="document_download"),
     # 6b. GET /api/v1/documents/{doc_id}/preview - Get HTML preview for DOCX
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/preview/?$", DocumentPreviewView.as_view(), name="document_preview"),
+    # 6c. GET /api/v1/documents/{doc_id}/chunks/{chunk_id} - Get exact chunk source for citation viewers
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/chunks/(?P<chunk_id>{UUID_PATTERN})/?$", DocumentChunkSourceView.as_view(), name="document_chunk_source"),
     
     # 7. GET|POST /api/v1/documents/{doc_id}/permissions - List/Grant document ACL
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/permissions/?$", DocumentPermissionsView.as_view(), name="document_permissions"),
@@ -366,4 +369,3 @@ urlpatterns = [
         'get': 'retrieve'
     }), name="audit_logs_detail"),
 ]
-

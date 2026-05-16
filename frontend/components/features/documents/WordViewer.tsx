@@ -6,9 +6,58 @@ import { api } from '@/services/api/client'
 interface WordViewerProps {
     fileUrl: string
     searchText?: string
+    chunkText?: string
+    answerContext?: string
+    citationTarget?: {
+        documentId?: string
+        chunkId?: string
+        page?: number
+        chunkIndex?: number
+        startChar?: number
+        endChar?: number
+        lineStart?: number
+        lineEnd?: number
+    }
     onLoadSuccess: () => void
     onLoadError: (error: Error) => void
     onScrollStatsChange?: (currentPage: number, totalPages: number) => void
+}
+
+const SEARCH_STOPWORDS = new Set([
+    'nguon', 'source', 'trang', 'chunk', 'dong', 'cua', 'cho', 'va', 'cac', 'nhung',
+    'trong', 'voi', 'duoc', 'khong', 'co', 'la', 'de', 'mot', 'nay', 'do', 'da',
+    'se', 'khi', 'chi', 'thi', 'ra', 'vao', 'nhu', 'nen', 'qua', 'rat', 'hay',
+    'con', 'the', 'this', 'that', 'from', 'with', 'your', 'have', 'are', 'nguoi',
+    'viec', 'tai', 'sau', 'tren', 'can', 'phai', 'theo', 'dia', 'ty',
+])
+
+function normalizeText(value: string) {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\u0111/g, 'd')
+        .replace(/\u0110/g, 'd')
+        .toLowerCase()
+}
+
+function stripCitationMarkup(text?: string) {
+    return (text || '')
+        .replace(/\[(?:Ngu[^\]]*|Source):[^\]]+\]\s*\[\d{1,3}\]/gi, ' ')
+        .replace(/\[\d{1,3}\]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
+function getReferenceTokens(text?: string) {
+    const words = normalizeText(stripCitationMarkup(text))
+        .split(/[^a-z0-9]+/i)
+        .filter((word) => {
+            if (!word) return false
+            if (/^\d+$/.test(word)) return true
+            return word.length >= 3 && !SEARCH_STOPWORDS.has(word)
+        })
+
+    return Array.from(new Set(words))
 }
 
 function getSearchPhrases(searchText?: string): string[] {
@@ -20,20 +69,54 @@ function getSearchPhrases(searchText?: string): string[] {
 
     if (!cleaned) return []
 
+    // Tach bang nhieu loai ranh gioi: dau cau, xuong dong, dau cham phay
     const chunks = cleaned
-        .split(/(?:[.!?]\s+|\n+|;\s+)/)
-        .map((part) => part.replace(/^[-*\d\s./)]+/, '').trim())
-        .filter((part) => part.length >= 12)
+        .split(/(?:[.!?\u2026]\s+|\n+|;\s+)/)
+        .map((part) => part.replace(/^[-*\d]+[.)]?\s*/, '').trim())
+        .filter((part) => part.length >= 10)
 
     return Array.from(new Set(chunks))
         .sort((a, b) => b.length - a.length)
-        .slice(0, 8)
+        .slice(0, 10)
 }
 
-function highlightPreviewHtml(html: string, searchText?: string): string {
+function findBestPreviewBlock(root: HTMLElement, referenceText?: string): HTMLElement | null {
+    const referenceTokens = getReferenceTokens(referenceText)
+    if (!referenceTokens.length) return null
+
+    const phrases = getSearchPhrases(referenceText).map((phrase) => normalizeText(phrase))
+    const candidates = Array.from(
+        root.querySelectorAll('p, li, td, th, h1, h2, h3, h4, h5, h6, blockquote, pre, div, section, article')
+    ) as HTMLElement[]
+
+    let best: { element: HTMLElement; score: number } | null = null
+
+    candidates.forEach((element) => {
+        const text = normalizeText(element.textContent || '')
+        if (text.length < 20 || text.length > 800) return
+
+        if (element.querySelector('p, li, td, th, h1, h2, h3, h4, h5, h6, blockquote, pre, section, article')) {
+            return
+        }
+
+        const tokenSet = new Set(text.split(/[^a-z0-9]+/i).filter(Boolean))
+        const hitCount = referenceTokens.filter((token) => tokenSet.has(token) || text.includes(token)).length
+        const phraseBonus = phrases.some((phrase) => phrase.length >= 24 && text.includes(phrase)) ? 10 : 0
+        const score = (hitCount * 5) + phraseBonus
+
+        if (score > 0 && (!best || score > best.score)) {
+            best = { element, score }
+        }
+    })
+
+    return best?.element || null
+}
+
+function highlightPreviewHtml(html: string, searchText?: string, chunkText?: string, answerContext?: string): string {
     if (typeof window === 'undefined') return html
 
-    const phrases = getSearchPhrases(searchText)
+    const referenceText = answerContext || searchText || chunkText || ''
+    const phrases = getSearchPhrases(referenceText)
     if (phrases.length === 0) return html
 
     const parser = new DOMParser()
@@ -106,10 +189,17 @@ function highlightPreviewHtml(html: string, searchText?: string): string {
         node.parentNode?.replaceChild(fragment, node)
     })
 
+    if (!root.querySelector('.citation-preview-highlight')) {
+        const bestBlock = findBestPreviewBlock(root as HTMLElement, referenceText)
+        if (bestBlock) {
+            bestBlock.classList.add('citation-preview-block-highlight')
+        }
+    }
+
     return root.innerHTML
 }
 
-export function WordViewer({ fileUrl, searchText, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
+export function WordViewer({ fileUrl, searchText, chunkText, answerContext, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
     const [htmlContent, setHtmlContent] = useState<string>('')
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -166,10 +256,11 @@ export function WordViewer({ fileUrl, searchText, onLoadSuccess, onLoadError, on
                         .docx-preview img { max-width: 100%; height: auto; }
                         .docx-preview blockquote { margin: 0 0 1rem; padding-left: 1rem; border-left: 3px solid #cbd5e1; color: #475569; }
                         .docx-preview .citation-preview-highlight { background: #fde68a; color: inherit; border-radius: 4px; padding: 0 2px; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.16); }
+                        .docx-preview .citation-preview-block-highlight { background: #fef3c7; outline: 2px solid rgba(245, 158, 11, 0.25); outline-offset: 4px; border-radius: 8px; }
                     </style>
                 `
 
-                setHtmlContent(inlineStyles + highlightPreviewHtml(htmlBody, searchText))
+                setHtmlContent(inlineStyles + highlightPreviewHtml(htmlBody, searchText, chunkText, answerContext))
                 setProgress('Done')
                 onLoadSuccessRef.current()
             } catch (err) {
@@ -191,13 +282,13 @@ export function WordViewer({ fileUrl, searchText, onLoadSuccess, onLoadError, on
         return () => {
             cancelled = true
         }
-    }, [fileUrl, searchText])
+    }, [fileUrl, searchText, chunkText, answerContext])
 
     useEffect(() => {
         const container = containerRef.current
         if (!container || isLoading || error || !htmlContent) return
 
-        const firstHighlight = container.querySelector('.citation-preview-highlight')
+        const firstHighlight = container.querySelector('.citation-preview-highlight, .citation-preview-block-highlight') as HTMLElement | null
         if (firstHighlight) {
             window.setTimeout(() => {
                 firstHighlight.scrollIntoView({ block: 'center', behavior: 'smooth' })

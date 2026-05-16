@@ -1090,6 +1090,63 @@ class DocumentService(BaseService):
             logger.error(f"Error generating preview HTML: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to generate preview for document {doc_id}")
 
+    def get_document_chunk_source(
+        self,
+        doc_id: str,
+        chunk_id: str,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Return the exact stored chunk used by a citation.
+
+        Citation viewers should anchor to this metadata first (document/chunk/page)
+        and only use text matching inside that target as a visual fallback.
+        """
+        try:
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
+                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            chunk = DocumentChunk.objects.filter(
+                id=chunk_id,
+                document_id=doc_id,
+                is_deleted=False,
+            ).values(
+                'id',
+                'document_id',
+                'content',
+                'chunk_index',
+                'node_type',
+                'page_number',
+                'metadata',
+            ).first()
+
+            if not chunk:
+                raise NotFoundError(f"Document chunk {chunk_id} not found")
+
+            metadata = chunk.get('metadata') or {}
+            return {
+                'id': str(chunk['id']),
+                'document_id': str(chunk['document_id']),
+                'content': chunk.get('content') or '',
+                'chunk_index': chunk.get('chunk_index'),
+                'node_type': chunk.get('node_type'),
+                'page_number': chunk.get('page_number'),
+                'metadata': metadata,
+                'start_char': metadata.get('start_char') or metadata.get('char_start'),
+                'end_char': metadata.get('end_char') or metadata.get('char_end'),
+                'line_start': metadata.get('line_start') or metadata.get('start_line'),
+                'line_end': metadata.get('line_end') or metadata.get('end_line'),
+            }
+
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error loading document chunk source: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to load chunk {chunk_id} for document {doc_id}")
+
     def _get_preview_cache_path(self, document) -> str:
         storage_path = os.path.abspath(document.storage_path)
         preview_folder = os.path.normpath(

@@ -12,10 +12,29 @@ type CitationViewerPayload = {
     title?: string
     type?: string
     page?: string | number
+    chunk_index?: number
+    chunk_id?: string
+    start_char?: number
+    end_char?: number
+    line_start?: number
+    line_end?: number
     answer_context?: string
     excerpt?: string
     description?: string
     url?: string
+}
+
+type SearchTextSource = 'chunk' | 'excerpt' | 'description' | 'answer_context' | 'none'
+
+type CitationTarget = {
+    documentId?: string
+    chunkId?: string
+    page?: number
+    chunkIndex?: number
+    startChar?: number
+    endChar?: number
+    lineStart?: number
+    lineEnd?: number
 }
 
 type ViewerKind = 'pdf' | 'word' | 'excel' | 'image' | 'unsupported'
@@ -24,6 +43,69 @@ type ViewerState = {
     kind: ViewerKind
     fileUrl: string
     fileType: string
+}
+
+type CitationChunkSource = {
+    id: string
+    document_id: string
+    content: string
+    chunk_index?: number
+    page_number?: number
+    start_char?: number
+    end_char?: number
+    line_start?: number
+    line_end?: number
+}
+
+function normalizeForSectionMatch(value?: string) {
+    return (value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\u0111/g, 'd')
+        .replace(/\u0110/g, 'd')
+        .toLowerCase()
+}
+
+function getPrimaryChunkSection(chunkContent?: string, preferredText?: string): string {
+    const content = (chunkContent || '').trim()
+    if (!content) return ''
+
+    const headingPattern = /(?:^|\n|\s-\s+)(?:[-+*]\s*)?\d{1,2}\/\s+[^?]+\?/g
+    const matches = Array.from(content.matchAll(headingPattern))
+    if (!matches.length) return content
+
+    const sections = matches
+        .map((match, index) => {
+            const start = match.index || 0
+            const end = index + 1 < matches.length ? matches[index + 1].index || content.length : content.length
+            return content.slice(start, end).replace(/^\s*-\s*/, '').trim()
+        })
+        .filter(Boolean)
+
+    if (!sections.length) return content
+
+    const preferred = normalizeForSectionMatch(preferredText)
+    if (preferred) {
+        const preferredTokens = new Set(
+            preferred
+                .split(/[^a-z0-9]+/i)
+                .filter((token) => token.length >= 3)
+        )
+        const best = sections
+            .map((section) => {
+                const sectionNorm = normalizeForSectionMatch(section)
+                let score = 0
+                preferredTokens.forEach((token) => {
+                    if (sectionNorm.includes(token)) score += 1
+                })
+                return { section, score }
+            })
+            .sort((a, b) => b.score - a.score)[0]
+
+        if (best?.score > 0) return best.section
+    }
+
+    return sections[0]
 }
 
 function getFileExtension(title?: string): string {
@@ -112,6 +194,8 @@ function CitationViewerContent() {
     const [viewer, setViewer] = useState<ViewerState | null>(null)
     const [error, setError] = useState<string | null>(null)
     const [pageCount, setPageCount] = useState(0)
+    const [searchDebug, setSearchDebug] = useState<{ source: SearchTextSource, len: number, preview: string } | null>(null)
+    const [chunkSource, setChunkSource] = useState<CitationChunkSource | null>(null)
 
     const payload = useMemo<CitationViewerPayload>(() => {
         const storageKey = searchParams.get('key')
@@ -133,8 +217,80 @@ function CitationViewerContent() {
         }
     }, [searchParams])
 
-    const initialPage = Number(payload.page || 1)
-    const searchText = payload.answer_context || payload.excerpt || payload.description || ''
+    useEffect(() => {
+        if (!payload.document_id || !payload.chunk_id) {
+            setChunkSource(null)
+            return
+        }
+
+        const controller = new AbortController()
+        const loadChunkSource = async () => {
+            try {
+                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/chunks/${payload.chunk_id}`), {
+                    headers: {
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    signal: controller.signal,
+                })
+
+                if (!response.ok) {
+                    setChunkSource(null)
+                    return
+                }
+
+                const body = await response.json()
+                setChunkSource((body?.data || body) as CitationChunkSource)
+            } catch (err) {
+                if ((err as Error).name !== 'AbortError') {
+                    setChunkSource(null)
+                }
+            }
+        }
+
+        loadChunkSource()
+
+        return () => controller.abort()
+    }, [payload.document_id, payload.chunk_id])
+
+    const initialPage = Number(chunkSource?.page_number || payload.page || 1)
+    const preferredCitationText = payload.answer_context || payload.excerpt || payload.description || ''
+    const chunkSectionText = getPrimaryChunkSection(chunkSource?.content, preferredCitationText)
+    // chunkSource.content thuong overlap voi chunk ke tiep, nen chi truyen section chinh
+    // cua chunk xuong viewer. Neu co answer_context/excerpt thi do moi la doan can to.
+    // answer_context la cau tra loi cua LLM, chi dung hien thi/doi chieu, khong lam neo chinh.
+    const searchText = preferredCitationText || chunkSectionText || chunkSource?.content || ''
+    const chunkText = chunkSectionText || chunkSource?.content || ''
+    const answerContext = payload.answer_context || ''
+    const citationTarget = useMemo<CitationTarget>(() => ({
+        documentId: payload.document_id,
+        chunkId: chunkSource?.id || payload.chunk_id,
+        page: Number.isFinite(initialPage) && initialPage > 0 ? initialPage : undefined,
+        chunkIndex: typeof chunkSource?.chunk_index === 'number' ? chunkSource.chunk_index : typeof payload.chunk_index === 'number' ? payload.chunk_index : undefined,
+        startChar: typeof chunkSource?.start_char === 'number' ? chunkSource.start_char : typeof payload.start_char === 'number' ? payload.start_char : undefined,
+        endChar: typeof chunkSource?.end_char === 'number' ? chunkSource.end_char : typeof payload.end_char === 'number' ? payload.end_char : undefined,
+        lineStart: typeof chunkSource?.line_start === 'number' ? chunkSource.line_start : typeof payload.line_start === 'number' ? payload.line_start : undefined,
+        lineEnd: typeof chunkSource?.line_end === 'number' ? chunkSource.line_end : typeof payload.line_end === 'number' ? payload.line_end : undefined,
+    }), [payload, initialPage, chunkSource])
+    const targetLabel = [
+        citationTarget.page ? `trang ${citationTarget.page}` : '',
+        typeof citationTarget.chunkIndex === 'number' ? `chunk ${citationTarget.chunkIndex}` : '',
+        citationTarget.lineStart ? (
+            citationTarget.lineEnd && citationTarget.lineEnd !== citationTarget.lineStart
+                ? `dong ${citationTarget.lineStart}-${citationTarget.lineEnd}`
+                : `dong ${citationTarget.lineStart}`
+        ) : '',
+    ].filter(Boolean).join(', ')
+
+    // Update debug info
+    useEffect(() => {
+        const source: SearchTextSource = payload.answer_context ? 'answer_context' : payload.excerpt ? 'excerpt' : payload.description ? 'description' : chunkText ? 'chunk' : 'none'
+        setSearchDebug(searchText ? {
+            source,
+            len: searchText.length,
+            preview: searchText.substring(0, 150).replace(/\n/g, ' ')
+        } : null)
+    }, [searchText, chunkText, payload])
     const title = payload.title || 'Tai lieu nguon'
     const guessedKind = classifyFileType(payload.type, title)
 
@@ -225,7 +381,14 @@ function CitationViewerContent() {
                     <p className="mt-1 text-xs font-medium text-slate-500">
                         {getViewerLabel(viewer?.kind || guessedKind)}
                         {(viewer?.kind || guessedKind) === 'pdf' && ` - Trang ${initialPage || 1}${pageCount ? ` / ${pageCount}` : ''}`}
-                        {' - doan lien quan duoc to mau neu tim thay'}
+                        {targetLabel && <span className="ml-2 text-slate-600">Nguon: {targetLabel}</span>}
+                        {searchDebug ? (
+                            <span className="ml-2 text-green-600">
+                                Tim: {searchDebug.source} ({searchDebug.len} ky tu)
+                            </span>
+                        ) : (
+                            <span className="ml-2 text-red-500">Khong co noi dung tim kiem</span>
+                        )}
                     </p>
                 </div>
                 <button
@@ -255,6 +418,9 @@ function CitationViewerContent() {
                         fileUrl={viewer.fileUrl}
                         initialPage={initialPage}
                         searchText={searchText}
+                        chunkText={chunkText}
+                        answerContext={answerContext}
+                        citationTarget={citationTarget}
                         onLoadSuccess={setPageCount}
                         onLoadError={(err) => setError(err.message)}
                     />
@@ -264,6 +430,9 @@ function CitationViewerContent() {
                     <WordViewer
                         fileUrl={viewer.fileUrl}
                         searchText={searchText}
+                        chunkText={chunkText}
+                        answerContext={answerContext}
+                        citationTarget={citationTarget}
                         onLoadSuccess={() => setPageCount(0)}
                         onLoadError={(err) => setError(err.message)}
                     />

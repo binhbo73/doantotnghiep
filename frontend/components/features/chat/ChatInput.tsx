@@ -448,13 +448,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     <div className="mt-3 flex flex-wrap gap-2 px-2">
                         {attachments.map((att) => (
                             <div
-                                key={att.id}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs transition-all ${att.status === 'failed'
-                                    ? 'bg-error/5 border-error/20 text-error'
-                                    : att.status === 'completed'
-                                        ? 'bg-success/5 border-success/20 text-success'
-                                        : 'bg-slate-50 dark:bg-slate-800/50 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'
-                                    }`}
+
                             >
                                 <div className="flex flex-col max-w-[150px]">
                                     <span className="font-medium truncate" title={att.name}>{att.name}</span>

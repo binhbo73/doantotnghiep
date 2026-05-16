@@ -32,8 +32,8 @@ export async function requestMiddleware(
     const requestId = crypto.randomUUID()
     const timestamp = new Date().toISOString()
 
-    // Get auth token
-    const token = getAuthToken()
+    // Get auth token (only on client-side)
+    const token = typeof window !== 'undefined' ? getAuthToken() : null
 
     // Add headers
     request.headers.set('X-Request-ID', requestId)

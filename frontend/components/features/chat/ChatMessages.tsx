@@ -55,6 +55,35 @@ const getCitationMeta = (citation: Citation) => {
     return parts.join(', ')
 }
 
+const SOURCE_LINE_PATTERN = /^\s*\[(?:Ngu[^\]:]*|Source):[^\]]+\](?:\s*\[\d{1,3}\])?\s*$/i
+const SOURCE_TAIL_PATTERN = /\btrang\s*\d+\]?\s*\[\d{1,3}\]\s*$/i
+
+const isCitationOnlyContext = (text?: string) => {
+    const trimmed = (text || '').trim()
+    if (!trimmed) return false
+    return SOURCE_LINE_PATTERN.test(trimmed) || SOURCE_TAIL_PATTERN.test(trimmed)
+}
+
+const stripTrailingSourceLines = (text: string) => {
+    const lines = text.replace(/\r/g, '').split('\n')
+
+    while (lines.length && !lines[lines.length - 1].trim()) {
+        lines.pop()
+    }
+
+    while (lines.length) {
+        const tail = lines[lines.length - 1].trim()
+        if (!SOURCE_LINE_PATTERN.test(tail) && !SOURCE_TAIL_PATTERN.test(tail)) break
+
+        lines.pop()
+        while (lines.length && !lines[lines.length - 1].trim()) {
+            lines.pop()
+        }
+    }
+
+    return lines.join('\n').trim()
+}
+
 const openCitationSource = async (citation: Citation) => {
     if (!citation.document_id && !citation.url) return
 
@@ -96,9 +125,10 @@ const getCitationAnswerContext = (content: string, citation: Citation, index: nu
     const match = sourcePattern.exec(content)
     if (!match) return ''
 
-    const before = content.slice(0, match.index).replace(/\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*$/i, '').trim()
-    const withoutPreviousSource = before.replace(/[\s\S]*\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,3}\]\s*/i, '').trim()
-    const sourceText = withoutPreviousSource || before
+    const before = stripTrailingSourceLines(
+        content.slice(0, match.index).replace(/\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*$/i, '')
+    )
+    const sourceText = before
     const paragraphParts = sourceText.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean)
     const lastParagraph = paragraphParts[paragraphParts.length - 1] || sourceText
 
@@ -117,6 +147,12 @@ const getCitationAnswerContext = (content: string, citation: Citation, index: nu
     const sentenceMatches = Array.from(lastParagraph.matchAll(/[^.!?\n]+[.!?]?/g)).map((item) => item[0].trim()).filter(Boolean)
     const lastSentence = sentenceMatches[sentenceMatches.length - 1] || lastParagraph
     return lastSentence.slice(Math.max(0, lastSentence.length - 520)).trim()
+}
+
+const getUsableAnswerContext = (content: string, citation: Citation, index: number) => {
+    const provided = (citation.answer_context || '').trim()
+    if (provided && !isCitationOnlyContext(provided)) return provided
+    return getCitationAnswerContext(content, citation, index)
 }
 
 const normalizeHighlightText = (value: string) =>
@@ -486,7 +522,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
             if (mapped) {
                 const contextualCitation = {
                     ...mapped.citation,
-                    answer_context: mapped.citation.answer_context || getCitationAnswerContext(content, mapped.citation, mapped.index),
+                    answer_context: getUsableAnswerContext(content, mapped.citation, mapped.index),
                 }
                 const chipKey = `citation-${match.index}-${sourcePattern.lastIndex}-${mapped.index}-${occurrenceIndex}`
                 if (longSourceText) {
@@ -574,7 +610,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                     <KnowledgeCard
                                         citations={message.citations.map((citation, citationIndex) => ({
                                             ...citation,
-                                            answer_context: citation.answer_context || getCitationAnswerContext(message.content, citation, citationIndex),
+                                            answer_context: getUsableAnswerContext(message.content, citation, citationIndex),
                                         }))}
                                         isLoading={message.isLoading}
                                         onCitationClick={handleOpenCitation}

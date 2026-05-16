@@ -898,6 +898,52 @@ class DocumentPreviewView(APIView):
             )
 
 
+class DocumentChunkSourceView(APIView):
+    """
+    API Endpoint: GET /api/v1/documents/{doc_id}/chunks/{chunk_id}
+
+    Return the exact stored chunk behind a citation so the viewer can anchor
+    by document/chunk/page metadata before falling back to visual text matching.
+    """
+    permission_classes = [IsAuthenticatedUser]
+
+    def get(self, request, doc_id, chunk_id):
+        try:
+            service = DocumentService()
+            chunk = service.get_document_chunk_source(
+                doc_id=doc_id,
+                chunk_id=chunk_id,
+                user_id=request.user.id,
+            )
+
+            return Response(
+                ResponseBuilder.success(
+                    data=chunk,
+                    message='Document chunk loaded successfully',
+                    status_code=200
+                ),
+                status=status.HTTP_200_OK
+            )
+
+        except NotFoundError as e:
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except PermissionDeniedError as e:
+            logger.warning(f"Permission denied for user {request.user.id}: {str(e)}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=403),
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"Error loading document chunk source: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to load document chunk", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 # ============================================================
 # 7. Document Permissions (GET|POST)
 # ============================================================
