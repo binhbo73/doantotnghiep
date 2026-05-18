@@ -67,7 +67,7 @@ class DocumentService(BaseService):
     """
     
     repository_class = DocumentRepository
-    PREVIEW_CACHE_VERSION = 'v2'
+    PREVIEW_CACHE_VERSION = 'v3'
     
     # Configuration
     MAX_FILE_SIZE_MB = 100  # Max 100MB
@@ -1172,16 +1172,17 @@ class DocumentService(BaseService):
                 '<div class="docx-preview bg-white rounded-lg p-6 text-slate-900" '
                 'style="line-height:1.7;font-size:14px;">'
             ]
+            image_counter = {'value': 0}
 
             for block in doc.element.body.iterchildren():
                 if block.tag.endswith('}p'):
                     paragraph = Paragraph(block, doc)
-                    paragraph_html = self._convert_docx_paragraph_to_html(paragraph, doc)
+                    paragraph_html = self._convert_docx_paragraph_to_html(paragraph, doc, image_counter)
                     if paragraph_html:
                         html_parts.append(paragraph_html)
                 elif block.tag.endswith('}tbl'):
                     table = Table(block, doc)
-                    html_parts.append(self._convert_docx_table_to_html(table, doc))
+                    html_parts.append(self._convert_docx_table_to_html(table, doc, image_counter))
 
             html_parts.append('</div>')
             return '\n'.join(html_parts)
@@ -1230,9 +1231,11 @@ class DocumentService(BaseService):
             logger.error(f"DOC preview generation error: {e}", exc_info=True)
             raise DocumentProcessingError(f"Failed to generate DOC preview: {str(e)}")
 
-    def _convert_docx_paragraph_to_html(self, paragraph, document) -> str:
+    def _convert_docx_paragraph_to_html(self, paragraph, document, image_counter=None) -> str:
         parts = []
         text_buffer = []
+        if image_counter is None:
+            image_counter = {'value': 0}
 
         for run in paragraph.runs:
             if run.text:
@@ -1252,8 +1255,11 @@ class DocumentService(BaseService):
 
                 content_type = getattr(image_part, 'content_type', 'image/png') or 'image/png'
                 image_data = base64.b64encode(image_part.blob).decode('ascii')
+                image_index = image_counter['value']
+                image_counter['value'] += 1
                 parts.append(
                     f'<img src="data:{content_type};base64,{image_data}" '
+                    f'data-docx-image-index="{image_index}" '
                     'alt="Embedded image" '
                     'style="max-width:100%;height:auto;display:block;margin:1rem 0;" />'
                 )
@@ -1280,9 +1286,11 @@ class DocumentService(BaseService):
 
         return ''.join(parts)
 
-    def _convert_docx_table_to_html(self, table, document) -> str:
+    def _convert_docx_table_to_html(self, table, document, image_counter=None) -> str:
         from docx.table import Table
         from docx.text.paragraph import Paragraph
+        if image_counter is None:
+            image_counter = {'value': 0}
 
         html_parts = ['<table style="width:100%;border-collapse:collapse;margin:1rem 0;">']
 
@@ -1293,12 +1301,12 @@ class DocumentService(BaseService):
                 for block in cell._tc.iterchildren():
                     if block.tag.endswith('}p'):
                         paragraph = Paragraph(block, cell)
-                        paragraph_html = self._convert_docx_paragraph_to_html(paragraph, document)
+                        paragraph_html = self._convert_docx_paragraph_to_html(paragraph, document, image_counter)
                         if paragraph_html:
                             cell_html.append(paragraph_html)
                     elif block.tag.endswith('}tbl'):
                         nested_table = Table(block, cell)
-                        cell_html.append(self._convert_docx_table_to_html(nested_table, document))
+                        cell_html.append(self._convert_docx_table_to_html(nested_table, document, image_counter))
 
                 html_parts.append(
                     '<td style="border:1px solid #d1d5db;padding:0.55rem;vertical-align:top;">'

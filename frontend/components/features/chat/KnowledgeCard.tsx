@@ -71,7 +71,13 @@ const getAssetThumbnailEndpoint = (citation: Citation) => {
 }
 
 const getAssetCaption = (citation: Citation) => {
-    return citation.asset_caption || citation.asset?.caption || citation.description || 'Hinh anh trong tai lieu'
+    return (citation.asset_caption || citation.asset?.caption || citation.description || 'Hình ảnh trong tài liệu')
+        .replace(/^\s*\d+\.\s*Loại ảnh\s*:\s*/i, '')
+        .replace(/\b\d+\.\s*Mô tả nội dung\s*THỰC TẾ\s*:\s*/i, '')
+        .replace(/\b\d+\.\s*Chú ý hướng chữ\s*:[^.?!]*(?:[.?!]|$)/gi, ' ')
+        .replace(/\b\d+\.\s*Tuyệt đối không bịa đặt[^.?!]*(?:[.?!]|$)/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
 }
 
 const getAssetLocation = (citation: Citation) => {
@@ -159,7 +165,7 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
     return (
         <div className="mt-6 pt-4 border-t border-outline-variant/20">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                Nguon trich dan ({uniqueCitations.length})
+                Nguồn trích dẫn ({uniqueCitations.length})
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -183,7 +189,7 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                             )}
                             <div className="overflow-hidden flex-1 text-left">
                                 <p className="text-xs font-bold text-on-surface dark:text-slate-100 truncate group-hover:text-primary transition-colors">
-                                    {citation.title}
+                                    {citation.type === 'asset' ? getAssetCaption(citation) : citation.title}
                                 </p>
                                 <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
                                     {citation.type === 'asset'

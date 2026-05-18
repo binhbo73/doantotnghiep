@@ -297,6 +297,9 @@ class HybridRetriever:
                     'asset_page_number': target_asset.page_number,
                     'asset_sheet_name': target_asset.sheet_name,
                     'asset_anchor_cell': target_asset.anchor_cell,
+                    'asset_paragraph_index': target_asset.paragraph_index,
+                    'asset_position_in_document': target_asset.position_in_document or {},
+                    'asset_context_text': target_asset.context_text or '',
                 })
 
         # Re-sort

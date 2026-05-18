@@ -43,6 +43,11 @@ class WebSocketService {
      * Graceful fallback if backend doesn't have WebSocket endpoint
      */
     connect(token?: string) {
+        // Skip if not on client-side (SSR protection)
+        if (typeof window === 'undefined') {
+            return
+        }
+
         if (this.ws?.readyState === WebSocket.OPEN) {
             logger.debug('✅ WebSocket already connected')
             return
@@ -174,7 +179,7 @@ class WebSocketService {
      */
     private attemptReconnect(token: string) {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-            logger.error('❌ Max reconnect attempts reached')
+            logger.error('❌ Max reconnect attempts reached', { attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts })
             return
         }
 

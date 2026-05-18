@@ -28,6 +28,8 @@ const normalizeCitations = (raw: MessageDTO['citations'] | any): Message['citati
     }))
 }
 
+const STREAM_RENDER_INTERVAL_MS = 80
+
 export const useChat = (options: UseChatOptions = {}) => {
     const { autoFetchConversations = true, onConversationCreated, onMessageSent } = options
     const { showError, showSuccess } = useToast()
@@ -157,13 +159,43 @@ export const useChat = (options: UseChatOptions = {}) => {
 
                 // 4. Gọi Stream API — truyền document_ids/folder_ids để backend kích hoạt RAG
                 let fullContent = ''
+                let renderedContent = ''
+                let renderTimer: ReturnType<typeof setTimeout> | null = null
+
+                const updateBotMessage = (patch: Partial<Message>) => {
+                    setMessages((prev) =>
+                        prev.map(msg => msg.id === botMsgId ? { ...msg, ...patch } : msg)
+                    )
+                }
+
+                const flushStreamToUI = (force = false) => {
+                    if (renderTimer) {
+                        if (!force) return
+                        clearTimeout(renderTimer)
+                        renderTimer = null
+                    }
+
+                    if (force) {
+                        if (renderedContent !== fullContent) {
+                            renderedContent = fullContent
+                            updateBotMessage({ content: renderedContent })
+                        }
+                        return
+                    }
+
+                    renderTimer = setTimeout(() => {
+                        renderTimer = null
+                        if (renderedContent !== fullContent) {
+                            renderedContent = fullContent
+                            updateBotMessage({ content: renderedContent })
+                        }
+                    }, STREAM_RENDER_INTERVAL_MS)
+                }
                 await ChatService.sendMessageStream(
                     content,
                     (chunk) => {
                         fullContent += chunk
-                        setMessages((prev) =>
-                            prev.map(msg => msg.id === botMsgId ? { ...msg, content: fullContent } : msg)
-                        )
+                        flushStreamToUI()
                     },
                     conversationId,
                     attachments?.documentIds,
@@ -177,6 +209,7 @@ export const useChat = (options: UseChatOptions = {}) => {
                         }
                     },
                     (citations) => {
+                        flushStreamToUI(true)
                         // Nhận citation data từ backend sau khi stream hoàn tất
                         setMessages((prev) =>
                             prev.map(msg => msg.id === botMsgId
@@ -186,13 +219,16 @@ export const useChat = (options: UseChatOptions = {}) => {
                         )
                     }
                 )
+                flushStreamToUI(true)
 
                 // 5. Cập nhật danh sách hội thoại
                 // KHÔNG gọi fetchMessages ở đây — backend có thể chưa kịp lưu message
                 // xuống DB (xử lý bất đồng bộ), dẫn đến API trả về mảng rỗng và
                 // ghi đè mất toàn bộ messages vừa stream. Messages đã có trong state
                 // local từ stream; selectConversation sẽ fetch khi cần.
-                await fetchConversations()
+                window.setTimeout(() => {
+                    void fetchConversations()
+                }, 500)
 
             } catch (error) {
                 showError('Lỗi kết nối máy chủ. Vui lòng thử lại.')

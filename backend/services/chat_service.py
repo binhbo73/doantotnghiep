@@ -55,33 +55,30 @@ class ChatService:
     """
 
     # Universal RAG prompt: strict grounding, complete extraction when asked, compact otherwise.
-    RAG_SYSTEM_PROMPT = """BAN LA TRO LY RAG TRA LOI DUY NHAT DUA TREN TAI LIEU DUOC CUNG CAP.
+    RAG_SYSTEM_PROMPT = """Bạn là trợ lý RAG. Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp.
 
-NGUYEN TAC BAT BUOC:
-1. Chi dung "NOI DUNG TAI LIEU THAM KHAO" de tra loi. Khong dung kien thuc ben ngoai, khong suy doan.
-2. Tra loi dung cau hoi hien tai. Bo qua doan tham khao khong tra loi truc tiep cau hoi.
-3. Neu tai lieu khong du thong tin de tra loi, noi ro: "Tai lieu khong co thong tin nay." Neu chi thieu mot phan, tra loi phan co bang chung va noi phan nao khong thay trong tai lieu.
-4. Moi y quan trong phai co trich dan day du va ma nguon, dung dang: [Nguon: ten_file, trang X] [1]. Neu NGUON co dong ro rang thi co the them "dong A-B". So [1], [2] phai dung dung so NGUON trong tai lieu tham khao.
-5. Neu cau hoi yeu cau xem/cho hien thi anh va phan "THONG TIN HINH ANH TRONG TAI LIEU" co anh phu hop, phai tra loi rang da tim thay anh va neu vi tri anh. Khong duoc ket luan "Tai lieu khong co thong tin nay" chi vi OCR cua anh xau; neu OCR khong doc ro thi noi "noi dung chu trong anh khong doc ro", nhung van xac nhan co anh.
+Nguyên tắc bắt buộc:
+1. Chỉ dùng "NỘI DUNG TÀI LIỆU THAM KHẢO" để trả lời. Không dùng kiến thức bên ngoài, không suy đoán.
+2. Trả lời đúng câu hỏi hiện tại. Bỏ qua đoạn tham khảo không trả lời trực tiếp câu hỏi.
+3. Nếu tài liệu không đủ thông tin, nói rõ: "Tài liệu không có thông tin này." Nếu chỉ thiếu một phần, trả lời phần có bằng chứng và nêu phần nào không thấy trong tài liệu.
+4. Mỗi ý quan trọng phải có trích dẫn đúng dạng: [Nguồn: tên_file, trang X] [1]. Số [1], [2] phải đúng số NGUỒN trong tài liệu tham khảo.
+5. Luôn viết tiếng Việt có dấu. Không viết không dấu như "Co anh phu hop" hoặc "Nguon".
+6. Nếu câu hỏi yêu cầu xem/hiển thị ảnh và phần "THÔNG TIN HÌNH ẢNH TRONG TÀI LIỆU" có ảnh phù hợp, trả lời ngắn gọn rằng có ảnh phù hợp và nêu vị trí ảnh. Ảnh sẽ được giao diện hiển thị, không cần tạo markdown image.
 
-CACH LAM VIEC:
-1. Tu xac dinh kieu cau hoi:
-   - dinh nghia/giai thich: tra loi ro khai niem va cac y giai thich co trong tai lieu.
-   - liet ke/gom nhung gi/cac/nhung/day du/chi tiet: phai trich xuat day du tat ca muc chinh, muc con, dau gach, so thu tu lien quan.
-   - so sanh: neu diem giong, khac, tieu chi so sanh co trong tai lieu thi trinh bay theo bang hoac bullet.
-   - quy trinh/cac buoc: giu dung thu tu buoc trong tai lieu.
-   - so lieu/bang bieu: chep dung so, don vi, dieu kien, moc thoi gian; khong lam tron neu tai lieu khong lam tron.
-   - bang tinh/Excel/CSV hoac doan trich co bang markdown: neu cau hoi hoi nhieu dong/cot, tra loi bang markdown, giu ten cot va so lieu dung nhu tai lieu.
-   - hoi xem anh/hinh/minh chung: neu co nguon anh trong tai lieu, tra loi ngan gon "Co anh phu hop" + vi tri anh; anh se duoc hien thi trong giao dien, khong can tao markdown image.
-   - cau hoi tai sao/ly do/nguyen nhan: chi neu cac ly do/nguyen nhan duoc tai lieu neu truc tiep.
-2. Khi cau hoi yeu cau day du:
-   - Doc tat ca doan tham khao lien quan, ke ca doan/trang/chunk lien tiep.
-   - Giu cau truc tai lieu: muc chinh -> y con -> chi tiet.
-   - Khong rut gon mat y con, vi du, ngoai le, dieu kien, dau (+/-) neu chung tra loi truc tiep cau hoi.
-3. Khi cau hoi khong yeu cau day du, tra loi ngan gon, dung trong tam, van phai co trich dan.
-4. Neu cac doan tai lieu mau thuan nhau, neu ca hai thong tin va trich dan tung nguon; khong tu chon mot ben neu tai lieu khong cho biet.
-5. Neu nguon khong co trang thi dung vi tri co trong NGUON. Khong goi chunk ky thuat la "doan" trong trich dan hien thi cho nguoi dung.
-6. Khong viet loi dan dai, khong nhac lai quy tac, khong noi ve qua trinh suy luan noi bo."""
+Cách làm việc:
+1. Tự xác định kiểu câu hỏi:
+   - Định nghĩa/giải thích: trả lời rõ khái niệm và các ý giải thích có trong tài liệu.
+   - Liệt kê/đầy đủ/chi tiết: trích xuất đầy đủ các mục chính, mục con, dấu gạch, số thứ tự liên quan.
+   - So sánh: nếu điểm giống, khác, tiêu chí so sánh có trong tài liệu thì trình bày theo bảng hoặc bullet.
+   - Quy trình/các bước: giữ đúng thứ tự bước trong tài liệu.
+   - Số liệu/bảng biểu: chép đúng số, đơn vị, điều kiện, mốc thời gian.
+   - Bảng tính/Excel/CSV hoặc đoạn trích có bảng markdown: nếu câu hỏi hỏi nhiều dòng/cột, trả lời bằng markdown, giữ tên cột và số liệu đúng như tài liệu.
+   - Hỏi xem ảnh/hình/minh chứng: trả lời ngắn gọn "Có ảnh phù hợp" kèm vị trí ảnh và trích dẫn; không lặp lại mô tả caption dài nếu không cần.
+2. Khi câu hỏi yêu cầu đầy đủ, giữ cấu trúc tài liệu: mục chính -> ý con -> chi tiết.
+3. Khi câu hỏi không yêu cầu đầy đủ, trả lời ngắn gọn, đúng trọng tâm, vẫn phải có trích dẫn.
+4. Nếu các đoạn tài liệu mâu thuẫn nhau, nêu cả hai thông tin và trích dẫn từng nguồn.
+5. Nếu nguồn không có trang thì dùng vị trí có trong NGUỒN. Không gọi chunk kỹ thuật là "đoạn" trong trích dẫn hiển thị cho người dùng.
+6. Không viết lời dẫn dài, không nhắc lại quy tắc, không nói về quá trình suy luận nội bộ."""
 
     def __init__(self):
         """Khởi tạo với các repository và client AI"""
@@ -433,11 +430,11 @@ CACH LAM VIEC:
         citation_id: Any = None,
     ) -> str:
         """Build a user-visible source label without exposing technical chunk indexes as paragraphs."""
-        parts = [f"Nguon: {title}"]
+        parts = [f"Nguồn: {title}"]
         if page:
             parts.append(f"trang {page}")
         if line_start:
-            line_text = f"dong {line_start}"
+            line_text = f"dòng {line_start}"
             if line_end and line_end != line_start:
                 line_text += f"-{line_end}"
             parts.append(line_text)
@@ -458,6 +455,25 @@ CACH LAM VIEC:
         """Remove source labels from answer text before matching evidence excerpts."""
         without_long_sources = re.sub(r'\[(?:Ngu[^\]:]*|Source):[^\]]+\]\s*\[\d{1,3}\]', ' ', text or '', flags=re.IGNORECASE)
         return re.sub(r'\[\d{1,3}\]', ' ', without_long_sources)
+
+    def _clean_asset_caption(self, caption: str) -> str:
+        """Remove prompt scaffolding that may leak from old VL captions."""
+        text = re.sub(r'\s+', ' ', caption or '').strip()
+        if not text:
+            return ''
+
+        replacements = [
+            (r'^\s*\d+\.\s*Loại ảnh\s*:\s*', ''),
+            (r'\b\d+\.\s*Mô tả nội dung\s*THỰC TẾ\s*:\s*', ''),
+            (r'\b\d+\.\s*Chú ý hướng chữ\s*:\s*', ' '),
+            (r'\b\d+\.\s*Tuyệt đối không bịa đặt[^.?!]*(?:[.?!]|$)', ' '),
+            (r'\bCHỈ TRẢ VỀ[^.?!]*(?:[.?!]|$)', ' '),
+        ]
+        for pattern, replacement in replacements:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+
+        text = re.sub(r'\s+', ' ', text).strip(' -:;,.')
+        return text
 
     def _term_overlap_score(self, text: str, reference_text: str) -> int:
         text_norm = self._normalize_query_text(text or '')
@@ -604,36 +620,17 @@ CACH LAM VIEC:
             except Exception as e:
                 logger.warning(f"[_build_citation_payload] Khong the hydrate document names: {e}")
 
-        DocumentAsset = None
-        sheet_asset_cache: Dict[tuple, List[Any]] = {}
-
-        def _get_sheet_assets(document_id: str, sheet_name: Optional[str] = None):
-            nonlocal DocumentAsset
-            cache_key = (str(document_id), str(sheet_name or ''))
-            if cache_key in sheet_asset_cache:
-                return sheet_asset_cache[cache_key]
-
-            if DocumentAsset is None:
-                DocumentAsset = apps.get_model('documents', 'DocumentAsset')
-
-            queryset = DocumentAsset.objects.filter(document_id=document_id, is_deleted=False)
-            if sheet_name:
-                queryset = queryset.filter(sheet_name=sheet_name)
-
-            assets = list(queryset.order_by('sheet_name', 'anchor_cell', 'page_number', 'created_at'))
-            sheet_asset_cache[cache_key] = assets
-            return assets
-
         for candidate in candidates:
             # ── Asset citations ──────────────────────────────
             if candidate.get('source') == 'asset':
                 asset_id = candidate.get('asset_id', '')
                 doc_id = candidate.get('document_id', '')
                 citation_id = candidate.get('citation_id')
+                clean_caption = self._clean_asset_caption(candidate.get('asset_caption', ''))
                 
                 # SMART FILTER: Only include asset if it's referenced in the answer
                 # OR if the user question explicitly asks for images/proofs.
-                is_explicit_request = self._is_image_query(query)
+                is_explicit_request = False
                 
                 if answer_text and citation_id:
                     try:
@@ -653,12 +650,7 @@ CACH LAM VIEC:
                             # - Nếu KHÔNG được trích dẫn: 
                             #   + Chỉ hiện nếu là yêu cầu xem ảnh ĐÍCH DANH và điểm số phải cao (> 0.85)
                             #   + Hoặc điểm số phải CỰC CAO (> 0.95) để tránh hiện nhầm icon.
-                            if is_explicit_request and score > 0.85:
-                                pass
-                            elif score > 0.95:
-                                pass
-                            else:
-                                continue
+                            continue
                     except (ValueError, TypeError):
                         pass
 
@@ -669,18 +661,21 @@ CACH LAM VIEC:
                 citations.append({
                     'id': str(asset_id),
                     'number': int(citation_id) if str(citation_id).isdigit() else (len(citations) + 1),
-                    'title': candidate.get('asset_caption', 'Document Asset')[:100],
+                    'title': clean_caption[:100] or 'Hình ảnh trong tài liệu',
                     'source_label': '',
-                    'description': candidate.get('asset_caption', '')[:900],
-                    'excerpt': candidate.get('asset_caption', '')[:900],
+                    'description': clean_caption[:900],
+                    'excerpt': clean_caption[:900],
                     'document_id': str(doc_id),
                     'chunk_id': '',
                     'asset_id': asset_id,
-                    'asset_caption': candidate.get('asset_caption', ''),
+                    'asset_caption': clean_caption,
                     'asset_image_path': candidate.get('asset_image_path', ''),
                     'asset_page_number': candidate.get('asset_page_number'),
                     'asset_sheet_name': candidate.get('asset_sheet_name'),
                     'asset_anchor_cell': candidate.get('asset_anchor_cell'),
+                    'asset_paragraph_index': candidate.get('asset_paragraph_index'),
+                    'asset_position_in_document': candidate.get('asset_position_in_document') or {},
+                    'asset_context_text': candidate.get('asset_context_text') or '',
                     'page': candidate.get('asset_page_number'),
                     'type': 'asset',
                     'source': 'asset',
@@ -691,54 +686,16 @@ CACH LAM VIEC:
                         'id': asset_id,
                         'image_url': '/api/v1/assets/' + asset_id + '/image',
                         'thumbnail_url': '/api/v1/assets/' + asset_id + '/thumbnail',
-                        'caption': candidate.get('asset_caption', ''),
+                        'caption': clean_caption,
                         'page_number': candidate.get('asset_page_number'),
                         'sheet_name': candidate.get('asset_sheet_name'),
                         'anchor_cell': candidate.get('asset_anchor_cell'),
+                        'paragraph_index': candidate.get('asset_paragraph_index'),
+                        'position_in_document': candidate.get('asset_position_in_document') or {},
+                        'context_text': candidate.get('asset_context_text') or '',
                     },
                 })
 
-                if (doc_file_type_map.get(str(doc_id)) in {'xlsx', 'xls'}) and candidate.get('asset_sheet_name'):
-                    # For Excel, if the main asset is cited, we might want to keep siblings, 
-                    # but only if the main one is actually relevant.
-                    for sibling in _get_sheet_assets(str(doc_id), candidate.get('asset_sheet_name')):
-                        sibling_id = str(sibling.id)
-                        sibling_key = ('asset', sibling_id)
-                        if sibling_key in seen or sibling_id == str(asset_id):
-                            continue
-                        seen.add(sibling_key)
-                        sibling_caption = (getattr(sibling, 'caption', '') or '')
-                        citations.append({
-                            'id': str(sibling_id),
-                            'number': len(citations) + 1,
-                            'title': sibling_caption[:100] or 'Document Asset',
-                            'source_label': '',
-                            'description': sibling_caption[:900],
-                            'excerpt': sibling_caption[:900],
-                            'document_id': str(doc_id),
-                            'chunk_id': '',
-                            'asset_id': sibling_id,
-                            'asset_caption': sibling_caption,
-                            'asset_image_path': getattr(sibling, 'image_path', '') or '',
-                            'asset_page_number': getattr(sibling, 'page_number', None),
-                            'asset_sheet_name': getattr(sibling, 'sheet_name', None),
-                            'asset_anchor_cell': getattr(sibling, 'anchor_cell', None),
-                            'page': getattr(sibling, 'page_number', None),
-                            'type': 'asset',
-                            'source': 'asset',
-                            'document_title': doc_name_map.get(str(doc_id)),
-                            'document_file_type': doc_file_type_map.get(str(doc_id)) or candidate.get('document_file_type'),
-                            'score': round(float(candidate.get('score', 0) or 0), 3),
-                            'asset': {
-                                'id': sibling_id,
-                                'image_url': '/api/v1/assets/' + sibling_id + '/image',
-                                'thumbnail_url': '/api/v1/assets/' + sibling_id + '/thumbnail',
-                                'caption': sibling_caption,
-                                'page_number': getattr(sibling, 'page_number', None),
-                                'sheet_name': getattr(sibling, 'sheet_name', None),
-                                'anchor_cell': getattr(sibling, 'anchor_cell', None),
-                            },
-                        })
                 continue
 
             chunk_id = candidate.get('chunk_id')
@@ -1078,6 +1035,9 @@ CACH LAM VIEC:
             context_chars_used = 0
             context_tokens_used = 0
             for i, c in enumerate(candidates, start=1):
+                if c.get('source') == 'asset':
+                    continue
+
                 doc_id = c.get('document_id', '')
                 doc_name = doc_name_map.get(str(doc_id), f'Tài liệu #{i}')
                 page = c.get('page')
@@ -1136,16 +1096,13 @@ CACH LAM VIEC:
                     context_chars_used += len(snippet)
                     context_tokens_used += part_tokens
 
-            if not context_parts:
-                return '', candidates
-
             # ── Add asset captions to context ────────────────
             asset_parts = []
             for i, c in enumerate(candidates, start=1):
                 if c.get('source') == 'asset' and c.get('asset_caption'):
                     # Assign citation_id to asset so LLM can reference it
                     c['citation_id'] = i
-                    cap = c['asset_caption'][:300]
+                    cap = self._clean_asset_caption(c['asset_caption'])[:300]
                     loc = ''
                     if c.get('asset_sheet_name'):
                         loc += f"Sheet {c['asset_sheet_name']}"

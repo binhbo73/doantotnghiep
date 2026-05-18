@@ -223,6 +223,9 @@ export const CitationSchema = z.object({
     asset_page_number: z.union([z.number(), z.string()]).optional(),
     asset_sheet_name: z.string().optional(),
     asset_anchor_cell: z.string().optional(),
+    asset_paragraph_index: z.number().nullable().optional(),
+    asset_position_in_document: z.record(z.string(), z.number()).nullable().optional(),
+    asset_context_text: z.string().optional(),
     asset: z.object({
         id: z.string(),
         image_url: z.string().nullable().optional(),
@@ -231,6 +234,9 @@ export const CitationSchema = z.object({
         page_number: z.number().nullable().optional(),
         sheet_name: z.string().nullable().optional(),
         anchor_cell: z.string().nullable().optional(),
+        paragraph_index: z.number().nullable().optional(),
+        position_in_document: z.record(z.string(), z.number()).nullable().optional(),
+        context_text: z.string().nullable().optional(),
     }).optional(),
 })
 

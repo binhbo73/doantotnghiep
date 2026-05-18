@@ -216,11 +216,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 // 4. Polling trạng thái xử lý từ backend
                 let isDone = false
                 let retryCount = 0
-                const maxRetries = 60 // 1 phút
+                const maxRetries = 120 // 4 phút (2s × 120 = 240s)
+                let pollDelay = 1000 // Start with 1 second
 
                 while (!isDone && retryCount < maxRetries) {
-                    await new Promise(resolve => setTimeout(resolve, 2000))
+                    await new Promise(resolve => setTimeout(resolve, pollDelay))
                     retryCount++
+                    // Gradually increase poll delay (1s -> 2s -> 3s -> 4s max)
+                    pollDelay = Math.min(pollDelay + 500, 4000)
 
                     try {
                         const statusData = await getDocumentStatus(document.id)
@@ -447,9 +450,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 {attachments.length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2 px-2">
                         {attachments.map((att) => (
-                            <div
-
-                            >
+                            <div key={att.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 flex gap-2 items-start">
                                 <div className="flex flex-col max-w-[150px]">
                                     <span className="font-medium truncate" title={att.name}>{att.name}</span>
                                     <div className="flex items-center gap-2 mt-0.5">

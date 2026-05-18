@@ -17,6 +17,7 @@ interface PDFViewerProps {
     chunkText?: string
     answerContext?: string
     citationTarget?: CitationTarget
+    assetImage?: AssetImageHint
 }
 
 type CitationTarget = {
@@ -28,6 +29,15 @@ type CitationTarget = {
     endChar?: number
     lineStart?: number
     lineEnd?: number
+}
+
+type AssetImageHint = {
+    id?: string
+    pageNumber?: number
+    position?: Record<string, number>
+    imageEndpoint?: string
+    caption?: string
+    contextText?: string
 }
 
 type MatchSource = 'answer_context' | 'citation_chunk'
@@ -199,6 +209,7 @@ export function PDFViewer({
     chunkText,
     answerContext,
     citationTarget,
+    assetImage,
 }: PDFViewerProps) {
     const [containerWidth, setContainerWidth] = useState<number>(0)
     const [numPages, setNumPages] = useState<number>(0)
@@ -268,12 +279,15 @@ export function PDFViewer({
     }
 
     async function anchorCitationInPdf(pdf: PDFDocumentProxy, pageCount: number) {
-        const startPage = initialPage && initialPage > 0 ? Math.min(initialPage, pageCount) : 1
+        const assetPage = assetImage?.pageNumber && assetImage.pageNumber > 0 ? assetImage.pageNumber : undefined
+        const startPage = assetPage ? Math.min(assetPage, pageCount) : initialPage && initialPage > 0 ? Math.min(initialPage, pageCount) : 1
         const anchorKey = [
             fileUrl,
             startPage,
             citationTarget?.chunkId || '',
             citationTarget?.page || '',
+            assetImage?.id || '',
+            assetImage?.pageNumber || '',
             chunkText || '',
             searchText || '',
             answerContext || '',
@@ -281,6 +295,15 @@ export function PDFViewer({
 
         if (lastAnchorKeyRef.current === anchorKey) return
         lastAnchorKeyRef.current = anchorKey
+
+        if (assetImage?.pageNumber) {
+            const assetPageEl = pageRefs.current[Math.max(0, startPage - 1)]
+            if (assetPageEl) {
+                assetPageEl.classList.add('citation-pdf-asset-page-highlight')
+                window.setTimeout(() => scrollContainerToElement(assetPageEl, 'center', 'smooth'), 250)
+            }
+            return
+        }
 
         if (!(searchText || answerContext || citationTarget?.page)) return
 
@@ -303,6 +326,9 @@ export function PDFViewer({
             const fallbackPage = match.pageNumber || citationTarget?.page || startPage
             const initialPageEl = pageRefs.current[Math.max(0, fallbackPage - 1)]
             if (initialPageEl) {
+                if (assetImage?.pageNumber) {
+                    initialPageEl.classList.add('citation-pdf-asset-page-highlight')
+                }
                 window.setTimeout(() => scrollContainerToElement(initialPageEl, 'start'), 250)
             }
             return
@@ -349,7 +375,8 @@ export function PDFViewer({
         const { numPages } = pdf
         pdfRef.current = pdf
         setNumPages(numPages)
-        const startPage = initialPage && initialPage > 0 ? Math.min(initialPage, numPages) : 1
+        const assetPage = assetImage?.pageNumber && assetImage.pageNumber > 0 ? assetImage.pageNumber : undefined
+        const startPage = assetPage ? Math.min(assetPage, numPages) : initialPage && initialPage > 0 ? Math.min(initialPage, numPages) : 1
         setCurrentPage(startPage)
         currentPageRef.current = startPage
         onPageChangeRef.current?.(startPage)
@@ -412,12 +439,12 @@ export function PDFViewer({
 
         didInitialScrollRef.current = true
         window.setTimeout(() => scrollContainerToElement(pageElement, 'start'), 250)
-    }, [initialPage, numPages, searchText, chunkText, answerContext, citationTarget])
+    }, [initialPage, numPages, searchText, chunkText, answerContext, citationTarget, assetImage])
 
     useEffect(() => {
         if (!pdfRef.current || !numPages) return
         void anchorCitationInPdf(pdfRef.current, numPages)
-    }, [numPages, searchText, chunkText, answerContext, citationTarget])
+    }, [numPages, searchText, chunkText, answerContext, citationTarget, assetImage])
 
     async function getPdfPageMatch(
         pdf: PDFDocumentProxy,
@@ -612,7 +639,7 @@ export function PDFViewer({
                             ref={(element) => {
                                 pageRefs.current[pageNumber - 1] = element
                             }}
-                            className="flex justify-center scroll-mt-6"
+                            className="flex justify-center scroll-mt-6 rounded-md [&.citation-pdf-asset-page-highlight]:ring-4 [&.citation-pdf-asset-page-highlight]:ring-cyan-400 [&.citation-pdf-asset-page-highlight]:ring-offset-4 [&.citation-pdf-asset-page-highlight]:ring-offset-slate-100"
                         >
                             <Page
                                 pageNumber={pageNumber}

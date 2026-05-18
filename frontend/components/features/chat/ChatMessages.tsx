@@ -42,6 +42,9 @@ export interface Message {
         asset_page_number?: number | string
         asset_sheet_name?: string
         asset_anchor_cell?: string
+        asset_paragraph_index?: number | null
+        asset_position_in_document?: Record<string, number> | null
+        asset_context_text?: string
         asset?: {
             id: string
             image_url?: string | null
@@ -50,6 +53,9 @@ export interface Message {
             page_number?: number | null
             sheet_name?: string | null
             anchor_cell?: string | null
+            paragraph_index?: number | null
+            position_in_document?: Record<string, number> | null
+            context_text?: string | null
         }
     }[]
     timestamp?: Date
@@ -77,8 +83,18 @@ const getAssetThumbnailEndpoint = (citation: Citation) => {
     return normalizeApiEndpoint(citation.asset?.thumbnail_url)
 }
 
+const cleanAssetCaption = (value?: string | null) => {
+    return (value || '')
+        .replace(/^\s*\d+\.\s*Loại ảnh\s*:\s*/i, '')
+        .replace(/\b\d+\.\s*Mô tả nội dung\s*THỰC TẾ\s*:\s*/i, '')
+        .replace(/\b\d+\.\s*Chú ý hướng chữ\s*:[^.?!]*(?:[.?!]|$)/gi, ' ')
+        .replace(/\b\d+\.\s*Tuyệt đối không bịa đặt[^.?!]*(?:[.?!]|$)/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+}
+
 const getAssetCaption = (citation: Citation) => (
-    citation.asset_caption || citation.asset?.caption || citation.description || citation.title || 'Anh minh chung'
+    cleanAssetCaption(citation.asset_caption || citation.asset?.caption || citation.description || citation.title) || 'Ảnh minh chứng'
 )
 
 const getAssetLocation = (citation: Citation) => {
@@ -93,6 +109,20 @@ const getAssetLocation = (citation: Citation) => {
 }
 
 const getCitationNumber = (citation: Citation, index: number) => String(citation.number || citation.id || index + 1)
+
+const getReferencedCitationNumbers = (content: string) => {
+    const refs = new Set<string>()
+    for (const match of content.matchAll(/\[(\d{1,3})\]/g)) {
+        refs.add(match[1])
+    }
+    return refs
+}
+
+const getVisibleCitations = (content: string, citations: Citation[] = []) => {
+    const refs = getReferencedCitationNumbers(content)
+    if (!refs.size) return citations
+    return citations.filter((citation, index) => refs.has(getCitationNumber(citation, index)))
+}
 
 const getCitationMeta = (citation: Citation) => {
     const parts: string[] = []
@@ -149,19 +179,16 @@ const stripTrailingSourceLines = (text: string) => {
 }
 
 const openCitationSource = async (citation: Citation) => {
+    if (citation.type === 'asset' || getAssetId(citation)) {
+        openAssetSource(citation)
+        return
+    }
+
     if (!citation.document_id && !citation.url) return
 
     if (citation.document_id && typeof window !== 'undefined') {
         const key = `citation-source-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        const sourceCitation = citation.type === 'asset'
-            ? {
-                ...citation,
-                title: citation.document_title || citation.source_label || citation.title,
-                type: citation.document_file_type || undefined,
-                viewer_mode: 'source',
-            }
-            : citation
-        sessionStorage.setItem(key, JSON.stringify(sourceCitation))
+        sessionStorage.setItem(key, JSON.stringify(citation))
         window.open(`/dashboard/citation-viewer?key=${encodeURIComponent(key)}`, '_blank')
         return
     }
@@ -189,6 +216,28 @@ const openCitationSource = async (citation: Citation) => {
         window.open(`${objectUrl}${pageSuffix}`, '_blank', 'noopener,noreferrer')
     }
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+}
+
+const openAssetSource = (citation: Citation) => {
+    if (typeof window === 'undefined') return
+    const assetId = getAssetId(citation)
+    if (!assetId || !citation.document_id) return
+
+    const key = `citation-source-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    sessionStorage.setItem(key, JSON.stringify({
+        ...citation,
+        title: citation.document_title || citation.source_label || citation.title,
+        type: citation.document_file_type || undefined,
+        viewer_mode: 'source',
+        asset_id: assetId,
+        asset: {
+            ...(citation.asset || {}),
+            id: assetId,
+            image_url: `/api/v1/assets/${assetId}/image`,
+            thumbnail_url: `/api/v1/assets/${assetId}/thumbnail`,
+        },
+    }))
+    window.open(`/dashboard/citation-viewer?key=${encodeURIComponent(key)}`, '_blank')
 }
 
 const openAssetImage = (citation: Citation) => {
@@ -398,7 +447,7 @@ function AuthenticatedInlineAssetImage({ citation }: { citation: Citation }) {
     if (!endpoint || failed) {
         return (
             <div className="flex min-h-40 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-xs font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-900/50">
-                Khong tai duoc anh minh chung
+                Không tải được ảnh minh chứng
             </div>
         )
     }
@@ -410,9 +459,9 @@ function AuthenticatedInlineAssetImage({ citation }: { citation: Citation }) {
     return (
         <button
             type="button"
-            onClick={() => openAssetImage(citation)}
+            onClick={() => openCitationSource(citation)}
             className="block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left transition hover:border-primary/40 dark:border-slate-700 dark:bg-slate-900/40"
-            title="Mo anh lon"
+            title="Mo vi tri anh trong tai lieu goc"
         >
             <img
                 src={src}
@@ -424,7 +473,8 @@ function AuthenticatedInlineAssetImage({ citation }: { citation: Citation }) {
 }
 
 function InlineAssetGallery({ citations = [], messageContent = '' }: { citations?: Citation[], messageContent?: string }) {
-    const assets = citations
+    const visibleCitations = getVisibleCitations(messageContent, citations)
+    const assets = visibleCitations
         .filter((citation) => {
             if (citation.type !== 'asset' && !getAssetId(citation)) return false;
             
@@ -448,9 +498,6 @@ function InlineAssetGallery({ citations = [], messageContent = '' }: { citations
             {assets.map((citation, index) => (
                 <figure key={`${getAssetId(citation) || citation.id || index}-inline`} className="space-y-2">
                     <AuthenticatedInlineAssetImage citation={citation} />
-                    <figcaption className="text-xs text-slate-500 dark:text-slate-400">
-                        {getAssetLocation(citation) || getAssetCaption(citation)}
-                    </figcaption>
                 </figure>
             ))}
         </div>
@@ -604,6 +651,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
 
         const { citation, rect } = activeCitation
         const meta = getCitationMeta(citation)
+        const isAssetCitation = citation.type === 'asset' || Boolean(getAssetId(citation))
         const excerpt = citation.excerpt || citation.description || ''
         const answerCtx = citation.answer_context || ''
         const width = Math.min(540, Math.max(320, window.innerWidth - 32))
@@ -652,7 +700,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                         onClick={() => handleOpenCitation(citation)}
                         className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
                     >
-                        Xem nguon
+                        {isAssetCitation ? 'Xem trong file goc' : 'Xem nguon'}
                         <ExternalLink size={14} />
                     </button>
                 </div>
@@ -713,10 +761,6 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                     answer_context: getUsableAnswerContext(content, mapped.citation, mapped.index),
                 }
                 const chipKey = `citation-${match.index}-${sourcePattern.lastIndex}-${mapped.index}-${occurrenceIndex}`
-                if (longSourceText) {
-                    pushText(longSourceText, `source-${match.index}-${occurrenceIndex}`)
-                    pushText(' ', `space-${match.index}-${occurrenceIndex}`)
-                }
                 nodes.push(renderCitationChip(contextualCitation, mapped.index, chipKey))
                 occurrenceIndex += 1
             } else {
@@ -801,9 +845,9 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                     </p>
                                 )}
 
-                                {message.citations && message.citations.length > 0 && (
+                                {message.citations && getVisibleCitations(message.content, message.citations).length > 0 && (
                                     <KnowledgeCard
-                                        citations={message.citations.map((citation, citationIndex) => ({
+                                        citations={getVisibleCitations(message.content, message.citations).map((citation, citationIndex) => ({
                                             ...citation,
                                             answer_context: getUsableAnswerContext(message.content, citation, citationIndex),
                                         }))}

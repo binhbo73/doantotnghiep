@@ -8,6 +8,15 @@ interface WordViewerProps {
     searchText?: string
     chunkText?: string
     answerContext?: string
+    assetImage?: {
+        id?: string
+        paragraphIndex?: number
+        imageIndex?: number
+        position?: Record<string, number>
+        imageEndpoint?: string
+        caption?: string
+        contextText?: string
+    }
     citationTarget?: {
         documentId?: string
         chunkId?: string
@@ -91,12 +100,12 @@ function findBestPreviewBlock(root: HTMLElement, referenceText?: string): HTMLEl
 
     let best: { element: HTMLElement; score: number } | null = null
 
-    candidates.forEach((element) => {
+    for (const element of candidates) {
         const text = normalizeText(element.textContent || '')
-        if (text.length < 20 || text.length > 800) return
+        if (text.length < 20 || text.length > 800) continue
 
         if (element.querySelector('p, li, td, th, h1, h2, h3, h4, h5, h6, blockquote, pre, section, article')) {
-            return
+            continue
         }
 
         const tokenSet = new Set(text.split(/[^a-z0-9]+/i).filter(Boolean))
@@ -107,7 +116,7 @@ function findBestPreviewBlock(root: HTMLElement, referenceText?: string): HTMLEl
         if (score > 0 && (!best || score > best.score)) {
             best = { element, score }
         }
-    })
+    }
 
     return best?.element || null
 }
@@ -199,7 +208,7 @@ function highlightPreviewHtml(html: string, searchText?: string, chunkText?: str
     return root.innerHTML
 }
 
-export function WordViewer({ fileUrl, searchText, chunkText, answerContext, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
+export function WordViewer({ fileUrl, searchText, chunkText, answerContext, assetImage, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
     const [htmlContent, setHtmlContent] = useState<string>('')
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -257,6 +266,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, onLo
                         .docx-preview blockquote { margin: 0 0 1rem; padding-left: 1rem; border-left: 3px solid #cbd5e1; color: #475569; }
                         .docx-preview .citation-preview-highlight { background: #fde68a; color: inherit; border-radius: 4px; padding: 0 2px; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.16); }
                         .docx-preview .citation-preview-block-highlight { background: #fef3c7; outline: 2px solid rgba(245, 158, 11, 0.25); outline-offset: 4px; border-radius: 8px; }
+                        .docx-preview .citation-asset-image-highlight { outline: 4px solid rgb(34 211 238); outline-offset: 6px; border-radius: 8px; box-shadow: 0 0 0 8px rgba(34, 211, 238, 0.16); }
                     </style>
                 `
 
@@ -289,7 +299,31 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, onLo
         if (!container || isLoading || error || !htmlContent) return
 
         const firstHighlight = container.querySelector('.citation-preview-highlight, .citation-preview-block-highlight') as HTMLElement | null
-        if (firstHighlight) {
+        const assetTarget = (() => {
+            if (!assetImage) return null
+            const imageIndex = typeof assetImage.imageIndex === 'number'
+                ? assetImage.imageIndex
+                : typeof assetImage.position?.image_index === 'number'
+                    ? assetImage.position.image_index
+                    : undefined
+            if (typeof imageIndex === 'number') {
+                const indexed = container.querySelector(`[data-docx-image-index="${imageIndex}"]`) as HTMLElement | null
+                if (indexed) return indexed
+                const images = Array.from(container.querySelectorAll('.docx-preview img')) as HTMLElement[]
+                if (images[imageIndex]) return images[imageIndex]
+            }
+            if (typeof assetImage.paragraphIndex !== 'number') return null
+            const indexed = container.querySelector(`[data-docx-paragraph-index="${assetImage.paragraphIndex}"] img`) as HTMLElement | null
+            if (indexed) return indexed
+            return null
+        })()
+
+        if (assetTarget) {
+            assetTarget.classList.add('citation-asset-image-highlight')
+            window.setTimeout(() => {
+                assetTarget.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            }, 100)
+        } else if (firstHighlight) {
             window.setTimeout(() => {
                 firstHighlight.scrollIntoView({ block: 'center', behavior: 'smooth' })
             }, 100)
@@ -312,7 +346,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, onLo
             container.removeEventListener('scroll', updateStats)
             window.removeEventListener('resize', updateStats)
         }
-    }, [htmlContent, isLoading, error])
+    }, [htmlContent, isLoading, error, assetImage])
 
     if (isLoading) {
         return (

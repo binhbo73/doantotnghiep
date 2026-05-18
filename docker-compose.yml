@@ -80,7 +80,7 @@ services:
       LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
       EMBEDDING_BACKEND: flag
       EMBEDDING_MODEL: /app/models/bge-m3
-      EMBEDDING_DEVICE: auto
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
       CHUNK_TOKEN_SIZE_PDF: "160"
       CHUNK_TOKEN_OVERLAP_PDF: "32"
       CHUNK_TOKEN_SIZE_DOC: "240"
@@ -108,7 +108,7 @@ services:
       ASSET_PIPELINE_ENABLED: "true"
       ASSET_OCR_ENABLED: "true"
       ASSET_OCR_LANGUAGES: "vie+eng"
-      ASSET_VL_CAPTION_ENABLED: "true"
+      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-false}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
       VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
@@ -116,7 +116,7 @@ services:
       VL_MODEL_TIMEOUT: "120"
       VL_MODEL_MAX_TOKENS: "256"
       VL_MODEL_TEMPERATURE: "0.3"
-      LLM_CONTEXT_WINDOW: "8192"
+      LLM_CONTEXT_WINDOW: ${LLM_CONTEXT_WINDOW:-4096}
       # Email
       EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
       SMTP_HOST: smtp.gmail.com
@@ -186,7 +186,7 @@ services:
       LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
       EMBEDDING_BACKEND: flag
       EMBEDDING_MODEL: /app/models/bge-m3
-      EMBEDDING_DEVICE: auto
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
       CHUNK_TOKEN_SIZE_PDF: "160"
       CHUNK_TOKEN_OVERLAP_PDF: "32"
       CHUNK_TOKEN_SIZE_DOC: "240"
@@ -201,7 +201,7 @@ services:
       RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
       ASSET_PIPELINE_ENABLED: "true"
       ASSET_OCR_ENABLED: "true"
-      ASSET_VL_CAPTION_ENABLED: "true"
+      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-false}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
       VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
@@ -267,12 +267,12 @@ services:
       LLAMA_ARG_MODEL: /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
       LLAMA_ARG_HOST: 0.0.0.0
       LLAMA_ARG_PORT: 8080
-      LLAMA_ARG_CTX_SIZE: 8192
+      LLAMA_ARG_CTX_SIZE: ${LLM_SERVER_CTX_SIZE:-4096}
       LLAMA_ARG_N_GPU_LAYERS: 35
       LLAMA_ARG_EMBEDDING: "false"
-      LLAMA_ARG_BATCH: "1024"
-      LLAMA_ARG_UBATCH: "1024"
-    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size 8192 --n-gpu-layers 35 --batch-size 1024 --ubatch-size 1024
+      LLAMA_ARG_BATCH: ${LLM_SERVER_BATCH:-512}
+      LLAMA_ARG_UBATCH: ${LLM_SERVER_UBATCH:-512}
+    command: --server -m /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --ctx-size ${LLM_SERVER_CTX_SIZE:-4096} --parallel ${LLM_SERVER_PARALLEL:-1} --n-gpu-layers ${LLM_SERVER_GPU_LAYERS:-35} --batch-size ${LLM_SERVER_BATCH:-512} --ubatch-size ${LLM_SERVER_UBATCH:-512}
     deploy:
       resources:
         reservations:
@@ -285,8 +285,8 @@ services:
 
   # 7. Llama.cpp Server - Vision Model (Qwen2.5-VL-3B)
   llama-vl-server:
-    # profiles:
-    #   - vl
+    profiles:
+      - vl
     image: ghcr.io/ggml-org/llama.cpp:full-cuda12-b7869
     container_name: rag_llama_vl_server
     restart: unless-stopped
@@ -301,10 +301,11 @@ services:
       --mmproj /models/Qwen2.5-VL-3B-Instruct-mmproj-f16.gguf
       --host 0.0.0.0
       --port 8081
-      --ctx-size 8192
-      --n-gpu-layers 0
-      --batch-size 512
-      --ubatch-size 512
+      --ctx-size ${VL_SERVER_CTX_SIZE:-8192}
+      --parallel ${VL_SERVER_PARALLEL:-1}
+      --n-gpu-layers ${VL_SERVER_GPU_LAYERS:-0}
+      --batch-size ${VL_SERVER_BATCH:-512}
+      --ubatch-size ${VL_SERVER_UBATCH:-512}
     deploy:
       resources:
         reservations:

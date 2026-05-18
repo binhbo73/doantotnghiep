@@ -29,6 +29,9 @@ type CitationViewerPayload = {
     asset_page_number?: number | string
     asset_sheet_name?: string
     asset_anchor_cell?: string
+    asset_paragraph_index?: number | null
+    asset_position_in_document?: Record<string, number> | null
+    asset_context_text?: string
     asset?: {
         id?: string
         image_url?: string | null
@@ -37,6 +40,9 @@ type CitationViewerPayload = {
         page_number?: number | null
         sheet_name?: string | null
         anchor_cell?: string | null
+        paragraph_index?: number | null
+        position_in_document?: Record<string, number> | null
+        context_text?: string | null
     }
 }
 
@@ -78,11 +84,34 @@ type CitationChunkSource = {
 
 type DocumentAssetSource = {
     id: string
+    asset_type?: string | null
+    page_number?: number | null
     sheet_name?: string | null
     anchor_cell?: string | null
+    paragraph_index?: number | null
+    position_in_document?: Record<string, number> | null
+    context_text?: string | null
     caption?: string | null
     image_url?: string | null
     thumbnail_url?: string | null
+}
+
+type AssetImageHint = {
+    id?: string
+    pageNumber?: number
+    sheetName?: string
+    anchorCell?: string
+    paragraphIndex?: number
+    imageIndex?: number
+    position?: Record<string, number>
+    imageEndpoint?: string
+    caption?: string
+    contextText?: string
+}
+
+const getPositionNumber = (position: Record<string, number> | null | undefined, key: string) => {
+    const value = position?.[key]
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function normalizeForSectionMatch(value?: string) {
@@ -255,7 +284,7 @@ function CitationViewerContent() {
 
     const assetId = payload.asset_id || payload.asset?.id
     const hasAsset = payload.type === 'asset' || Boolean(assetId)
-    const shouldOpenAssetImage = hasAsset && payload.viewer_mode !== 'source'
+    const shouldOpenAssetImage = hasAsset && payload.viewer_mode === 'asset'
 
     console.log(`[CitationViewer] Payload analysis: document_id=${payload.document_id}, type=${payload.type}, asset_id=${assetId}, hasAsset=${hasAsset}, viewer_mode=${payload.viewer_mode}, shouldOpenAssetImage=${shouldOpenAssetImage}`)
 
@@ -342,7 +371,9 @@ function CitationViewerContent() {
     }, [shouldOpenAssetImage, payload.document_id])
 
     const initialPage = Number(chunkSource?.page_number || payload.page || 1)
-    const preferredCitationText = payload.answer_context || payload.excerpt || payload.description || ''
+    const preferredCitationText = hasAsset
+        ? (payload.asset_context_text || payload.asset?.context_text || payload.description || payload.excerpt || '')
+        : (payload.answer_context || payload.excerpt || payload.description || '')
     const chunkSectionText = getPrimaryChunkSection(chunkSource?.content, preferredCitationText)
     // chunkSource.content thuong overlap voi chunk ke tiep, nen chi truyen section chinh
     // cua chunk xuong viewer. Neu co answer_context/excerpt thi do moi la doan can to.
@@ -385,10 +416,15 @@ function CitationViewerContent() {
         console.log(`[CitationViewer excelAssetImages] documentAssets:`, documentAssets)
         const mapped = documentAssets.map((item) => ({
             id: item.id,
+            pageNumber: item.page_number || undefined,
             sheetName: item.sheet_name || undefined,
             anchorCell: item.anchor_cell || undefined,
+            paragraphIndex: typeof item.paragraph_index === 'number' ? item.paragraph_index : undefined,
+            imageIndex: getPositionNumber(item.position_in_document, 'image_index'),
+            position: item.position_in_document || undefined,
             imageEndpoint: item.image_url ? normalizeApiEndpoint(item.image_url) : `/assets/${item.id}/image`,
             caption: item.caption || undefined,
+            contextText: item.context_text || undefined,
         }))
 
         // If we have a payload asset but it's not in documentAssets, 
@@ -398,10 +434,15 @@ function CitationViewerContent() {
         if (!isAssetsLoading && mapped.length === 0 && hasAsset && assetId) {
             mapped.push({
                 id: assetId,
+                pageNumber: Number(payload.asset_page_number || payload.asset?.page_number || payload.page) || undefined,
                 sheetName: payload.asset_sheet_name || payload.asset?.sheet_name || undefined,
                 anchorCell: payload.asset_anchor_cell || payload.asset?.anchor_cell || undefined,
+                paragraphIndex: typeof payload.asset_paragraph_index === 'number' ? payload.asset_paragraph_index : typeof payload.asset?.paragraph_index === 'number' ? payload.asset.paragraph_index : undefined,
+                imageIndex: getPositionNumber(payload.asset_position_in_document || payload.asset?.position_in_document, 'image_index'),
+                position: payload.asset_position_in_document || payload.asset?.position_in_document || undefined,
                 imageEndpoint: `/assets/${assetId}/image`,
                 caption: payload.asset_caption || payload.asset?.caption || payload.title,
+                contextText: payload.asset_context_text || payload.asset?.context_text || undefined,
             })
         }
 
@@ -423,10 +464,15 @@ function CitationViewerContent() {
         if (exactMatch) {
             return {
                 id: exactMatch.id,
+                pageNumber: exactMatch.page_number || undefined,
                 sheetName: exactMatch.sheet_name || undefined,
                 anchorCell: exactMatch.anchor_cell || undefined,
+                paragraphIndex: typeof exactMatch.paragraph_index === 'number' ? exactMatch.paragraph_index : undefined,
+                imageIndex: getPositionNumber(exactMatch.position_in_document, 'image_index'),
+                position: exactMatch.position_in_document || undefined,
                 imageEndpoint: exactMatch.image_url ? normalizeApiEndpoint(exactMatch.image_url) : `/assets/${exactMatch.id}/image`,
                 caption: exactMatch.caption || undefined,
+                contextText: exactMatch.context_text || undefined,
             }
         }
 
@@ -440,10 +486,15 @@ function CitationViewerContent() {
                 console.log(`[CitationViewer] Found replacement for stale asset ${assetId} at ${targetSheet} ${targetAnchor}: ${anchorMatch.id}`)
                 return {
                     id: anchorMatch.id,
+                    pageNumber: anchorMatch.page_number || undefined,
                     sheetName: anchorMatch.sheet_name || undefined,
                     anchorCell: anchorMatch.anchor_cell || undefined,
+                    paragraphIndex: typeof anchorMatch.paragraph_index === 'number' ? anchorMatch.paragraph_index : undefined,
+                    imageIndex: getPositionNumber(anchorMatch.position_in_document, 'image_index'),
+                    position: anchorMatch.position_in_document || undefined,
                     imageEndpoint: anchorMatch.image_url ? normalizeApiEndpoint(anchorMatch.image_url) : `/assets/${anchorMatch.id}/image`,
                     caption: anchorMatch.caption || undefined,
+                    contextText: anchorMatch.context_text || undefined,
                 }
             }
         }
@@ -451,15 +502,21 @@ function CitationViewerContent() {
         // Fallback to what we have (might 404 if stale)
         return {
             id: assetId,
+            pageNumber: Number(payload.asset_page_number || payload.asset?.page_number || payload.page) || undefined,
             sheetName: targetSheet || undefined,
             anchorCell: targetAnchor || undefined,
+            paragraphIndex: typeof payload.asset_paragraph_index === 'number' ? payload.asset_paragraph_index : typeof payload.asset?.paragraph_index === 'number' ? payload.asset.paragraph_index : undefined,
+            imageIndex: getPositionNumber(payload.asset_position_in_document || payload.asset?.position_in_document, 'image_index'),
+            position: payload.asset_position_in_document || payload.asset?.position_in_document || undefined,
             imageEndpoint: `/assets/${assetId}/image`,
             caption: payload.asset_caption || payload.asset?.caption || payload.title,
+            contextText: payload.asset_context_text || payload.asset?.context_text || undefined,
         }
     }, [hasAsset, assetId, payload, documentAssets])
 
     // Derived asset ID to use for fetching (fixed if stale)
     const resolvedAssetId = currentAsset?.id || assetId
+    const assetSearchText = currentAsset?.contextText || payload.asset_context_text || payload.asset?.context_text || searchText
 
     useEffect(() => {
         // Wait until assets are loaded before attempting to open an asset image
@@ -624,8 +681,9 @@ function CitationViewerContent() {
                         initialPage={initialPage}
                         searchText={searchText}
                         chunkText={chunkText}
-                        answerContext={answerContext}
+                        answerContext={hasAsset ? '' : answerContext}
                         citationTarget={citationTarget}
+                        assetImage={currentAsset}
                         onLoadSuccess={setPageCount}
                         onLoadError={(err) => setError(err.message)}
                     />
@@ -634,10 +692,11 @@ function CitationViewerContent() {
                 {!error && viewer?.kind === 'word' && (
                     <WordViewer
                         fileUrl={viewer.fileUrl}
-                        searchText={searchText}
-                        chunkText={chunkText}
-                        answerContext={answerContext}
+                        searchText={hasAsset ? assetSearchText : searchText}
+                        chunkText={hasAsset ? '' : chunkText}
+                        answerContext={hasAsset ? '' : answerContext}
                         citationTarget={citationTarget}
+                        assetImage={currentAsset}
                         onLoadSuccess={() => setPageCount(0)}
                         onLoadError={(err) => setError(err.message)}
                     />

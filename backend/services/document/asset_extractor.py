@@ -175,15 +175,26 @@ class AssetExtractor:
                 document_xml = z.read('word/document.xml').decode('utf-8')
 
             # Tìm <wp:inline> hoặc <wp:anchor> → <a:blip r:embed="rIdX">
-            img_pattern = re.compile(
-                r'<(?:wp:inline|wp:anchor).*?'
-                r'<a:blip[^>]*r:embed="(rId\d+)"[^>]*>'
-                r'.*?</(?:wp:inline|wp:anchor)>',
-                re.DOTALL,
-            )
-            img_refs = img_pattern.findall(document_xml)
+            paragraph_blocks = re.findall(r'<w:p\b.*?</w:p>', document_xml, re.DOTALL)
+            img_entries = []
+            for xml_para_idx, paragraph_xml in enumerate(paragraph_blocks):
+                for rId in re.findall(r'<a:blip[^>]*(?:r:embed|r:link)="(rId\d+)"', paragraph_xml):
+                    img_entries.append((xml_para_idx, rId))
 
-            for idx, rId in enumerate(img_refs):
+            if not img_entries:
+                img_pattern = re.compile(
+                    r'<(?:wp:inline|wp:anchor).*?'
+                    r'<a:blip[^>]*(?:r:embed|r:link)="(rId\d+)"[^>]*>'
+                    r'.*?</(?:wp:inline|wp:anchor)>',
+                    re.DOTALL,
+                )
+                img_refs = img_pattern.findall(document_xml)
+                img_entries = [
+                    (min(idx, len(para_texts) - 1) if para_texts else 0, rId)
+                    for idx, rId in enumerate(img_refs)
+                ]
+
+            for idx, (para_idx, rId) in enumerate(img_entries):
                 if rId not in image_map:
                     continue
 
@@ -194,7 +205,7 @@ class AssetExtractor:
                 fmt = self._guess_format(img_info.get('content_type', ''))
 
                 # Xác định paragraph gần nhất
-                para_idx = min(idx, len(para_texts) - 1) if para_texts else 0
+                para_idx = min(para_idx, len(para_texts) - 1) if para_texts else 0
 
                 # Context text
                 context_text = ''
@@ -213,7 +224,12 @@ class AssetExtractor:
                     'asset_type': 'docx_inline',
                     'paragraph_index': para_idx,
                     'context_text': context_text,
-                    'position': {},
+                    'position': {
+                        'paragraph_index': para_idx,
+                        'image_index': idx,
+                        'width': width,
+                        'height': height,
+                    },
                     'width': width,
                     'height': height,
                     'source': f'paragraph_{para_idx}_rId_{rId}',

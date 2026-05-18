@@ -158,24 +158,31 @@ class VLCaptionClient:
 
         if language == 'vi':
             prompt = (
-                "Bạn là chuyên gia phân tích thị giác. Hãy thực hiện các bước sau nhưng CHỈ TRẢ VỀ nội dung mô tả, không lặp lại các yêu cầu của tôi:\n"
-                "1. Xác định loại ảnh: Văn bản/giấy tờ, biểu đồ/giao diện, hay ảnh chụp thực tế?\n"
-                "2. Mô tả nội dung THỰC TẾ: \n"
-                "   - Nếu là giấy tờ: Đọc tên, ngày tháng, tiêu đề và các thông tin định danh.\n"
-                "   - Nếu là biểu đồ/giao diện: Mô tả các thành phần và chức năng chính.\n"
-                "   - Nếu là ảnh chụp: Mô tả chủ thể, hành động và bối cảnh.\n"
-                "3. Chú ý hướng chữ: Đọc theo đúng chiều của chữ trong ảnh.\n"
-                "Lưu ý: Không thêm lời dẫn, không lặp lại yêu cầu. Chỉ trả về kết quả mô tả sạch."
+               "Bạn là hệ thống tạo caption ảnh cho RAG. Hãy quan sát kỹ ảnh và mô tả chính xác những gì thực sự nhìn thấy.\n"
+                "Chỉ trả về một đoạn mô tả hoàn chỉnh bằng tiếng Việt có dấu. Không đánh số, không dùng tiêu đề, không bullet, không lặp lại yêu cầu.\n\n"
+                "Nội dung cần mô tả:\n"
+                "- Loại ảnh nếu nhận ra: ảnh chụp, giấy tờ/văn bản, bảng biểu, biểu đồ, giao diện phần mềm, sơ đồ, logo, chữ viết tay, hoặc ảnh minh họa.\n"
+                "- Nội dung chính: đối tượng, bố cục, hành động, trạng thái, quan hệ giữa các thành phần.\n"
+                "- Chữ/số/ký hiệu đọc được: tiêu đề, nhãn, tên riêng, ngày tháng, số liệu, nút bấm, cột/hàng, con dấu.\n"
+                "- Với bảng/biểu đồ/giao diện: nêu tên thành phần, nhãn chính, dữ liệu nổi bật và chức năng nếu nhìn thấy rõ.\n"
+                "- Với giấy tờ: nêu loại giấy tờ, tiêu đề, tên người/tổ chức, ngày tháng, mã số, chữ ký hoặc con dấu nếu đọc được.\n"
+                "- Nếu ảnh bị mờ, xoay, cắt mất, hoặc chữ không đọc rõ, hãy nói rõ phần nào không đọc rõ thay vì đoán.\n"
+                "- Không bịa thông tin không có trong ảnh. Không dùng ngữ cảnh bên ngoài để thay thế nội dung thị giác.\n\n"
+                "Độ dài: 2-4 câu, đủ chi tiết để người dùng tìm lại ảnh bằng từ khóa."
             )
         else:
             prompt = (
-                "You are a visual analysis expert. Look closely at this image and describe what you SEE with your own eyes.\n\n"
-                "IMPORTANT REQUIREMENTS:\n"
-                "1. Only describe the ACTUAL content in the image (people, objects, stamps, text on the image).\n"
-                "2. The image might be rotated; try to read text in the correct orientation.\n"
-                "3. DO NOT hallucinate content based on surrounding text if the image doesn't show it.\n"
-                "4. If you see a red stamp, a person's name, or a document type (certificate, degree), state it clearly.\n"
-                "5. Keep it concise (3-4 sentences).\n"
+             "You are the image caption generation system for RAG. Please observe the image carefully and accurately describe what you actually see."
+            "Return only a complete description in Vietnamese with diacritics. No numbering, no titles, no bullet points, and no repetition of requests."
+            "Content to describe:"
+            "- Image type if recognized: photograph, document/text, table, chart, software interface, diagram, logo, handwriting, or illustration."
+            "- Main content: object, layout, action, state, relationship between components."
+            "- Readable letters/numbers/symbols: title, label, proper name, date, data, button, column/row, seal."
+            "- For tables/charts/interfaces: state the component name, main label, prominent data, and function if clearly visible."
+            "- For documents: state the type of document, Title, name of person/organization, date, code number, signature or seal if legible."
+            "- If the image is blurry, rotated, cropped, or the text is illegible, specify which parts are unclear instead of guessing."
+            "- Do not fabricate information not present in the image. Do not use external context to replace visual content."
+            "Length: 2-4 sentences, detailed enough for users to find the image using keywords."
             )
 
         # ── Thêm context như một gợi ý phụ, không phải nguồn chính ──

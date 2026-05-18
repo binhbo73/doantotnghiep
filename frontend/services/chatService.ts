@@ -45,6 +45,9 @@ export interface CitationDTO {
     asset_page_number?: number | string
     asset_sheet_name?: string
     asset_anchor_cell?: string
+    asset_paragraph_index?: number | null
+    asset_position_in_document?: Record<string, number> | null
+    asset_context_text?: string
     asset?: {
         id: string
         image_url?: string | null
@@ -53,6 +56,9 @@ export interface CitationDTO {
         page_number?: number | null
         sheet_name?: string | null
         anchor_cell?: string | null
+        paragraph_index?: number | null
+        position_in_document?: Record<string, number> | null
+        context_text?: string | null
     }
 }
 
