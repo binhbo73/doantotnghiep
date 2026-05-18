@@ -51,6 +51,7 @@ from typing import Tuple, Dict, Any, Optional
 from pathlib import Path
 from django.conf import settings
 from core.exceptions import DocumentProcessingError
+from services.document.pdf_runtime import convert_pdf_to_markdown_quiet, read_pdf_page_counts
 
 logger = logging.getLogger(__name__)
 
@@ -290,18 +291,15 @@ class DocumentParser:
             DocumentProcessingError: If parsing fails
         """
         import tempfile
-        import shutil
         
         try:
-            from pypdf import PdfReader
             import opendataloader_pdf
             
             logger.debug(f"Parsing PDF (opendataloader-pdf): {os.path.basename(file_path)}")
 
             page_count = 0
             try:
-                with open(file_path, 'rb') as pdf_file:
-                    page_count = len(PdfReader(pdf_file).pages)
+                page_count, _ = read_pdf_page_counts(file_path)
             except Exception as page_err:
                 logger.warning(f"Could not read PDF page count for {file_path}: {page_err}")
             
@@ -309,7 +307,8 @@ class DocumentParser:
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Convert PDF using opendataloader-pdf
                 # Use markdown-with-images + embedded images so extracted image data is preserved
-                opendataloader_pdf.convert(
+                convert_pdf_to_markdown_quiet(
+                    opendataloader_pdf,
                     input_path=[file_path],
                     output_dir=temp_dir,
                     format="markdown-with-images",

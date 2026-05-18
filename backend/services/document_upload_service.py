@@ -484,8 +484,12 @@ class DocumentUploadService:
             # Update document based on pipeline result
             if success:
                 try:
+                    document.refresh_from_db()
                     document.status = 'completed'
                     document.metadata = document.metadata or {}
+                    for key, value in context.metadata.items():
+                        if isinstance(value, (str, int, float, bool, list, dict)) or value is None:
+                            document.metadata[key] = value
                     document.metadata.update({
                         'chunk_count': len(context.chunks),
                         'processed_at': time.time(),

@@ -71,6 +71,8 @@ class AssetPipelineStage(PipelineStage):
             pa_text = context.metadata.get('page_aware_text')
             if pa_text and hasattr(pa_text, 'text'):
                 full_text = pa_text.text
+            elif context.text_content:
+                full_text = context.text_content
             elif context.metadata.get('text_content'):
                 full_text = context.metadata['text_content']
 

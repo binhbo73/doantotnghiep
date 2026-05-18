@@ -108,7 +108,7 @@ services:
       ASSET_PIPELINE_ENABLED: "true"
       ASSET_OCR_ENABLED: "true"
       ASSET_OCR_LANGUAGES: "vie+eng"
-      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-false}
+      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-true}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
       VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
@@ -201,7 +201,7 @@ services:
       RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
       ASSET_PIPELINE_ENABLED: "true"
       ASSET_OCR_ENABLED: "true"
-      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-false}
+      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-true}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
       VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
@@ -285,8 +285,6 @@ services:
 
   # 7. Llama.cpp Server - Vision Model (Qwen2.5-VL-3B)
   llama-vl-server:
-    profiles:
-      - vl
     image: ghcr.io/ggml-org/llama.cpp:full-cuda12-b7869
     container_name: rag_llama_vl_server
     restart: unless-stopped
@@ -303,7 +301,7 @@ services:
       --port 8081
       --ctx-size ${VL_SERVER_CTX_SIZE:-8192}
       --parallel ${VL_SERVER_PARALLEL:-1}
-      --n-gpu-layers ${VL_SERVER_GPU_LAYERS:-0}
+      --n-gpu-layers ${VL_SERVER_GPU_LAYERS:-16}
       --batch-size ${VL_SERVER_BATCH:-512}
       --ubatch-size ${VL_SERVER_UBATCH:-512}
     deploy:

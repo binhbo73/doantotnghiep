@@ -59,9 +59,12 @@ class AssetExtractor:
         assets = []
         try:
             import fitz  # PyMuPDF
+            from django.conf import settings
 
             doc = fitz.open(file_path)
             total_pages = len(doc)
+            render_text_pages = getattr(settings, 'ASSET_RENDER_TEXT_PDF_PAGES', False)
+            scanned_text_threshold = int(getattr(settings, 'ASSET_SCANNED_PAGE_TEXT_THRESHOLD', 40))
 
             for page_num in range(total_pages):
                 page = doc[page_num]
@@ -105,7 +108,15 @@ class AssetExtractor:
                             continue
 
                 # ── Chiến lược 2: Render toàn trang ──
-                if not image_list:
+                # Render scanned pages only. Rendering every text page without
+                # embedded raster images turns an 11-page PDF into 11 assets.
+                page_text = (page.get_text("text") or "").strip()
+                should_render_page = (
+                    not image_list
+                    and (render_text_pages or len(page_text) <= scanned_text_threshold)
+                )
+
+                if should_render_page:
                     try:
                         pix = page.get_pixmap(dpi=150)
                         image_bytes = pix.tobytes("png")

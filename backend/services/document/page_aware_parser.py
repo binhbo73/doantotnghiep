@@ -20,6 +20,8 @@ from typing import List, Dict, Tuple, Optional, Any
 from pathlib import Path
 from datetime import date, datetime
 
+from services.document.pdf_runtime import convert_pdf_to_markdown_quiet, read_pdf_page_counts
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,24 +143,16 @@ class PageAwareParserEnhancer:
             PageAwareText with page mapping
         """
         try:
-            from pypdf import PdfReader  # v5+ has pypdf package, not PyPDF2
             import tempfile
-            import shutil
             import opendataloader_pdf
             
             # Get page count first
-            with open(file_path, 'rb') as pdf_file:
-                pdf_reader = PdfReader(pdf_file)
-                total_pages = len(pdf_reader.pages)
-                # ✅ P0#1: Per-page char counts for proportional boundary placement
-                page_char_counts = []
-                for page in pdf_reader.pages:
-                    page_text = page.extract_text() or ''
-                    page_char_counts.append(len(page_text))
+            total_pages, page_char_counts = read_pdf_page_counts(file_path)
             
             # Parse with opendataloader-pdf
             with tempfile.TemporaryDirectory() as temp_dir:
-                opendataloader_pdf.convert(
+                convert_pdf_to_markdown_quiet(
+                    opendataloader_pdf,
                     input_path=[file_path],
                     output_dir=temp_dir,
                     format="markdown-with-images",
