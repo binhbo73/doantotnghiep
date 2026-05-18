@@ -904,6 +904,9 @@ Cách làm việc:
         
         # FINAL FALLBACK: Nếu vẫn không có IDs nào (không truyền từ request, không có trong DB)
         # -> Tự động tìm kiếm trong toàn bộ tài liệu và folder mà user có quyền truy cập.
+        # Default no-selection scope: use all accessible system attachments.
+        # This includes directly accessible documents and documents inside
+        # accessible folders, matching both tabs in the system attachment picker.
         if not final_ids and user_id:
             logger.info(
                 f"[_resolve_document_ids] No explicit attachments, fetching accessible documents/folders for user {user_id}"
@@ -933,10 +936,10 @@ Cách làm việc:
                         is_deleted=False,
                     ).values_list('id', flat=True)
                     final_ids.extend([str(d) for d in docs_in_accessible_folders])
-                
+
                 if final_ids:
                     logger.debug(
-                        f"[_resolve_document_ids] Resolved {len(final_ids)} document IDs from accessible documents/folders"
+                        f"[_resolve_document_ids] Resolved {len(final_ids)} document IDs from accessible system documents/folders"
                     )
             except Exception as e:
                 logger.error(f"[_resolve_document_ids] Lỗi khi lấy danh sách tài liệu/folder truy cập: {e}")
@@ -1328,9 +1331,9 @@ Cách làm việc:
 
             context_str = ''
             rag_candidates = []
-            use_rag = bool(resolved_ids)
+            has_rag_scope = bool(resolved_ids)
 
-            if use_rag:
+            if has_rag_scope:
                 yield {'status': 'Đang tìm kiếm thông tin trong tài liệu...'}
                 context_str, rag_candidates = self._retrieve_context(
                     query=query,
@@ -1363,6 +1366,7 @@ Cách làm việc:
             else:
                 messages_with_context = messages_for_llm
 
+            use_rag = bool(context_str)
             system_prompt = self.RAG_SYSTEM_PROMPT if use_rag else ''
 
             t_pre_llm = time.monotonic()

@@ -1,15 +1,47 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
-import { ChatService, MessageDTO, ConversationDTO, ConversationAttachmentPayload } from '@/services/chatService'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { ChatService } from '@/services/chatService'
+import type {
+    MessageDTO,
+    ConversationDTO,
+    ConversationAttachmentPayload,
+    ConversationAttachmentsDTO,
+} from '@/services/chatService'
 import { useToast } from './useToast'
 import { Message } from '@/components/features/chat/ChatMessages'
+import type { ChatSelectedResourceItem } from '@/components/features/chat/ChatInput'
 
 interface UseChatOptions {
     autoFetchConversations?: boolean
     onConversationCreated?: (conversation: ConversationDTO) => void
     onMessageSent?: (message: MessageDTO) => void
 }
+
+export interface ConversationAttachmentViewState {
+    documents: ChatSelectedResourceItem[]
+    folders: ChatSelectedResourceItem[]
+}
+
+const emptyConversationAttachments: ConversationAttachmentViewState = {
+    documents: [],
+    folders: [],
+}
+
+const mapConversationAttachments = (
+    attachments?: Pick<ConversationDTO, 'attached_documents' | 'attached_folders'> | ConversationAttachmentsDTO | null
+): ConversationAttachmentViewState => ({
+    documents: (attachments?.attached_documents || []).map((doc) => ({
+        id: doc.id,
+        name: doc.name || 'Tai lieu khong xac dinh',
+        detail: doc.file_type || 'document',
+    })),
+    folders: (attachments?.attached_folders || []).map((folder) => ({
+        id: folder.id,
+        name: folder.name || 'Thu muc khong xac dinh',
+        detail: 'folder',
+    })),
+})
 
 const normalizeCitations = (raw: MessageDTO['citations'] | any): Message['citations'] => {
     const citations = Array.isArray(raw) ? raw : Array.isArray(raw?.citations) ? raw.citations : []
@@ -42,6 +74,9 @@ export const useChat = (options: UseChatOptions = {}) => {
     const [isFetchingConversations, setIsFetchingConversations] = useState(false)
     const [userFeedback, setUserFeedback] = useState<Map<string, string>>(new Map())
     const [feedbackLoading, setFeedbackLoading] = useState<Map<string, boolean>>(new Map())
+    const [conversationAttachments, setConversationAttachments] =
+        useState<ConversationAttachmentViewState>(emptyConversationAttachments)
+    const attachmentFetchSeq = useRef(0)
 
     // Check if we have authentication token
     const hasToken = typeof window !== 'undefined' && !!localStorage.getItem('auth_token')  // Fixed: access_token -> auth_token
@@ -91,6 +126,27 @@ export const useChat = (options: UseChatOptions = {}) => {
         }
     }, [showError])
 
+    const fetchConversationAttachments = useCallback(async (conversationId: string) => {
+        const requestSeq = attachmentFetchSeq.current + 1
+        attachmentFetchSeq.current = requestSeq
+        setConversationAttachments(emptyConversationAttachments)
+
+        try {
+            const attachments = await ChatService.getConversationAttachments(conversationId)
+            if (attachmentFetchSeq.current === requestSeq) {
+                setConversationAttachments(mapConversationAttachments(attachments))
+            }
+            return attachments
+        } catch (error) {
+            if (attachmentFetchSeq.current === requestSeq) {
+                setConversationAttachments(emptyConversationAttachments)
+            }
+            showError('Khong the tai tai lieu dinh kem cua cuoc tro chuyen')
+            console.error('Failed to fetch conversation attachments:', error)
+            return null
+        }
+    }, [showError])
+
     // Create new conversation
     const createConversation = useCallback(async (title?: string) => {
         try {
@@ -99,6 +155,7 @@ export const useChat = (options: UseChatOptions = {}) => {
             setConversations((prev) => [conversation, ...prev])
             setCurrentConversationId(conversation.id)
             setMessages([])
+            setConversationAttachments(emptyConversationAttachments)
             onConversationCreated?.(conversation)
             showSuccess('Tạo cuộc trò chuyện mới thành công')
             return conversation
@@ -132,10 +189,12 @@ export const useChat = (options: UseChatOptions = {}) => {
                 const conversationId = convId
 
                 if (attachments?.documentIds?.length || attachments?.folderIds?.length) {
-                    await ChatService.attachConversationResources(conversationId, {
+                    const updatedConversation = await ChatService.attachConversationResources(conversationId, {
                         documentIds: attachments.documentIds,
                         folderIds: attachments.folderIds,
                     })
+                    attachmentFetchSeq.current += 1
+                    setConversationAttachments(mapConversationAttachments(updatedConversation))
                 }
 
                 // 2. Thêm tin nhắn User lạc quan
@@ -267,8 +326,9 @@ export const useChat = (options: UseChatOptions = {}) => {
         (conversationId: string) => {
             setCurrentConversationId(conversationId)
             fetchMessages(conversationId)
+            fetchConversationAttachments(conversationId)
         },
-        [fetchMessages]
+        [fetchMessages, fetchConversationAttachments]
     )
 
     // Initialize - fetch conversations on mount when authenticated
@@ -287,6 +347,7 @@ export const useChat = (options: UseChatOptions = {}) => {
         isFetchingConversations,
         userFeedback,
         feedbackLoading,
+        conversationAttachments,
 
         // Actions
         createConversation,
@@ -295,6 +356,7 @@ export const useChat = (options: UseChatOptions = {}) => {
         selectConversation,
         fetchConversations,
         fetchMessages,
+        fetchConversationAttachments,
         setCurrentConversationId,
     }
 }

@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import math
 import hashlib
+import re
 import time
 from django.db.models import Q
 from django.apps import apps
@@ -39,7 +40,7 @@ class HybridRetriever:
         doc_hash = hashlib.md5(
             ','.join(sorted(document_ids or [])).encode()
         ).hexdigest()[:12]
-        cache_key = f"hybrid_retrieval:v3:{query}:{top_k}:{sparse_k}:{doc_hash}"
+        cache_key = f"hybrid_retrieval:v4:{query}:{top_k}:{sparse_k}:{doc_hash}"
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -52,6 +53,22 @@ class HybridRetriever:
         sparse_scores: Dict[str, float] = {}
         dense_scores: Dict[str, float] = {}
         timing = {}
+
+        import unicodedata
+        query_norm = ''.join(
+            c for c in unicodedata.normalize('NFD', (query or '').lower())
+            if unicodedata.category(c) != 'Mn'
+        )
+        query_tokens = set(re.findall(r'\w+', query_norm))
+        image_intent_tokens = {'anh', 'asset', 'image', 'photo', 'screenshot'}
+        image_action_tokens = {'xem', 'show', 'hien', 'thi', 'liet', 'ke', 'tim'}
+        should_search_assets = (
+            bool(query_tokens & image_intent_tokens)
+            or 'hinh anh' in query_norm
+            or 'minh chung' in query_norm
+            or 'dinh kem' in query_norm
+            or ('hinh' in query_tokens and 'mo' not in query_tokens and bool(query_tokens & image_action_tokens))
+        )
 
         import concurrent.futures
         import threading
@@ -121,6 +138,14 @@ class HybridRetriever:
                 dense_results = self.qdrant.search_similar(
                     embedding=emb, limit=top_k, filter_payload=qdrant_filter,
                 )
+                # Backward compatibility: older ingestion code did not store
+                # node_type in Qdrant payloads, so node_type='detail' can filter
+                # out valid document vectors. Retry with only document scope.
+                if not dense_results and document_ids:
+                    legacy_filter = {'document_id': document_ids}
+                    dense_results = self.qdrant.search_similar(
+                        embedding=emb, limit=top_k, filter_payload=legacy_filter,
+                    )
                 timing['qdrant_ms'] = (time.monotonic() - t_q) * 1000
 
                 for vector_id, score, payload in dense_results:
@@ -146,6 +171,9 @@ class HybridRetriever:
         def run_asset_search():
             t0 = time.monotonic()
             try:
+                if not should_search_assets:
+                    return
+
                 emb = query_embedding  # pre-computed in main thread
 
                 # Fix: Lower threshold if user explicitly asks for images/assets
@@ -157,9 +185,9 @@ class HybridRetriever:
                 image_keywords = ['ảnh', 'hình', 'asset', 'minh chứng', 'đính kèm', 'anh', 'hinh', 'minh chung', 'dinh kem']
                 is_image_query = any(kw in query_no_accents for kw in image_keywords)
                 
-                effective_threshold = 0.15 if is_image_query else 0.4
+                effective_threshold = 0.15
                 # For image queries, we want to see more assets
-                asset_limit = top_k * 3 if is_image_query else top_k
+                asset_limit = top_k * 3
 
                 asset_results = self.qdrant.search_assets(
                     embedding=emb, limit=asset_limit, score_threshold=effective_threshold,
@@ -239,7 +267,7 @@ class HybridRetriever:
         sorted_candidates = sorted(candidates.values(), key=lambda x: x['score'], reverse=True)
 
         # ── Merge asset results vào candidates ─────────────────
-        if asset_candidates:
+        if asset_candidates and should_search_assets:
             # Batch check for existence to avoid N+1 queries
             asset_ids_from_q = [str(a.get('asset_id')) for a in asset_candidates if a.get('asset_id')]
             DocumentAsset = apps.get_model('documents', 'DocumentAsset')

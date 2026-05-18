@@ -8,6 +8,26 @@ export interface ConversationDTO {
     description?: string
     created_at: string
     updated_at: string
+    attached_documents?: ConversationAttachedDocumentDTO[]
+    attached_folders?: ConversationAttachedFolderDTO[]
+}
+
+export interface ConversationAttachedDocumentDTO {
+    id: string
+    name: string
+    file_type?: string
+    folder_id?: string | null
+}
+
+export interface ConversationAttachedFolderDTO {
+    id: string
+    name: string
+}
+
+export interface ConversationAttachmentsDTO {
+    conversation_id: string
+    attached_documents: ConversationAttachedDocumentDTO[]
+    attached_folders: ConversationAttachedFolderDTO[]
 }
 
 export interface MessageDTO {
@@ -130,7 +150,7 @@ export class ChatService {
     /**
      * Get a specific conversation
      */
-    static async getConversation(conversationId: string) {
+    static async getConversation(conversationId: string): Promise<ConversationDTO> {
         try {
             const response = await apiClient.get(
                 `${API_ENDPOINTS.CHAT.CONVERSATIONS}/${conversationId}/`
@@ -143,9 +163,24 @@ export class ChatService {
     }
 
     /**
+     * Get documents/folders attached to a conversation
+     */
+    static async getConversationAttachments(conversationId: string): Promise<ConversationAttachmentsDTO> {
+        try {
+            const response = await apiClient.get(
+                `${API_ENDPOINTS.CHAT.CONVERSATIONS}/${conversationId}/attachments/`
+            )
+            return response.data.data
+        } catch (error) {
+            console.error(`Failed to fetch conversation attachments ${conversationId}:`, error)
+            throw error
+        }
+    }
+
+    /**
      * Create a new conversation
      */
-    static async createConversation(title?: string) {
+    static async createConversation(title?: string): Promise<ConversationDTO> {
         try {
             const response = await apiClient.post(API_ENDPOINTS.CHAT.CONVERSATIONS, {
                 title: title || 'Cuộc trò chuyện mới',
@@ -163,7 +198,7 @@ export class ChatService {
     static async attachConversationResources(
         conversationId: string,
         payload: ConversationAttachmentPayload
-    ) {
+    ): Promise<ConversationDTO> {
         try {
             const response = await apiClient.post(
                 `${API_ENDPOINTS.CHAT.CONVERSATIONS}/${conversationId}/attachments/`,

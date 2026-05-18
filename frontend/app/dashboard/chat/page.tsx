@@ -9,22 +9,24 @@ import {
     ChatMessages,
     ChatInput,
 } from '@/components/features/chat'
-import { ChatAttachmentState } from '@/components/features/chat/ChatInput'
+import type { ChatAttachmentState } from '@/components/features/chat/ChatInput'
 import { useChat } from '@/hooks/useChat'
 import { useAuthContext } from '@/context'
 import { useToast } from '@/hooks/useToast'
+
+const emptyAttachmentState: ChatAttachmentState = {
+    uploads: [],
+    selectedDocuments: [],
+    selectedFolders: [],
+    totalSelected: 0,
+}
 
 export default function ChatPage() {
     const router = useRouter()
     const { user, logout, isLoading: authLoading } = useAuthContext()
     const { showError } = useToast()
     const [mobileFileDrawerOpen, setMobileFileDrawerOpen] = useState(false)
-    const [attachmentState, setAttachmentState] = useState<ChatAttachmentState>({
-        uploads: [],
-        selectedDocuments: [],
-        selectedFolders: [],
-        totalSelected: 0,
-    })
+    const [attachmentState, setAttachmentState] = useState<ChatAttachmentState>(emptyAttachmentState)
 
     // Chat hook for managing chat state
     const {
@@ -35,6 +37,7 @@ export default function ChatPage() {
         isFetchingConversations,
         userFeedback,
         feedbackLoading,
+        conversationAttachments,
         createConversation,
         sendMessage,
         sendFeedback,
@@ -49,12 +52,26 @@ export default function ChatPage() {
         },
     })
 
+    const systemDocumentCount = new Set([
+        ...conversationAttachments.documents.map((item) => item.id),
+        ...attachmentState.selectedDocuments.map((item) => item.id),
+    ]).size
+    const systemFolderCount = new Set([
+        ...conversationAttachments.folders.map((item) => item.id),
+        ...attachmentState.selectedFolders.map((item) => item.id),
+    ]).size
+    const totalFileAttachments = systemDocumentCount + systemFolderCount + attachmentState.uploads.length
+
     // Redirect to login if not authenticated
     useEffect(() => {
         if (!authLoading && !user) {
             router.push('/login')
         }
     }, [user, router, authLoading])
+
+    useEffect(() => {
+        setAttachmentState(emptyAttachmentState)
+    }, [currentConversationId])
 
     const handleLogout = async () => {
         try {
@@ -92,6 +109,7 @@ export default function ChatPage() {
                     conversations={conversations}
                     selectedConversationId={currentConversationId || undefined}
                     attachmentState={attachmentState}
+                    conversationAttachments={conversationAttachments}
                     mobileFileDrawerOpen={mobileFileDrawerOpen}
                     onCloseMobileFileDrawer={() => setMobileFileDrawerOpen(false)}
                     isLoading={isFetchingConversations}
@@ -109,7 +127,7 @@ export default function ChatPage() {
                             className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm font-semibold text-slate-700 dark:text-slate-200"
                         >
                             <FolderOpen size={16} className="text-amber-600" />
-                            File đính kèm {attachmentState.totalSelected > 0 ? `(${attachmentState.totalSelected})` : ''}
+                            File đính kèm {totalFileAttachments > 0 ? `(${totalFileAttachments})` : ''}
                         </button>
                     </div>
 
@@ -127,6 +145,7 @@ export default function ChatPage() {
 
                     {/* Input */}
                     <ChatInput
+                        key={currentConversationId || 'new-chat'}
                         isLoading={isLoading}
                         onAttachmentStateChange={setAttachmentState}
                         onSendMessage={(content, attachments) => {

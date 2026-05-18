@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import { Plus, MessageCircle, FolderOpen, FileText, Paperclip, Check, X } from 'lucide-react'
-import { ChatAttachmentState } from './ChatInput'
+import type { ChatAttachmentState, ChatSelectedResourceItem } from './ChatInput'
 
 interface Conversation {
     id: string
@@ -18,6 +18,10 @@ interface ChatSidebarProps {
     conversations?: Conversation[]
     selectedConversationId?: string
     attachmentState?: ChatAttachmentState
+    conversationAttachments?: {
+        documents: ChatSelectedResourceItem[]
+        folders: ChatSelectedResourceItem[]
+    }
     mobileFileDrawerOpen?: boolean
     onCloseMobileFileDrawer?: () => void
     onNewChat?: () => void
@@ -30,6 +34,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     conversations = [],
     selectedConversationId,
     attachmentState,
+    conversationAttachments,
     mobileFileDrawerOpen = false,
     onCloseMobileFileDrawer,
     onNewChat,
@@ -119,7 +124,23 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
         )
     }
 
-    const totalAttached = attachmentState?.totalSelected || 0
+    const pendingUploads = attachmentState?.uploads || []
+    const pendingDocuments = attachmentState?.selectedDocuments || []
+    const pendingFolders = attachmentState?.selectedFolders || []
+    const savedDocuments = conversationAttachments?.documents || []
+    const savedFolders = conversationAttachments?.folders || []
+    const pendingTotal = attachmentState?.totalSelected || 0
+
+    const mergeResourceItems = (saved: ChatSelectedResourceItem[], pending: ChatSelectedResourceItem[]) => {
+        const byId = new Map<string, ChatSelectedResourceItem>()
+        saved.forEach((item) => byId.set(item.id, item))
+        pending.forEach((item) => byId.set(item.id, item))
+        return Array.from(byId.values())
+    }
+
+    const displayDocuments = mergeResourceItems(savedDocuments, pendingDocuments)
+    const displayFolders = mergeResourceItems(savedFolders, pendingFolders)
+    const totalAttached = displayDocuments.length + displayFolders.length + pendingUploads.length
 
     const isChecked = (key: string) => !uncheckedKeys.has(key)
     const toggleChecked = (key: string) => {
@@ -139,9 +160,9 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
             <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/70 p-3">
                 <p className="text-[11px] uppercase tracking-wider font-bold text-slate-500">Nguồn đã chọn</p>
                 <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
-                    {attachmentState?.selectedDocuments.length || 0} tài liệu, {attachmentState?.selectedFolders.length || 0} thư mục, {attachmentState?.uploads.length || 0} tệp tải lên
+                    {displayDocuments.length} tài liệu, {displayFolders.length} thư mục, {pendingUploads.length} tệp tải lên
                 </p>
-                {totalAttached > 0 && (
+                {pendingTotal > 0 && (
                     <button
                         type="button"
                         onClick={() => attachmentState?.clearAll?.()}
@@ -152,11 +173,11 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                 )}
             </div>
 
-            {attachmentState?.uploads.length ? (
+            {pendingUploads.length ? (
                 <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1 mb-2">Tệp tải lên</p>
                     <div className="space-y-2">
-                        {attachmentState.uploads.map((upload) => (
+                        {pendingUploads.map((upload) => (
                             (() => {
                                 const key = `upload-${upload.id}`
                                 const checked = isChecked(key)
@@ -198,14 +219,16 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                 </div>
             ) : null}
 
-            {attachmentState?.selectedDocuments.length ? (
+            {displayDocuments.length ? (
                 <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1 mb-2">Tài liệu hệ thống</p>
                     <div className="space-y-2">
-                        {attachmentState.selectedDocuments.map((doc) => (
+                        {displayDocuments.map((doc) => (
                             (() => {
                                 const key = `doc-${doc.id}`
                                 const checked = isChecked(key)
+                                const canRemove = pendingDocuments.some((item) => item.id === doc.id)
+                                    && !savedDocuments.some((item) => item.id === doc.id)
                                 return (
                                     <div key={doc.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800">
                                         <div className="flex items-start gap-2">
@@ -226,14 +249,16 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                                                 >
                                                     <Check size={12} />
                                                 </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => attachmentState?.removeDocument?.(doc.id)}
-                                                    className="p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
-                                                    title="Bỏ tài liệu"
-                                                >
-                                                    <X size={12} />
-                                                </button>
+                                                {canRemove && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => attachmentState?.removeDocument?.(doc.id)}
+                                                        className="p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+                                                        title="Bỏ tài liệu"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
@@ -244,14 +269,16 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                 </div>
             ) : null}
 
-            {attachmentState?.selectedFolders.length ? (
+            {displayFolders.length ? (
                 <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1 mb-2">Thư mục hệ thống</p>
                     <div className="space-y-2">
-                        {attachmentState.selectedFolders.map((folder) => (
+                        {displayFolders.map((folder) => (
                             (() => {
                                 const key = `folder-${folder.id}`
                                 const checked = isChecked(key)
+                                const canRemove = pendingFolders.some((item) => item.id === folder.id)
+                                    && !savedFolders.some((item) => item.id === folder.id)
                                 return (
                                     <div key={folder.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 bg-white dark:bg-slate-800">
                                         <div className="flex items-start gap-2">
@@ -272,14 +299,16 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                                                 >
                                                     <Check size={12} />
                                                 </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => attachmentState?.removeFolder?.(folder.id)}
-                                                    className="p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
-                                                    title="Bỏ thư mục"
-                                                >
-                                                    <X size={12} />
-                                                </button>
+                                                {canRemove && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => attachmentState?.removeFolder?.(folder.id)}
+                                                        className="p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
+                                                        title="Bỏ thư mục"
+                                                    >
+                                                        <X size={12} />
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                     </div>

@@ -219,6 +219,84 @@ class ConversationDetailView(BaseViewSet):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
+    def update(self, request: Request, conversation_id: str) -> Response:
+        """Update conversation title/summary"""
+        try:
+            conversation = self.get_object(UUID(conversation_id))
+
+            if not conversation:
+                return self.error_response(
+                    message="Conversation not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+
+            if 'title' in request.data:
+                conversation.title = request.data['title']
+            if 'summary' in request.data:
+                conversation.summary = request.data['summary']
+
+            conversation.save()
+
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='UPDATE',
+                    resource_id=str(conversation_id),
+                    query_text=f"Updated conversation: {conversation.title or 'Untitled'}",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for conversation update: {e}")
+
+            logger.info(f"Conversation {conversation_id} updated by user {request.user.id}")
+
+            return self.success_response(
+                data=ConversationDetailSerializer(conversation).data,
+                message="Conversation updated successfully"
+            )
+        except ValueError:
+            return self.error_response(
+                message="Invalid conversation ID format",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+    def destroy(self, request: Request, conversation_id: str) -> Response:
+        """Soft delete conversation"""
+        try:
+            conversation = self.get_object(UUID(conversation_id))
+
+            if not conversation:
+                return self.error_response(
+                    message="Conversation not found",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+
+            conversation.is_deleted = True
+            conversation.save()
+
+            try:
+                from apps.operations.models import AuditLog
+                AuditLog.objects.create(
+                    account=request.user,
+                    action='DELETE',
+                    resource_id=str(conversation_id),
+                    query_text="Deleted conversation",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for conversation delete: {e}")
+
+            logger.info(f"Conversation {conversation_id} deleted by user {request.user.id}")
+
+            return self.success_response(
+                message="Conversation deleted successfully",
+                status_code=status.HTTP_204_NO_CONTENT
+            )
+        except ValueError:
+            return self.error_response(
+                message="Invalid conversation ID format",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
 
 class ConversationAttachmentView(BaseViewSet):
     """
@@ -387,89 +465,6 @@ class ConversationAttachmentView(BaseViewSet):
                 message=f"Failed to remove conversation attachments: {str(e)}",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
-    
-    def update(self, request: Request, conversation_id: str) -> Response:
-        """Update conversation title/summary"""
-        try:
-            conversation = self.get_object(UUID(conversation_id))
-            
-            if not conversation:
-                return self.error_response(
-                    message="Conversation not found",
-                    status_code=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Update allowed fields
-            if 'title' in request.data:
-                conversation.title = request.data['title']
-            if 'summary' in request.data:
-                conversation.summary = request.data['summary']
-            
-            conversation.save()
-            
-            # Log audit
-            try:
-                from apps.operations.models import AuditLog
-                AuditLog.objects.create(
-                    account=request.user,
-                    action='UPDATE',
-                    resource_id=str(conversation_id),
-                    query_text=f"Updated conversation: {conversation.title or 'Untitled'}",
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log audit for conversation update: {e}")
-            
-            logger.info(f"Conversation {conversation_id} updated by user {request.user.id}")
-            
-            return self.success_response(
-                data=ConversationDetailSerializer(conversation).data,
-                message="Conversation updated successfully"
-            )
-        except ValueError:
-            return self.error_response(
-                message="Invalid conversation ID format",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-    
-    def destroy(self, request: Request, conversation_id: str) -> Response:
-        """Soft delete conversation"""
-        try:
-            conversation = self.get_object(UUID(conversation_id))
-            
-            if not conversation:
-                return self.error_response(
-                    message="Conversation not found",
-                    status_code=status.HTTP_404_NOT_FOUND
-                )
-            
-            # Soft delete
-            conversation.is_deleted = True
-            conversation.save()
-            
-            # Log audit
-            try:
-                from apps.operations.models import AuditLog
-                AuditLog.objects.create(
-                    account=request.user,
-                    action='DELETE',
-                    resource_id=str(conversation_id),
-                    query_text=f"Deleted conversation",
-                )
-            except Exception as e:
-                logger.warning(f"Failed to log audit for conversation delete: {e}")
-            
-            logger.info(f"Conversation {conversation_id} deleted by user {request.user.id}")
-            
-            return self.success_response(
-                message="Conversation deleted successfully",
-                status_code=status.HTTP_204_NO_CONTENT
-            )
-        except ValueError:
-            return self.error_response(
-                message="Invalid conversation ID format",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-
 
 # ============================================================
 # MESSAGE VIEWS

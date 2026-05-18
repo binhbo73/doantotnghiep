@@ -530,6 +530,10 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
     const [currentRating, setCurrentRating] = useState<string | null>(null)
     const [hoveredStar, setHoveredStar] = useState<{ [messageId: string]: number }>({})
     const hideCitationTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+    const bottomRef = useRef<HTMLDivElement | null>(null)
+    const previousMessageCountRef = useRef(0)
+    const previousLastMessageIdRef = useRef<string | null>(null)
     const [activeCitation, setActiveCitation] = useState<{
         key: string
         citation: Citation
@@ -777,8 +781,37 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
         return nodes
     }
 
+    useEffect(() => {
+        if (!messages.length) {
+            previousMessageCountRef.current = 0
+            previousLastMessageIdRef.current = null
+            return
+        }
+
+        const container = scrollContainerRef.current
+        const lastMessage = messages[messages.length - 1]
+        const lastMessageId = lastMessage?.id || null
+        const messageCountChanged = previousMessageCountRef.current !== messages.length
+        const lastMessageChanged = previousLastMessageIdRef.current !== lastMessageId
+        const isNearBottom = container
+            ? container.scrollHeight - container.scrollTop - container.clientHeight < 180
+            : true
+
+        if (messageCountChanged || lastMessageChanged || isNearBottom) {
+            window.requestAnimationFrame(() => {
+                bottomRef.current?.scrollIntoView({
+                    block: 'end',
+                    behavior: messageCountChanged || lastMessageChanged ? 'auto' : 'smooth',
+                })
+            })
+        }
+
+        previousMessageCountRef.current = messages.length
+        previousLastMessageIdRef.current = lastMessageId
+    }, [messages])
+
     return (
-        <div className="flex-1 overflow-y-auto p-6 md:p-12 space-y-10">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-6 md:p-12 space-y-10">
             {renderCitationPopover()}
             {messages.length === 0 && !isLoading && (
                 <div className="flex flex-col items-center justify-center h-full text-center">
@@ -985,6 +1018,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                     <div className="h-4 w-32 bg-slate-200 dark:bg-slate-700 rounded-full animate-pulse" />
                 </div>
             )}
+            <div ref={bottomRef} aria-hidden="true" />
         </div>
     )
 }
