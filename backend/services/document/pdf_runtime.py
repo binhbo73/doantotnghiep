@@ -43,6 +43,16 @@ def read_pdf_page_counts(file_path: str) -> Tuple[int, List[int]]:
     return len(page_char_counts), page_char_counts
 
 
+def read_pdf_page_texts(file_path: str) -> List[str]:
+    """Return extracted text for each PDF page without noisy pypdf warnings."""
+    from pypdf import PdfReader
+
+    with suppress_pdf_parser_warnings():
+        with open(file_path, "rb") as pdf_file:
+            pdf_reader = PdfReader(pdf_file, strict=False)
+            return [page.extract_text() or "" for page in pdf_reader.pages]
+
+
 def convert_pdf_to_markdown_quiet(opendataloader_pdf, **kwargs):
     """Run opendataloader-pdf without streaming third-party CLI output to logs."""
     return opendataloader_pdf.convert(**kwargs, quiet=True)

@@ -26,6 +26,7 @@ import tempfile
 from typing import List, Optional, Tuple, Dict, Any
 from collections import defaultdict
 from django.apps import apps
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.core.files.uploadedfile import UploadedFile
@@ -48,7 +49,7 @@ logger = logging.getLogger(__name__)
 class DocumentService(BaseService):
     """
     Document management service
-    
+
     Key Methods:
     - upload_document(file, user_id, **metadata)
     - get_document(doc_id, user_id) - with permission check
@@ -58,17 +59,17 @@ class DocumentService(BaseService):
     - mark_as_completed(doc_id)
     - mark_as_failed(doc_id, error_msg)
     - get_document_chunks(doc_id, user_id)
-    
+
     Validations:
     - File size limit checking
     - File type validation
     - User permission checking
     - Document status workflow
     """
-    
+
     repository_class = DocumentRepository
     PREVIEW_CACHE_VERSION = 'v3'
-    
+
     # Configuration
     MAX_FILE_SIZE_MB = 100  # Max 100MB
     ALLOWED_FILE_TYPES = {
@@ -79,7 +80,7 @@ class DocumentService(BaseService):
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
         'application/vnd.ms-excel',  # .xls
     }
-    
+
     def __init__(self):
         """Initialize with repositories"""
         super().__init__()
@@ -111,15 +112,15 @@ class DocumentService(BaseService):
             'text/markdown': 'markdown',
         }
         return mime_map.get(mime_type, ext.lstrip('.') or 'bin')
-        
+
         # ✅ CORRECT: Add UserRepository to avoid ORM calls
         from repositories.user_repository import UserRepository
         self.user_repository = UserRepository()
-    
+
     # ============================================================================
     # DOCUMENT CREATION
     # ============================================================================
-    
+
     def upload_document(
         self,
         file: UploadedFile,
@@ -131,7 +132,7 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Upload new document with validation
-        
+
         Business Rules:
         - File size must not exceed MAX_FILE_SIZE_MB
         - File type must be in ALLOWED_FILE_TYPES
@@ -139,7 +140,7 @@ class DocumentService(BaseService):
         - Folder (if specified) must belong to user's department
         - Initial status: 'draft'
         - Initial processing: 'pending'
-        
+
         Args:
             file: UploadedFile (Django)
             user_id: Uploader user ID
@@ -147,10 +148,10 @@ class DocumentService(BaseService):
             department_id: Department (optional, default = user's dept)
             tags: List of tag names (optional)
             description: Document description (optional)
-        
+
         Returns:
             Created Document instance
-        
+
         Raises:
             FileSizeExceededError: If file too large
             ValidationError: If invalid file type or missing user
@@ -163,16 +164,16 @@ class DocumentService(BaseService):
                 user = self.user_repository.get_by_id(user_id)
             except Exception:
                 raise ValidationError(f"User {user_id} not found")
-            
+
             self.validate_business_rule(user is not None, f"User {user_id} not found")
-            
+
             # Validate file size
             file_size_mb = file.size / (1024 * 1024)
             if file_size_mb > self.MAX_FILE_SIZE_MB:
                 raise FileSizeExceededError(
                     f"File size {file_size_mb:.1f}MB exceeds limit {self.MAX_FILE_SIZE_MB}MB"
                 )
-            
+
             # Detect MIME type and normalized file type label
             mime_type = file.content_type or ''
             if not mime_type:
@@ -187,24 +188,24 @@ class DocumentService(BaseService):
                 )
 
             normalized_file_type = self._normalize_file_type(file.name, mime_type)
-            
+
             # ✅ NEW LOGIC: Resolve folder + inherit scope/department if folder_id provided
             resolved_access_scope = 'company'  # Default for root documents
             resolved_department_id = department_id
-            
+
             if folder_id:
                 # CASE A: Document placed in folder → inherit scope + department from folder
                 try:
                     from apps.documents.models import Folder
                     folder = Folder.objects.get(id=folder_id, is_deleted=False)
-                    
+
                     # Inherit access_scope from folder (CRITICAL FIX)
                     resolved_access_scope = folder.access_scope
-                    
+
                     # Inherit department from folder if folder has one
                     if folder.department_id:
                         resolved_department_id = folder.department_id
-                    
+
                     logger.info(
                         f"Document {file.name} uploading to folder {folder_id}: "
                         f"inherited scope={resolved_access_scope}, dept={resolved_department_id}"
@@ -223,7 +224,7 @@ class DocumentService(BaseService):
                         resolved_department_id = user_profile.department_id
                     except (UserProfile.DoesNotExist, Exception):
                         resolved_department_id = None
-            
+
             # Prepare file hash and storage path BEFORE creating document
             import hashlib
             import os
@@ -233,7 +234,7 @@ class DocumentService(BaseService):
             file_ext = os.path.splitext(file.name)[1]
             hashed_name = f"{file_hash}{file_ext}"
             storage_path = f"uploads/{user_id}/{hashed_name}"
-            
+
             # Create document with all required fields
             with transaction.atomic():
                 document = self.document_repo.create(
@@ -249,18 +250,18 @@ class DocumentService(BaseService):
                     status='pending',
                     access_scope=resolved_access_scope,  # ✅ INHERIT FROM FOLDER
                 )
-                
+
                 # Store actual file to disk
                 storage_dir = f"uploads/{user_id}"
                 if not os.path.exists(storage_dir):
                     os.makedirs(storage_dir, exist_ok=True)
                 with open(os.path.join(storage_dir, hashed_name), 'wb') as f:
                     f.write(file_content)
-                
+
                 # Add tags if provided
                 if tags:
                     self._add_tags_to_document(document.id, tags)
-                
+
                 # Log action
                 self.log_action(
                     'UPLOAD_DOCUMENT',
@@ -268,35 +269,35 @@ class DocumentService(BaseService):
                     details=f"Uploaded '{file.name}' ({file_size_mb:.1f}MB)",
                     user_id=user_id
                 )
-                
+
                 # Audit
                 self._log_document_audit(
                     action='UPLOAD',
                     document_id=document.id,
                     user_id=user_id
                 )
-            
+
             return document
-            
+
         except Exception as e:
             self.log_error('upload_document', e, user_id=user_id)
             raise
-    
+
     # ============================================================================
     # DOCUMENT RETRIEVAL
     # ============================================================================
-    
+
     def get_document(self, document_id: int, user_id: int) -> 'Document':
         """
         Get document with permission check
-        
+
         Args:
             document_id: Document ID
             user_id: User requesting (for permission check)
-        
+
         Returns:
             Document instance
-        
+
         Raises:
             DocumentNotFoundError: If not found
             PermissionDeniedError: If user lacks access
@@ -304,7 +305,7 @@ class DocumentService(BaseService):
         try:
             # Get document
             document = self.document_repo.get_by_id(document_id)
-            
+
             # ✅ FIXED: Use PermissionManager for comprehensive permission checking
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
@@ -312,13 +313,13 @@ class DocumentService(BaseService):
                 raise ValidationError(
                     f"User {user_id} does not have access to document {document_id}"
                 )
-            
+
             return document
-            
+
         except Exception as e:
             self.log_error('get_document', e, document_id, user_id)
             raise
-    
+
     def search_documents(
         self,
         query: str,
@@ -328,51 +329,51 @@ class DocumentService(BaseService):
     ) -> Tuple[List['Document'], Any]:
         """
         Search documents accessible to user
-        
+
         Args:
             query: Search query (searches name, description, tags)
             user_id: User searching (filters by permission)
             page: Page number
             page_size: Items per page
-        
+
         Returns:
             (documents_list, page_object)
         """
         try:
             # Search
             results = self.document_repo.search(query)
-            
+
             # Filter by permission (only documents user can read)
             accessible = [
                 d for d in results
                 if self.document_repo.check_user_can_read(d.id, user_id)
             ]
-            
+
             # Manual pagination since we filtered
             total = len(accessible)
             start_idx = (page - 1) * page_size
             end_idx = start_idx + page_size
-            
+
             paginated = accessible[start_idx:end_idx]
-            
+
             # Create simple page object
             class SimplePage:
                 def __init__(self, num, count, per_page):
                     self.number = num
                     self.total_count = count
                     self.per_page = per_page
-                
+
                 @property
                 def total_pages(self):
                     return (self.total_count + self.per_page - 1) // self.per_page
-            
+
             page_obj = SimplePage(page, total, page_size)
             return paginated, page_obj
-            
+
         except Exception as e:
             self.log_error('search_documents', e, user_id=user_id)
             return [], None
-    
+
     def list_accessible_documents(
         self,
         user_id: int,
@@ -386,7 +387,7 @@ class DocumentService(BaseService):
     ) -> dict:
         """
         List documents accessible to user with optional filters
-        
+
         Args:
             user_id: User ID
             folder_id: Filter by folder (optional)
@@ -396,16 +397,16 @@ class DocumentService(BaseService):
             sort_by: Sort field (default: -created_at)
             page: Page number
             page_size: Items per page
-        
+
         Returns:
             Dictionary with documents, pagination info
         """
         try:
             from django.db.models import Q
-            
+
             # Get accessible documents
             accessible = self.document_repo.get_accessible_documents(user_id)
-            
+
             # Apply filters
             if folder_id:
                 accessible = accessible.filter(folder_id=folder_id)
@@ -415,28 +416,28 @@ class DocumentService(BaseService):
                 if access_scope not in ['personal', 'department', 'company']:
                     raise ValidationError(f"Invalid access_scope: {access_scope}")
                 accessible = accessible.filter(access_scope=access_scope)
-            
+
             # Apply search
             if search:
                 accessible = accessible.filter(
-                    Q(original_name__icontains=search) | 
+                    Q(original_name__icontains=search) |
                     Q(description__icontains=search)
                 )
-            
+
             # Apply ordering
             accessible = accessible.order_by(sort_by)
-            
+
             # Get total count
             total = accessible.count()
-            
+
             # Paginate
             start_idx = (page - 1) * page_size
             end_idx = start_idx + page_size
             documents = accessible[start_idx:end_idx]
-            
+
             # Calculate pagination info
             total_pages = (total + page_size - 1) // page_size
-            
+
             return {
                 'documents': list(documents),
                 'pagination': {
@@ -446,7 +447,7 @@ class DocumentService(BaseService):
                     'total_pages': total_pages
                 }
             }
-            
+
         except Exception as e:
             self.log_error('list_accessible_documents', e, user_id=user_id)
             return [], None
@@ -497,18 +498,18 @@ class DocumentService(BaseService):
         except Exception as e:
             self.log_error('get_shared_with_me_documents', e, user_id=user_id)
             raise
-    
+
     # ============================================================================
     # DOCUMENT PROCESSING
     # ============================================================================
-    
+
     def mark_as_processing(self, document_id: int) -> 'Document':
         """
         Mark document as being processed
-        
+
         Args:
             document_id: Document ID
-        
+
         Returns:
             Updated Document
         """
@@ -518,19 +519,19 @@ class DocumentService(BaseService):
                 processing_status='processing',
                 processing_started_at=timezone.now()
             )
-            
+
             self.log_action(
                 'MARK_PROCESSING',
                 document_id,
                 details='Processing started'
             )
-            
+
             return document
-            
+
         except Exception as e:
             self.log_error('mark_as_processing', e, document_id)
             raise
-    
+
     def mark_as_completed(
         self,
         document_id: int,
@@ -539,12 +540,12 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Mark document as successfully processed
-        
+
         Args:
             document_id: Document ID
             chunks_count: Number of chunks created
             embeddings_count: Number of embeddings created
-        
+
         Returns:
             Updated Document
         """
@@ -558,26 +559,26 @@ class DocumentService(BaseService):
                 update_data['chunks_count'] = chunks_count
             if embeddings_count:
                 update_data['embeddings_count'] = embeddings_count
-            
+
             document = self.document_repo.update(document_id, **update_data)
-            
+
             self.log_action(
                 'MARK_COMPLETED',
                 document_id,
                 details=f'Processing completed ({chunks_count or 0} chunks, {embeddings_count or 0} embeddings)'
             )
-            
+
             self._log_document_audit(
                 action='MUTATION',
                 document_id=document_id
             )
-            
+
             return document
-            
+
         except Exception as e:
             self.log_error('mark_as_completed', e, document_id)
             raise
-    
+
     def mark_as_failed(
         self,
         document_id: int,
@@ -585,11 +586,11 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Mark document processing as failed
-        
+
         Args:
             document_id: Document ID
             error_message: Error details
-        
+
         Returns:
             Updated Document
         """
@@ -600,28 +601,28 @@ class DocumentService(BaseService):
                 processing_completed_at=timezone.now(),
                 error_message=error_message or 'Unknown error'
             )
-            
+
             self.log_action(
                 'MARK_FAILED',
                 document_id,
                 details=f'Processing failed: {error_message}'
             )
-            
+
             self._log_document_audit(
                 action='MUTATION',
                 document_id=document_id
             )
-            
+
             return document
-            
+
         except Exception as e:
             self.log_error('mark_as_failed', e, document_id)
             raise
-    
+
     # ============================================================================
     # DOCUMENT CHUNKS
     # ============================================================================
-    
+
     def get_document_chunks(
         self,
         document_id: int,
@@ -629,14 +630,14 @@ class DocumentService(BaseService):
     ) -> List['DocumentChunk']:
         """
         Get all chunks for document (with permission check)
-        
+
         Args:
             document_id: Document ID
             user_id: User requesting
-        
+
         Returns:
             List of DocumentChunk instances
-        
+
         Raises:
             PermissionDeniedError: If user lacks access
         """
@@ -646,20 +647,20 @@ class DocumentService(BaseService):
             perm_manager = get_permission_manager()
             if not perm_manager.check_document_access(user_id, document_id, action='read'):
                 raise ValidationError(f"Access denied to document {document_id}")
-            
+
             # Get document with chunks
             document = self.document_repo.get_document_with_chunks(document_id)
-            
+
             return list(document.chunks.all())
-            
+
         except Exception as e:
             self.log_error('get_document_chunks', e, document_id, user_id)
             raise
-    
+
     # ============================================================================
     # DOCUMENT DELETION
     # ============================================================================
-    
+
     def delete_document(
         self,
         document_id: int,
@@ -667,22 +668,22 @@ class DocumentService(BaseService):
     ) -> bool:
         """
         Delete document (soft delete)
-        
+
         Business Rules:
         - User must own document OR be Admin
         - Cascades: soft delete all chunks + embeddings
-        
+
         Args:
             document_id: Document ID
             user_id: User deleting
-        
+
         Returns:
             True if deleted
         """
         try:
             # Get document
             document = self.document_repo.get_by_id(document_id)
-            
+
             # Check permission (owner or admin)
             if document.uploader_id != user_id:
                 if not self.permission_repo.check_user_has_permission(
@@ -691,12 +692,12 @@ class DocumentService(BaseService):
                     raise ValidationError(
                         f"User {user_id} cannot delete document {document_id}"
                     )
-            
+
             # Delete
             with transaction.atomic():
                 # Soft delete document
                 result = self.document_repo.delete(document_id)
-                
+
                 # ✅ CORRECT: Use repository for DocumentChunk deletion
                 # Get DocumentChunk model и delete via repository pattern
                 DocumentChunk = apps.get_model('documents', 'DocumentChunk')
@@ -709,13 +710,13 @@ class DocumentService(BaseService):
                     chunk.is_deleted = True
                     chunk.deleted_at = timezone.now()
                     chunk.save(update_fields=['is_deleted', 'deleted_at'])
-                
+
                 self.log_action(
                     'DELETE_DOCUMENT',
                     document_id,
                     user_id=user_id
                 )
-                
+
                 # Log to AuditLog via centralized method
                 self.audit_log_action(
                     action='DELETE',
@@ -724,30 +725,30 @@ class DocumentService(BaseService):
                     resource_type='Document',
                     query_text=f"Deleted document {document_id}"
                 )
-            
+
             return result
-            
+
         except Exception as e:
             self.log_error('delete_document', e, document_id, user_id)
             raise
-    
+
     # ============================================================================
     # INTERNAL HELPERS
     # ============================================================================
-    
+
     def _add_tags_to_document(self, document_id: int, tag_names: List[str]):
         """
         Add tags to document
-        
+
         ✅ CORRECT: Avoid ORM in Service
         Tag creation is handled without direct ORM calls where possible
         """
         try:
             Tag = apps.get_model('documents', 'Tag')
-            
+
             # ✅ Get document via repository
             document = self.document_repo.get_by_id(document_id)
-            
+
             for tag_name in tag_names:
                 # ✅ Tag creation is acceptable here as it's a simple lookup/create
                 # Alternative: use TagRepository if this becomes critical path
@@ -760,7 +761,7 @@ class DocumentService(BaseService):
                 logger.debug(f"Tag '{tag_name}' added to document {document_id}")
         except Exception as e:
             logger.warning(f"Could not add tags: {str(e)}")
-    
+
     def _log_document_audit(
         self,
         action: str,
@@ -778,11 +779,11 @@ class DocumentService(BaseService):
             )
         except Exception as e:
             logger.warning(f"Could not log audit: {str(e)}")
-    
+
     # ============================================================================
     # MISSING METHODS REQUIRED BY VIEWS (Phase 4B - Added for Compatibility)
     # ============================================================================
-    
+
     def get_document_detail(
         self,
         doc_id: str,
@@ -791,27 +792,27 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Get document detail with permission check.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User requesting
             permission_required: Required permission ('read', 'write', 'delete')
-        
+
         Returns:
             Document instance
-        
+
         Raises:
             NotFoundError: If document not found
             PermissionDeniedError: If user lacks permission
         """
         from django.apps import apps
         Document = apps.get_model('documents', 'Document')
-        
+
         try:
             document = self.document_repo.get_by_id(doc_id)
             if not document:
                 raise NotFoundError(f"Document {doc_id} not found")
-            
+
             # Check permission
             if permission_required == 'read':
                 if not self.document_repo.check_user_can_read(doc_id, user_id):
@@ -822,15 +823,15 @@ class DocumentService(BaseService):
             elif permission_required == 'delete':
                 if not self.document_repo.check_user_can_delete(doc_id, user_id):
                     raise PermissionDeniedError(f"No delete permission on document {doc_id}")
-            
+
             return document
-        
+
         except Exception as e:
             if isinstance(e, (NotFoundError, PermissionDeniedError)):
                 raise
             logger.error(f"Error getting document detail: {e}", exc_info=True)
             raise NotFoundError(f"Failed to retrieve document {doc_id}")
-    
+
     def update_document(
         self,
         doc_id: str,
@@ -843,7 +844,7 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Update document metadata.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User requesting
@@ -851,10 +852,10 @@ class DocumentService(BaseService):
             description: New description
             access_scope: New access scope
             tags: New tags list
-        
+
         Returns:
             Updated Document
-        
+
         Raises:
             NotFoundError: If not found
             PermissionDeniedError: If user lacks write permission
@@ -863,7 +864,7 @@ class DocumentService(BaseService):
             # Check write permission
             if not self.document_repo.check_user_can_write(doc_id, user_id):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            
+
             # Update fields
             update_data = {}
             if original_name is not None:
@@ -872,27 +873,27 @@ class DocumentService(BaseService):
                 update_data['description'] = description
             if access_scope is not None:
                 update_data['access_scope'] = access_scope
-            
+
             document = self.document_repo.update(doc_id, **update_data)
-            
+
             # Update tags if provided
             if tags:
                 self._add_tags_to_document(doc_id, tags)
-            
+
             self._log_document_audit(
                 action='UPDATE',
                 document_id=doc_id,
                 user_id=user_id
             )
-            
+
             return document
-        
+
         except Exception as e:
             if isinstance(e, (NotFoundError, PermissionDeniedError)):
                 raise
             logger.error(f"Error updating document: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to update document {doc_id}")
-    
+
     def move_document(
         self,
         doc_id: str,
@@ -901,22 +902,22 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Move document to a different folder (or root if new_folder_id=None).
-        
+
         Business Rules:
         - User must have WRITE permission on document
         - If new_folder_id provided, it must exist and be accessible to user
         - Document inherits access_scope from new folder
         - Document inherits department from new folder (if folder has one)
         - If moving to root (new_folder_id=None), scope defaults to 'company'
-        
+
         Args:
             doc_id: Document UUID to move
             user_id: User performing move
             new_folder_id: Target folder ID (None to move to root)
-        
+
         Returns:
             Updated Document
-        
+
         Raises:
             NotFoundError: If document or folder not found
             PermissionDeniedError: If user lacks write permission
@@ -925,25 +926,25 @@ class DocumentService(BaseService):
             # Check write permission on document
             if not self.document_repo.check_user_can_write(doc_id, user_id):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            
+
             # Get current document
             document = self.document_repo.get_by_id(doc_id)
             if not document:
                 raise NotFoundError(f"Document {doc_id} not found")
-            
+
             # Resolve new scope and department
             new_access_scope = 'company'  # Default for root
             new_department_id = None
-            
+
             if new_folder_id:
                 # Moving to a folder → inherit scope + department
                 try:
                     from apps.documents.models import Folder
                     new_folder = Folder.objects.get(id=new_folder_id, is_deleted=False)
-                    
+
                     new_access_scope = new_folder.access_scope
                     new_department_id = new_folder.department_id
-                    
+
                     logger.info(
                         f"Moving document {doc_id} to folder {new_folder_id}: "
                         f"new scope={new_access_scope}, new dept={new_department_id}"
@@ -954,16 +955,16 @@ class DocumentService(BaseService):
             else:
                 # Moving to root
                 logger.info(f"Moving document {doc_id} to root")
-            
+
             # Update document
             update_data = {
                 'folder_id': new_folder_id,
                 'access_scope': new_access_scope,
                 'department_id': new_department_id,
             }
-            
+
             document = self.document_repo.update(doc_id, **update_data)
-            
+
             # Log audit
             self._log_document_audit(
                 action='MOVE',
@@ -971,15 +972,15 @@ class DocumentService(BaseService):
                 user_id=user_id,
                 details=f"Moved to folder {new_folder_id or 'root'}"
             )
-            
+
             return document
-            
+
         except (NotFoundError, PermissionDeniedError, ValidationError):
             raise
         except Exception as e:
             logger.error(f"Error moving document: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to move document {doc_id}")
-    
+
     def get_document_download(
         self,
         doc_id: str,
@@ -987,14 +988,14 @@ class DocumentService(BaseService):
     ) -> Dict[str, Any]:
         """
         Get document file for download.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User requesting
-        
+
         Returns:
             Dict with 'content', 'filename', 'mime_type'
-        
+
         Raises:
             NotFoundError: If not found
             PermissionDeniedError: If user lacks read permission
@@ -1004,40 +1005,135 @@ class DocumentService(BaseService):
             # This checks: explicit DENY, explicit ALLOW, role-based, folder inheritance
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
-            
+
             if not perm_manager.check_document_access(user_id, doc_id, action='read'):
                 raise PermissionDeniedError(f"No read permission on document {doc_id}")
-            
-            document = self.document_repo.get_by_id(doc_id)
-            if not document or not document.storage_path:
-                raise NotFoundError(f"Document file {doc_id} not found")
-            
-            # Read file content from storage_path
-            import os
-            if os.path.exists(document.storage_path):
-                with open(document.storage_path, 'rb') as f:
-                    file_content = f.read()
-            else:
-                raise NotFoundError(f"Document file not found at {document.storage_path}")
-            
-            # Fall back to guessed MIME type for existing documents if necessary.
-            mime_type = document.mime_type
-            if not mime_type:
-                import mimetypes
-                mime_type, _ = mimetypes.guess_type(document.original_name)
-                mime_type = mime_type or 'application/octet-stream'
+
+            file_ref = self.get_document_file_reference(doc_id, user_id)
+            with open(file_ref['path'], 'rb') as f:
+                file_content = f.read()
 
             return {
                 'content': file_content,
-                'filename': document.original_name,
-                'mime_type': mime_type,
+                'filename': file_ref['filename'],
+                'mime_type': file_ref['mime_type'],
             }
-        
+
         except Exception as e:
             if isinstance(e, (NotFoundError, PermissionDeniedError)):
                 raise
             logger.error(f"Error downloading document: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to download document {doc_id}")
+
+    def get_document_file_reference(
+        self,
+        doc_id: str,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Return the original stored file path and response metadata after ACL checks.
+
+        This is used by preview/download endpoints so preview can serve the real
+        uploaded file instead of a lossy HTML/table conversion.
+        """
+        try:
+            from core.permissions import get_permission_manager
+            perm_manager = get_permission_manager()
+
+            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
+                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+
+            document = self.document_repo.get_by_id(doc_id)
+            if not document or not document.storage_path:
+                raise NotFoundError(f"Document file {doc_id} not found")
+
+            resolved_path = self._resolve_document_storage_path(document.storage_path)
+            if not resolved_path:
+                raise NotFoundError(f"Document file not found at {document.storage_path}")
+
+            mime_type = document.mime_type
+            if not mime_type:
+                import mimetypes
+                mime_type, _ = mimetypes.guess_type(document.original_name or document.filename or resolved_path)
+                mime_type = mime_type or 'application/octet-stream'
+
+            return {
+                'path': resolved_path,
+                'filename': document.original_name or document.filename or os.path.basename(resolved_path),
+                'mime_type': mime_type,
+                'document': document,
+            }
+
+        except Exception as e:
+            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+                raise
+            logger.error(f"Error resolving document file: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to resolve document file {doc_id}")
+
+    def get_document_preview_file_reference(
+        self,
+        doc_id: str,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """Return the browser-previewable file for a document.
+
+        Word files are converted to cached PDF so the same PDF page layout can
+        be used by both the preview UI and DOCX chunk page mapping. Excel stays
+        as the original workbook because chunk metadata is sheet/row based.
+        """
+        file_ref = self.get_document_file_reference(doc_id, user_id)
+        source_path = file_ref['path']
+
+        try:
+            from services.document.office_preview import (
+                convert_office_to_pdf,
+                is_office_preview_supported,
+            )
+
+            if is_office_preview_supported(source_path):
+                preview_pdf = convert_office_to_pdf(source_path)
+                base_name = os.path.splitext(file_ref['filename'])[0] or 'preview'
+                return {
+                    **file_ref,
+                    'path': preview_pdf,
+                    'filename': f"{base_name}.pdf",
+                    'mime_type': 'application/pdf',
+                    'preview_mode': 'pdf',
+                    'source_path': source_path,
+                }
+        except DocumentProcessingError:
+            raise
+        except Exception as e:
+            logger.error(f"Error creating preview file: {e}", exc_info=True)
+            raise DocumentProcessingError(f"Failed to create preview for document {doc_id}")
+
+        return {
+            **file_ref,
+            'preview_mode': 'original',
+            'source_path': source_path,
+        }
+
+    def _resolve_document_storage_path(self, storage_path: str) -> Optional[str]:
+        """Resolve both new absolute storage paths and legacy relative upload paths."""
+        if not storage_path:
+            return None
+
+        candidates = []
+        if os.path.isabs(storage_path):
+            candidates.append(storage_path)
+        else:
+            candidates.extend([
+                storage_path,
+                os.path.join(str(settings.BASE_DIR), storage_path),
+                os.path.join(str(settings.BASE_DIR.parent), storage_path),
+            ])
+
+        for candidate in candidates:
+            normalized = os.path.abspath(candidate)
+            if os.path.exists(normalized):
+                return normalized
+
+        return None
 
     def get_document_preview_html(
         self,
@@ -1071,12 +1167,16 @@ class DocumentService(BaseService):
                 with open(preview_path, 'r', encoding='utf-8') as f:
                     return f.read()
 
+            storage_path = self._resolve_document_storage_path(document.storage_path)
+            if not storage_path:
+                raise NotFoundError(f"Document file not found at {document.storage_path}")
+
             if file_type == 'doc':
-                html = self._convert_doc_to_html(document.storage_path)
+                html = self._convert_doc_to_html(storage_path)
             elif file_type == 'docx':
-                html = self._convert_docx_to_html(document.storage_path)
+                html = self._convert_docx_to_html(storage_path)
             else:
-                html = self._convert_text_to_html(document.storage_path, file_type)
+                html = self._convert_text_to_html(storage_path, file_type)
 
             os.makedirs(os.path.dirname(preview_path), exist_ok=True)
             with open(preview_path, 'w', encoding='utf-8') as f:
@@ -1151,7 +1251,7 @@ class DocumentService(BaseService):
             raise BusinessLogicError(f"Failed to load chunk {chunk_id} for document {doc_id}")
 
     def _get_preview_cache_path(self, document) -> str:
-        storage_path = os.path.abspath(document.storage_path)
+        storage_path = self._resolve_document_storage_path(document.storage_path) or os.path.abspath(document.storage_path)
         preview_folder = os.path.normpath(
             os.path.join(
                 os.path.dirname(os.path.dirname(storage_path)),
@@ -1317,7 +1417,7 @@ class DocumentService(BaseService):
 
         html_parts.append('</table>')
         return ''.join(html_parts)
-    
+
     def _convert_text_to_html(self, storage_path: str, file_type: str) -> str:
         try:
             with open(storage_path, 'r', encoding='utf-8') as f:
@@ -1338,7 +1438,7 @@ class DocumentService(BaseService):
         except Exception as e:
             logger.error(f"Text preview generation error: {e}", exc_info=True)
             raise DocumentProcessingError(f"Failed to generate text preview: {str(e)}")
-    
+
 
     def _escape_html(self, text: str) -> str:
         return (
@@ -1357,26 +1457,26 @@ class DocumentService(BaseService):
     ) -> List['DocumentPermission']:
         """
         Get all permissions on document.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User requesting (must be admin or owner)
             granted_by_id: Optional user ID who granted the permission
-        
+
         Returns:
             List of DocumentPermission objects
-        
+
         Raises:
             NotFoundError: If not found
             PermissionDeniedError: If user not authorized
         """
         from django.apps import apps
-        
+
         try:
             # Check write permission (only owner/admin can view ACL)
             if not self.document_repo.check_user_can_write(doc_id, user_id):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            
+
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
             permissions = DocumentPermission.objects.filter(
                 document_id=doc_id,
@@ -1384,9 +1484,9 @@ class DocumentService(BaseService):
             )
             if granted_by_id:
                 permissions = permissions.filter(granted_by_id=granted_by_id)
-            
+
             return list(permissions)
-        
+
         except Exception as e:
             if isinstance(e, (NotFoundError, PermissionDeniedError)):
                 raise
@@ -1423,15 +1523,15 @@ class DocumentService(BaseService):
                     is_deleted=False,
                     is_active=True,
                 ).values_list('document_id', flat=True).distinct()
-                
+
                 docs_query = Document.objects.filter(
                     id__in=doc_ids_with_perms,
                     is_deleted=False
                 ).order_by('-created_at')
-                
+
                 if search and search.strip():
                     docs_query = docs_query.filter(original_name__icontains=search)
-                
+
                 managed_documents = list(docs_query)
             else:
                 # Without granted_by_id, show only accessible documents user can write
@@ -1525,7 +1625,7 @@ class DocumentService(BaseService):
         except Exception as e:
             logger.error(f"Error listing document permissions: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to list permissions for documents")
-    
+
     def grant_document_permission(
         self,
         doc_id: str,
@@ -1537,7 +1637,7 @@ class DocumentService(BaseService):
     ) -> 'DocumentPermission':
         """
         Grant or update document permission.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User granting (must have write permission)
@@ -1545,23 +1645,23 @@ class DocumentService(BaseService):
             subject_id: Account UUID/ID or Role UUID
             permission: 'read', 'write', or 'delete'
             precedence: 'inherit', 'override', or 'deny'
-        
+
         Returns:
             DocumentPermission object
-        
+
         Raises:
             PermissionDeniedError: If user lacks write permission
         """
         from django.apps import apps
-        
+
         try:
             # Check write permission
             if not self.document_repo.check_user_can_write(doc_id, user_id):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            
+
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
             granted_by_account = self.Account.objects.get(id=user_id)
-            
+
             # Try to find existing permission (including soft-deleted ones)
             try:
                 perm_obj = DocumentPermission.objects.all_records().get(
@@ -1591,21 +1691,21 @@ class DocumentService(BaseService):
                     granted_by=granted_by_account,
                 )
                 created = True
-            
+
             self._log_document_audit(
                 action='GRANT_ACL',
                 document_id=doc_id,
                 user_id=user_id
             )
-            
+
             return perm_obj
-        
+
         except Exception as e:
             if isinstance(e, PermissionDeniedError):
                 raise
             logger.error(f"Error granting permission: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to grant permission on {doc_id}")
-    
+
     def revoke_document_permission(
         self,
         doc_id: str,
@@ -1616,28 +1716,28 @@ class DocumentService(BaseService):
     ) -> None:
         """
         Revoke document permission.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User revoking (must have write permission)
             subject_type: 'account' or 'role'
             subject_id: Account UUID/ID or Role UUID
             permission: 'read', 'write', or 'delete'
-        
+
         Raises:
             PermissionDeniedError: If user lacks write permission
             NotFoundError: If permission not found
         """
         from django.apps import apps
         from django.utils import timezone
-        
+
         try:
             # Check write permission
             if not self.document_repo.check_user_can_write(doc_id, user_id):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            
+
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
-            
+
             # Find permission using active() manager (soft delete aware)
             try:
                 permission_obj = DocumentPermission.objects.get(
@@ -1649,23 +1749,23 @@ class DocumentService(BaseService):
                 )
             except DocumentPermission.DoesNotExist:
                 raise NotFoundError(f"Permission not found")
-            
+
             # Soft delete using the model's delete() method
             # This sets is_deleted=True and deleted_at=now()
             permission_obj.delete()
-            
+
             self._log_document_audit(
                 action='REVOKE_ACL',
                 document_id=doc_id,
                 user_id=user_id
             )
-        
+
         except Exception as e:
             if isinstance(e, (PermissionDeniedError, NotFoundError)):
                 raise
             logger.error(f"Error revoking permission: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to revoke permission on {doc_id}")
-    
+
     def get_document_processing_status(
         self,
         doc_id: str,
@@ -1673,35 +1773,35 @@ class DocumentService(BaseService):
     ) -> Dict[str, Any]:
         """
         Get document and chunks processing status.
-        
+
         Args:
             doc_id: Document UUID
             user_id: User requesting (must have read permission)
-        
+
         Returns:
             Dict with status information
-        
+
         Raises:
             NotFoundError: If not found
             PermissionDeniedError: If user lacks read permission
         """
         from django.apps import apps
-        
+
         try:
             # ✅ FIXED: Use PermissionManager for comprehensive permission checking
             # This checks: explicit DENY, explicit ALLOW, role-based, folder inheritance
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
-            
+
             if not perm_manager.check_document_access(user_id, doc_id, action='read'):
                 raise PermissionDeniedError(f"No read permission on document {doc_id}")
-            
+
             document = self.document_repo.get_by_id(doc_id)
             if not document:
                 raise NotFoundError(f"Document {doc_id} not found")
-            
+
             DocumentChunk = apps.get_model('documents', 'DocumentChunk')
-            
+
             # Get chunk statistics
             # DocumentChunk doesn't have 'status' field, so count total chunks only
             chunks = DocumentChunk.objects.filter(
@@ -1711,7 +1811,7 @@ class DocumentService(BaseService):
             total_chunks = chunks.count()
             # Chunks with embeddings are considered "completed"
             chunks_with_embeddings = chunks.filter(embeddings__isnull=False).distinct().count()
-            
+
             return {
                 'document_id': str(document.id),
                 'document_status': document.status,
@@ -1723,13 +1823,13 @@ class DocumentService(BaseService):
                 },
                 'processing_completed_at': str(getattr(document, 'processing_completed_at', '')) or None,
             }
-        
+
         except Exception as e:
             if isinstance(e, (NotFoundError, PermissionDeniedError)):
                 raise
             logger.error(f"Error getting processing status: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to get status for document {doc_id}")
-    
+
     def reprocess_document(
         self,
         doc_id: str,
@@ -1739,52 +1839,52 @@ class DocumentService(BaseService):
     ) -> 'Document':
         """
         Reprocess document (submit new INDEX_DOCUMENT AsyncTask).
-        
+
         Args:
             doc_id: Document UUID
             user_id: User requesting (must have write permission)
             chunking_strategy: New chunking strategy (optional)
             embedding_model: New embedding model (optional)
-        
+
         Returns:
             Document object
-        
+
         Raises:
             NotFoundError: If not found
             PermissionDeniedError: If user lacks write permission
         """
         from django.apps import apps
-        
+
         try:
             # Check write permission
             if not self.document_repo.check_user_can_write(doc_id, user_id):
                 raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            
+
             document = self.document_repo.get_by_id(doc_id)
             if not document:
                 raise NotFoundError(f"Document {doc_id} not found")
-            
+
             # Update document status
             with transaction.atomic():
                 if chunking_strategy:
                     document.chunking_strategy = chunking_strategy
                 if embedding_model:
                     document.embedding_model = embedding_model
-                
+
                 # Set status to processing
                 document.status = 'processing'
                 document.save()
-                
+
                 # Note: AsyncTask queueing would go here when task queue is implemented
-            
+
             self._log_document_audit(
                 action='MUTATION',
                 document_id=doc_id,
                 user_id=user_id
             )
-            
+
             return document
-        
+
         except Exception as e:
             if isinstance(e, (NotFoundError, PermissionDeniedError)):
                 raise

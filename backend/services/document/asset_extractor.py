@@ -22,6 +22,9 @@ Trả về danh sách dict thông tin asset:
 
 import io
 import os
+import shutil
+import subprocess
+import tempfile
 import zipfile
 import re
 import logging
@@ -260,9 +263,18 @@ class AssetExtractor:
         XLSX là file ZIP: xl/worksheets/sheet*.xml + xl/drawings/drawing*.xml + xl/media/*.
         """
         assets = []
+        temp_dir = None
         try:
             import openpyxl
             from openpyxl.utils import get_column_letter
+
+            original_ext = Path(file_path).suffix.lower()
+            asset_type = 'xls_image' if original_ext == '.xls' else 'xlsx_image'
+            if original_ext == '.xls':
+                converted_path, temp_dir = self._convert_xls_to_xlsx(file_path)
+                if not converted_path:
+                    return assets
+                file_path = converted_path
 
             wb = openpyxl.load_workbook(file_path, data_only=True)
 
@@ -334,7 +346,7 @@ class AssetExtractor:
                         assets.append({
                             'image_data': image_bytes,
                             'image_format': fmt,
-                            'asset_type': 'xlsx_image',
+                            'asset_type': asset_type,
                             'sheet_name': sheet_name,
                             'anchor_cell': anchor_cell,
                             'anchor_row': anchor_row,
@@ -357,8 +369,52 @@ class AssetExtractor:
 
         except Exception as e:
             logger.error(f"XLSX asset extraction failed: {e}", exc_info=True)
+        finally:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
 
         return assets
+
+    def _convert_xls_to_xlsx(self, file_path: str) -> tuple[Optional[str], Optional[str]]:
+        """Convert legacy XLS to XLSX locally so openpyxl can extract images."""
+        temp_dir = tempfile.mkdtemp(prefix='xls_asset_')
+        try:
+            result = subprocess.run(
+                [
+                    'soffice',
+                    '--headless',
+                    '--convert-to',
+                    'xlsx',
+                    '--outdir',
+                    temp_dir,
+                    file_path,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            if result.returncode != 0:
+                logger.warning(
+                    "LibreOffice failed to convert XLS for asset extraction: %s %s",
+                    result.stdout,
+                    result.stderr,
+                )
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None, None
+
+            converted_files = list(Path(temp_dir).glob('*.xlsx'))
+            if not converted_files:
+                logger.warning("LibreOffice produced no XLSX file for %s", file_path)
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return None, None
+
+            return str(converted_files[0]), temp_dir
+        except Exception as e:
+            logger.warning(f"Failed to convert XLS for asset extraction: {e}")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return None, None
 
     # ═══════════════════════════════════════════════════════════════
     # SAVE

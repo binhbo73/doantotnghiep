@@ -34,7 +34,7 @@ type CitationTarget = {
 type AssetImageHint = {
     id?: string
     pageNumber?: number
-    position?: Record<string, number>
+    position?: Record<string, unknown>
     imageEndpoint?: string
     caption?: string
     contextText?: string
@@ -97,6 +97,41 @@ const getReferenceTokens = (text?: string) => {
         })
 
     return Array.from(new Set(words))
+}
+
+const getNumber = (value: unknown): number | undefined => {
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+const getAssetPdfBoxStyle = (assetImage: AssetImageHint | undefined, pageNumber: number): React.CSSProperties | undefined => {
+    if (!assetImage || assetImage.pageNumber !== pageNumber) return undefined
+
+    const position = assetImage.position || {}
+    const bbox = position.pdf_bbox
+    if (!Array.isArray(bbox) || bbox.length < 4) return undefined
+
+    const [x0, y0, x1, y1] = bbox.map(getNumber)
+    const pageWidth = getNumber(position.pdf_page_width)
+    const pageHeight = getNumber(position.pdf_page_height)
+    if (
+        x0 === undefined ||
+        y0 === undefined ||
+        x1 === undefined ||
+        y1 === undefined ||
+        !pageWidth ||
+        !pageHeight ||
+        x1 <= x0 ||
+        y1 <= y0
+    ) {
+        return undefined
+    }
+
+    return {
+        left: `${(x0 / pageWidth) * 100}%`,
+        top: `${(y0 / pageHeight) * 100}%`,
+        width: `${((x1 - x0) / pageWidth) * 100}%`,
+        height: `${((y1 - y0) / pageHeight) * 100}%`,
+    }
 }
 
 const getSearchPhrases = (text?: string) => {
@@ -300,7 +335,15 @@ export function PDFViewer({
             const assetPageEl = pageRefs.current[Math.max(0, startPage - 1)]
             if (assetPageEl) {
                 assetPageEl.classList.add('citation-pdf-asset-page-highlight')
-                window.setTimeout(() => scrollContainerToElement(assetPageEl, 'center', 'smooth'), 250)
+                const scrollToAsset = (attempt = 0) => {
+                    const assetHighlight = assetPageEl.querySelector('.citation-pdf-asset-highlight')
+                    if (!assetHighlight && attempt < 16) {
+                        window.setTimeout(() => scrollToAsset(attempt + 1), 250)
+                        return
+                    }
+                    scrollContainerToElement(assetHighlight || assetPageEl, 'center', 'smooth')
+                }
+                window.setTimeout(() => scrollToAsset(), 250)
             }
             return
         }
@@ -557,9 +600,9 @@ export function PDFViewer({
             ) ? { start: chunkCandidate.itemStart, end: chunkCandidate.itemEnd } : undefined
 
             const references = [
-                ...(contextText ? [{ text: contextText, source: 'answer_context' as const, bonus: 200 }] : []),
-                ...(referenceText ? [{ text: referenceText, source: 'answer_context' as const, bonus: 80 }] : []),
-                ...(!contextText && !referenceText && chunkReferenceText ? [{ text: chunkReferenceText, source: 'citation_chunk' as const, bonus: 0 }] : []),
+                ...(referenceText ? [{ text: referenceText, source: 'citation_chunk' as const, bonus: 140 }] : []),
+                ...(chunkReferenceText ? [{ text: chunkReferenceText, source: 'citation_chunk' as const, bonus: 80 }] : []),
+                ...(contextText ? [{ text: contextText, source: 'answer_context' as const, bonus: 5 }] : []),
             ]
 
             for (const reference of references) {
@@ -574,7 +617,7 @@ export function PDFViewer({
                 if (candidate.score > 0) {
                     const adjustedCandidate = {
                         ...candidate,
-                        score: candidate.score + (chunkRange ? reference.bonus : 0),
+                        score: candidate.score + reference.bonus,
                     }
                     if (adjustedCandidate.score > best.score) {
                         best = adjustedCandidate
@@ -600,10 +643,13 @@ export function PDFViewer({
         const chunkRange = chunkText
             ? findBestWindowInTexts(normalizedSpanTexts, chunkText, 'citation_chunk')
             : null
-        const answerRange = (answerContext || searchText)
-            ? findBestWindowInTexts(normalizedSpanTexts, answerContext || searchText || '', 'answer_context', chunkRange || undefined)
+        const sourceRange = searchText
+            ? findBestWindowInTexts(normalizedSpanTexts, searchText, 'citation_chunk', chunkRange || undefined)
             : null
-        const range = answerRange || chunkRange || matchedRangeRef.current
+        const answerRange = answerContext
+            ? findBestWindowInTexts(normalizedSpanTexts, answerContext, 'answer_context', sourceRange || chunkRange || undefined)
+            : null
+        const range = sourceRange || chunkRange || answerRange || matchedRangeRef.current
         if (range) {
             let highlightedCount = 0
             for (let index = range.start; index <= range.end && index < visualSpanItems.length; index += 1) {
@@ -641,12 +687,20 @@ export function PDFViewer({
                             }}
                             className="flex justify-center scroll-mt-6 rounded-md [&.citation-pdf-asset-page-highlight]:ring-4 [&.citation-pdf-asset-page-highlight]:ring-cyan-400 [&.citation-pdf-asset-page-highlight]:ring-offset-4 [&.citation-pdf-asset-page-highlight]:ring-offset-slate-100"
                         >
-                            <Page
-                                pageNumber={pageNumber}
-                                width={adjustedWidth || undefined}
-                                className="shadow-sm"
-                                onLoadError={(error) => console.error(`Page ${pageNumber} error:`, error)}
-                            />
+                            <div className="relative">
+                                <Page
+                                    pageNumber={pageNumber}
+                                    width={adjustedWidth || undefined}
+                                    className="shadow-sm"
+                                    onLoadError={(error) => console.error(`Page ${pageNumber} error:`, error)}
+                                />
+                                {getAssetPdfBoxStyle(assetImage, pageNumber) && (
+                                    <div
+                                        className="citation-pdf-asset-highlight pointer-events-none absolute rounded-sm border-4 border-cyan-400 bg-cyan-300/20 shadow-[0_0_0_4px_rgba(255,255,255,0.9)]"
+                                        style={getAssetPdfBoxStyle(assetImage, pageNumber)}
+                                    />
+                                )}
+                            </div>
                         </div>
                     ))}
                 </div>

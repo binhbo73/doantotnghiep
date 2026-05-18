@@ -73,7 +73,7 @@ class DocumentUploadService:
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
         'application/vnd.ms-excel',  # .xls
     }
-    UPLOAD_ROOT = 'uploads'
+    UPLOAD_ROOT = 'documents'
 
     def __init__(self):
         self.document_repo = DocumentRepository()
@@ -376,10 +376,10 @@ class DocumentUploadService:
         ext = _os.path.splitext(original_name)[1].lower()
         hashed_name = f"{file_hash}{ext}"
 
-        storage_dir = _os.path.join(self.UPLOAD_ROOT, str(user_id))
+        storage_dir = _os.path.join(str(settings.MEDIA_ROOT), self.UPLOAD_ROOT, str(user_id))
         _os.makedirs(storage_dir, exist_ok=True)
 
-        storage_path = _os.path.join(storage_dir, hashed_name)
+        storage_path = _os.path.abspath(_os.path.join(storage_dir, hashed_name))
         if not _os.path.exists(storage_path):
             with open(storage_path, 'wb') as f:
                 f.write(content)

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class ValidationStage(PipelineStage):
     """Validate uploaded file."""
     
-    ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.xlsx', '.csv'}
+    ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.xlsx', '.xls', '.csv'}
     MAX_FILE_SIZE_MB = 50
     
     def execute(self, context: PipelineContext) -> PipelineContext:
@@ -111,7 +111,7 @@ class ParsingStage(PipelineStage):
                 page_aware_text = parser.enhance_pdf(file_path)
             elif file_ext == '.docx':
                 page_aware_text = parser.enhance_docx(file_path)
-            elif file_ext == '.xlsx':
+            elif file_ext in {'.xlsx', '.xls'}:
                 page_aware_text = parser.enhance_excel(file_path)
             elif file_ext == '.csv':
                 page_aware_text = parser.enhance_csv(file_path)
@@ -259,6 +259,10 @@ class ChunkingStage(PipelineStage):
             defer_summaries = getattr(settings, 'RAG_DEFER_SUMMARY_ON_UPLOAD', True)
             build_raptor_on_upload = getattr(settings, 'RAG_BUILD_RAPTOR_ON_UPLOAD', False)
             generate_summaries = should_apply_raptor_pre and not defer_summaries
+            file_ext = context.metadata.get('file_extension', '').lower()
+            page_aware_for_chunking = context.metadata.get('page_aware_text')
+            if self._is_spreadsheet(file_ext) and not should_apply_raptor_pre:
+                page_aware_for_chunking = None
 
             if not should_apply_raptor_pre:
                 self.logger.info(
@@ -286,8 +290,7 @@ class ChunkingStage(PipelineStage):
                     'raptor_applied': should_apply_raptor_pre,
                     'spreadsheet': context.metadata.get('spreadsheet'),
                 },
-                # If not applying RAPTOR, don't pass page_aware_text to skip hierarchy creation
-                page_aware_text=context.metadata.get('page_aware_text') if should_apply_raptor_pre else None,
+                page_aware_text=page_aware_for_chunking,
                 generate_summaries=generate_summaries,
                 summary_mode='async'
             )

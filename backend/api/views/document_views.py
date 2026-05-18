@@ -852,26 +852,43 @@ class DocumentPreviewView(APIView):
     """
     API Endpoint: GET /api/v1/documents/{doc_id}/preview
 
-    Return HTML preview for supported document types.
+    Return a browser-previewable file.
+    Word documents are served as cached PDF preview for page-accurate citations.
     """
     permission_classes = [IsAuthenticatedUser]
 
     def get(self, request, doc_id):
         try:
             service = DocumentService()
-            html = service.get_document_preview_html(
+
+            if request.query_params.get('format') == 'html':
+                html = service.get_document_preview_html(
+                    doc_id=doc_id,
+                    user_id=request.user.id,
+                )
+
+                return Response(
+                    ResponseBuilder.success(
+                        data={'html': html},
+                        message='Preview HTML generated successfully',
+                        status_code=200
+                    ),
+                    status=status.HTTP_200_OK
+                )
+
+            file_ref = service.get_document_preview_file_reference(
                 doc_id=doc_id,
                 user_id=request.user.id,
             )
 
-            return Response(
-                ResponseBuilder.success(
-                    data={'html': html},
-                    message='Preview HTML generated successfully',
-                    status_code=200
-                ),
-                status=status.HTTP_200_OK
+            response = FileResponse(
+                open(file_ref['path'], 'rb'),
+                as_attachment=False,
+                filename=file_ref['filename'],
+                content_type=file_ref.get('mime_type', 'application/octet-stream'),
             )
+            response['X-Document-Preview-Mode'] = file_ref.get('preview_mode', 'original')
+            return response
 
         except NotFoundError as e:
             return Response(

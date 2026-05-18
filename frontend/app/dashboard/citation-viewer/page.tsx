@@ -231,6 +231,19 @@ function classifyFileType(type?: string, title?: string, contentType?: string): 
     return 'unsupported'
 }
 
+function isOfficeWordFile(type?: string, title?: string, contentType?: string): boolean {
+    const normalizedType = (type || '').toLowerCase().trim()
+    const normalizedContentType = (contentType || '').toLowerCase().trim()
+    const extension = getFileExtension(title)
+    const candidates = [normalizedType, normalizedContentType, extension].filter(Boolean)
+
+    return candidates.some((value) => (
+        ['doc', 'docx', '.doc', '.docx'].includes(value) ||
+        value.includes('application/msword') ||
+        value.includes('wordprocessingml.document')
+    ))
+}
+
 function getViewerLabel(kind?: ViewerKind): string {
     switch (kind) {
         case 'pdf':
@@ -373,12 +386,12 @@ function CitationViewerContent() {
     const initialPage = Number(chunkSource?.page_number || payload.page || 1)
     const preferredCitationText = hasAsset
         ? (payload.asset_context_text || payload.asset?.context_text || payload.description || payload.excerpt || '')
-        : (payload.answer_context || payload.excerpt || payload.description || '')
+        : (payload.excerpt || payload.description || '')
     const chunkSectionText = getPrimaryChunkSection(chunkSource?.content, preferredCitationText)
     // chunkSource.content thuong overlap voi chunk ke tiep, nen chi truyen section chinh
-    // cua chunk xuong viewer. Neu co answer_context/excerpt thi do moi la doan can to.
-    // answer_context la cau tra loi cua LLM, chi dung hien thi/doi chieu, khong lam neo chinh.
-    const searchText = preferredCitationText || chunkSectionText || chunkSource?.content || ''
+    // cua chunk xuong viewer. Excerpt/description/chunk moi la text goc trong tai lieu.
+    // answer_context la cau tra loi cua LLM, chi dung doi chieu, khong lam neo chinh.
+    const searchText = preferredCitationText || chunkSectionText || chunkSource?.content || payload.answer_context || ''
     const chunkText = chunkSectionText || chunkSource?.content || ''
     const answerContext = payload.answer_context || ''
     const citationTarget = useMemo<CitationTarget>(() => ({
@@ -403,7 +416,7 @@ function CitationViewerContent() {
 
     // Update debug info
     useEffect(() => {
-        const source: SearchTextSource = payload.answer_context ? 'answer_context' : payload.excerpt ? 'excerpt' : payload.description ? 'description' : chunkText ? 'chunk' : 'none'
+        const source: SearchTextSource = payload.excerpt ? 'excerpt' : payload.description ? 'description' : chunkText ? 'chunk' : payload.answer_context ? 'answer_context' : 'none'
         setSearchDebug(searchText ? {
             source,
             len: searchText.length,
@@ -566,11 +579,24 @@ function CitationViewerContent() {
 
                 const initialKind = classifyFileType(payload.type, title)
 
-                if (initialKind === 'word' && payload.document_id) {
+                if (initialKind === 'word' && payload.document_id && isOfficeWordFile(payload.type, title)) {
+                    const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/preview`), {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                        signal: controller.signal,
+                    })
+
+                    if (!response.ok) {
+                        throw new Error(`Khong the tai preview Word: ${response.status}`)
+                    }
+
+                    const blob = await response.blob()
+                    objectUrl = URL.createObjectURL(blob)
                     setViewer({
-                        kind: 'word',
-                        fileUrl: `/documents/${payload.document_id}/preview`,
-                        fileType: payload.type || getFileExtension(title) || 'text',
+                        kind: 'pdf',
+                        fileUrl: objectUrl,
+                        fileType: 'application/pdf',
                     })
                     return
                 }
@@ -594,6 +620,32 @@ function CitationViewerContent() {
                     throw new Error('Dinh dang tai lieu nay chua duoc ho tro xem truc tiep')
                 }
 
+                if (resolvedKind === 'word' && isOfficeWordFile(payload.type, resolvedTitle, contentType)) {
+                    if (!payload.document_id) {
+                        throw new Error('Can document_id de xem preview Word')
+                    }
+
+                    const previewResponse = await fetch(buildApiUrl(`/documents/${payload.document_id}/preview`), {
+                        headers: {
+                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                        },
+                        signal: controller.signal,
+                    })
+
+                    if (!previewResponse.ok) {
+                        throw new Error(`Khong the tai preview Word: ${previewResponse.status}`)
+                    }
+
+                    const previewBlob = await previewResponse.blob()
+                    objectUrl = URL.createObjectURL(previewBlob)
+                    setViewer({
+                        kind: 'pdf',
+                        fileUrl: objectUrl,
+                        fileType: 'application/pdf',
+                    })
+                    return
+                }
+
                 if (resolvedKind === 'word') {
                     if (!payload.document_id) {
                         throw new Error('Can document_id de xem preview Word/TXT/Markdown')
@@ -601,7 +653,7 @@ function CitationViewerContent() {
 
                     setViewer({
                         kind: 'word',
-                        fileUrl: `/documents/${payload.document_id}/preview`,
+                        fileUrl: `/documents/${payload.document_id}/preview?format=html`,
                         fileType: payload.type || contentType || getFileExtension(resolvedTitle) || 'text',
                     })
                     return

@@ -96,6 +96,8 @@ class AssetPipelineStage(PipelineStage):
 
             extract_func = ext_map[file_ext][1]
             raw_assets = extract_func(file_path, full_text)
+            if file_ext in {'.doc', '.docx'} and raw_assets:
+                self._enrich_docx_assets_with_pages(raw_assets, file_path, pa_text)
 
             if not raw_assets:
                 self.logger.info(f"No assets found in {os.path.basename(file_path)}")
@@ -270,6 +272,193 @@ class AssetPipelineStage(PipelineStage):
     # ═══════════════════════════════════════════════════════════════
     # OCR
     # ═══════════════════════════════════════════════════════════════
+
+    def _enrich_docx_assets_with_pages(self, raw_assets: List[Dict[str, Any]], file_path: str, page_aware_text) -> None:
+        """Map DOCX inline images to the same PDF-preview pages used by chunks."""
+        if not page_aware_text or not hasattr(page_aware_text, 'get_page_at_position'):
+            return
+
+        try:
+            self._enrich_docx_assets_with_pdf_image_pages(raw_assets, file_path, page_aware_text)
+
+            paragraph_offsets = self._get_docx_paragraph_offsets(file_path)
+            text_length = len(getattr(page_aware_text, 'text', '') or '')
+
+            for asset_index, raw in enumerate(raw_assets):
+                if raw.get('page_number'):
+                    continue
+
+                para_idx = raw.get('paragraph_index')
+                if para_idx is None:
+                    para_idx = (raw.get('position') or {}).get('paragraph_index')
+
+                char_pos = None
+                if isinstance(para_idx, int) and paragraph_offsets:
+                    safe_idx = max(0, min(para_idx, len(paragraph_offsets) - 1))
+                    char_pos = paragraph_offsets[safe_idx]
+                elif text_length > 0:
+                    char_pos = int((asset_index / max(1, len(raw_assets))) * text_length)
+
+                if char_pos is None:
+                    continue
+
+                page_number = page_aware_text.get_page_at_position(char_pos)
+                raw['page_number'] = page_number
+                raw_position = raw.setdefault('position', {})
+                raw_position['page_number'] = page_number
+                raw_position['char_pos'] = char_pos
+
+                self.logger.info(
+                    f"[ASSET] DOCX asset {asset_index} paragraph={para_idx} "
+                    f"mapped_to_page={page_number} char={char_pos}"
+                )
+        except Exception as e:
+            self.logger.warning(f"Failed to enrich DOCX assets with page numbers: {e}")
+
+    def _enrich_docx_assets_with_pdf_image_pages(
+        self,
+        raw_assets: List[Dict[str, Any]],
+        file_path: str,
+        page_aware_text,
+    ) -> int:
+        """Find the page where each DOCX image is actually rendered in the PDF preview."""
+        try:
+            import fitz
+            from PIL import Image
+            from io import BytesIO
+            from services.document.office_preview import convert_office_to_pdf
+        except Exception as e:
+            self.logger.debug(f"PDF image page mapping unavailable: {e}")
+            return 0
+
+        def image_hash(image_data: bytes, size: int = 16) -> Optional[str]:
+            try:
+                image = Image.open(BytesIO(image_data)).convert('L').resize((size, size))
+                values = list(image.getdata())
+                average = sum(values) / len(values)
+                return ''.join('1' if value >= average else '0' for value in values)
+            except Exception:
+                return None
+
+        def hash_distance(left: Optional[str], right: Optional[str]) -> int:
+            if not left or not right or len(left) != len(right):
+                return 999
+            return sum(a != b for a, b in zip(left, right))
+
+        try:
+            preview_pdf = convert_office_to_pdf(file_path)
+            pdf = fitz.open(preview_pdf)
+            paragraph_offsets = self._get_docx_paragraph_offsets(file_path)
+
+            candidates = []
+            for page_index in range(pdf.page_count):
+                page = pdf[page_index]
+                for image_info in page.get_images(full=True):
+                    xref = image_info[0]
+                    rects = page.get_image_rects(xref)
+                    if not rects:
+                        continue
+
+                    extracted = pdf.extract_image(xref)
+                    image_data = extracted.get('image') or b''
+                    digest = image_hash(image_data)
+                    if not digest:
+                        continue
+
+                    for rect in rects:
+                        candidates.append({
+                            'page_number': page_index + 1,
+                            'page_width': page.rect.width,
+                            'page_height': page.rect.height,
+                            'xref': xref,
+                            'hash': digest,
+                            'rect': rect,
+                            'used': False,
+                        })
+
+            if not candidates:
+                return 0
+
+            mapped = 0
+            for asset_index, raw in enumerate(raw_assets):
+                if raw.get('page_number'):
+                    continue
+
+                digest = image_hash(raw.get('image_data', b''))
+                if not digest:
+                    continue
+
+                para_idx = raw.get('paragraph_index')
+                if para_idx is None:
+                    para_idx = (raw.get('position') or {}).get('paragraph_index')
+
+                fallback_page = None
+                if isinstance(para_idx, int) and paragraph_offsets:
+                    safe_idx = max(0, min(para_idx, len(paragraph_offsets) - 1))
+                    fallback_page = page_aware_text.get_page_at_position(paragraph_offsets[safe_idx])
+
+                best_candidate = None
+                best_score = None
+                best_distance = None
+                for candidate in candidates:
+                    if candidate['used']:
+                        continue
+                    distance = hash_distance(digest, candidate['hash'])
+                    if distance > 32:
+                        continue
+
+                    page_penalty = abs(candidate['page_number'] - fallback_page) if fallback_page else 0
+                    score = (distance * 10) + page_penalty
+                    if best_score is None or score < best_score:
+                        best_candidate = candidate
+                        best_score = score
+                        best_distance = distance
+
+                if not best_candidate:
+                    continue
+
+                best_candidate['used'] = True
+                rect = best_candidate['rect']
+                page_number = best_candidate['page_number']
+                raw['page_number'] = page_number
+                raw_position = raw.setdefault('position', {})
+                raw_position['page_number'] = page_number
+                raw_position['page_source'] = 'pdf_image_match'
+                raw_position['pdf_xref'] = best_candidate['xref']
+                raw_position['pdf_bbox'] = [
+                    round(rect.x0, 2),
+                    round(rect.y0, 2),
+                    round(rect.x1, 2),
+                    round(rect.y1, 2),
+                ]
+                raw_position['pdf_page_width'] = round(best_candidate['page_width'], 2)
+                raw_position['pdf_page_height'] = round(best_candidate['page_height'], 2)
+                mapped += 1
+
+                self.logger.info(
+                    f"[ASSET] DOCX asset {asset_index} paragraph={para_idx} "
+                    f"matched_pdf_page={page_number} hash_distance={best_distance}"
+                )
+
+            return mapped
+        except Exception as e:
+            self.logger.warning(f"Failed to map DOCX assets from PDF preview images: {e}")
+            return 0
+
+    def _get_docx_paragraph_offsets(self, file_path: str) -> List[int]:
+        try:
+            from docx import Document
+
+            doc = Document(file_path)
+            offsets = []
+            cursor = 0
+            for paragraph in doc.paragraphs:
+                offsets.append(cursor)
+                cursor += len(paragraph.text or '') + 1
+            return offsets
+        except Exception as e:
+            self.logger.warning(f"Failed to read DOCX paragraph offsets: {e}")
+            return []
 
     def _run_ocr(self, image_data: bytes) -> tuple:
         """Chạy Tesseract OCR, trả về (text, confidence)."""

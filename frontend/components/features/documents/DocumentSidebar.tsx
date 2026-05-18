@@ -29,35 +29,11 @@ function formatDate(dateStr: string): string {
     }
 }
 
-function normalizeFileType(fileType: string): string {
-    return fileType.toLowerCase().trim()
-}
-
-function isBackendPreviewFile(fileType: string): boolean {
-    const normalized = normalizeFileType(fileType)
-
-    return [
-        'doc',
-        'docx',
-        '.doc',
-        '.docx',
-        'application/msword',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'txt',
-        '.txt',
-        'text/plain',
-        'text',
-        'md',
-        '.md',
-        'markdown',
-        'text/markdown',
-    ].includes(normalized)
-}
-
 export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarProps) {
     const [isDownloading, setIsDownloading] = useState(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [previewUrl, setPreviewUrl] = useState<string>('')
+    const [previewFileType, setPreviewFileType] = useState<string>('')
     const { canRead, canWrite, canDelete } = useRBAC()
 
     if (!document) {
@@ -102,40 +78,33 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
 
         try {
             const filename = document.original_name || document.filename || 'document'
-            const endpoint = `/documents/${document.id}/download`
+            const endpoint = mode === 'preview'
+                ? `/documents/${document.id}/preview`
+                : `/documents/${document.id}/download`
 
             if (mode === 'download') {
                 // Download: save to disk
                 await api.download(endpoint, filename)
                 toast.success('Đã tải xuống thành công', { id: toastId })
             } else {
-                const fileType = document.file_type || ''
-                const isBackendPreview = isBackendPreviewFile(fileType)
-
-                if (isBackendPreview) {
-                    const previewEndpoint = `/documents/${document.id}/preview`
-                    setPreviewUrl(previewEndpoint)
-                    setIsPreviewOpen(true)
-                    toast.success('Đã mở bản xem trước', { id: toastId })
-                } else {
-                    // Preview: show in modal for other supported types
-                    const blob = await api.download(endpoint)
-                    if (!blob || blob.size === 0) {
-                        throw new Error('File rỗng hoặc không hợp lệ')
-                    }
-
-                    // Avoid opening the preview modal for non-file responses.
-                    const blobType = blob.type?.toLowerCase() || ''
-                    const looksLikeErrorResponse = blobType.includes('application/json') || blobType.includes('text/html')
-                    if (looksLikeErrorResponse) {
-                        throw new Error('Phản hồi tải xuống không hợp lệ')
-                    }
-
-                    const url = URL.createObjectURL(blob)
-                    setPreviewUrl(url)
-                    setIsPreviewOpen(true)
-                    toast.success('Đã mở bản xem trước', { id: toastId })
+                // Preview uses the original stored file, not converted HTML/table output.
+                const blob = await api.download(endpoint)
+                if (!blob || blob.size === 0) {
+                    throw new Error('File rỗng hoặc không hợp lệ')
                 }
+
+                // Avoid opening the preview modal for non-file responses.
+                const blobType = blob.type?.toLowerCase() || ''
+                const looksLikeErrorResponse = blobType.includes('application/json') || blobType.includes('text/html')
+                if (looksLikeErrorResponse) {
+                    throw new Error('Phản hồi tải xuống không hợp lệ')
+                }
+
+                const url = URL.createObjectURL(blob)
+                setPreviewUrl(url)
+                setPreviewFileType(blob.type || document.file_type)
+                setIsPreviewOpen(true)
+                toast.success('Đã mở bản xem trước', { id: toastId })
             }
         } catch (error) {
             console.error('Download/Preview failed:', error)
@@ -295,10 +264,12 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                         URL.revokeObjectURL(previewUrl)
                     }
                     setPreviewUrl('')
+                    setPreviewFileType('')
                 }}
+                documentId={document.id}
                 fileUrl={previewUrl}
                 fileName={displayName}
-                fileType={document.file_type}
+                fileType={previewFileType || document.file_type}
             />
         </div>
     )

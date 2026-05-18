@@ -134,7 +134,7 @@ class EnhancedDocumentChunker:
             prev_chunk_obj = None
             db_chunk_index = 0
 
-            # Group chunks by page for hierarchical processing
+            # Group chunks by page for page-aware persistence/RAPTOR processing.
             page_groups = {}
             if page_aware_text:
                 for idx, chunk_dict in enumerate(chunks):
@@ -148,7 +148,7 @@ class EnhancedDocumentChunker:
                     
                     page_groups.setdefault(p_num, []).append(chunk_dict)
                 
-                logger.info(f"📦 [CHUNKING] Grouped into {len(page_groups)} pages for RAPTOR processing")
+                logger.info(f"📦 [CHUNKING] Grouped into {len(page_groups)} pages")
             else:
                 logger.warning("❗ No page_aware_text provided. All chunks will be assigned to Page 1 (General).")
                 page_groups[1] = chunks
@@ -158,7 +158,7 @@ class EnhancedDocumentChunker:
 
                 # Create an explicit page-level container
                 page_container = None
-                if page_aware_text:
+                if page_aware_text and should_raptor:
                     page_container_content = "\n".join(chunk['text'] for chunk in page_chunks)
                     content_hash = hashlib.md5(page_container_content.encode()).hexdigest()
                     

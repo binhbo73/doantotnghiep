@@ -15,12 +15,14 @@ For Excel: Treats each sheet as a "page"
 """
 
 import logging
+import unicodedata
 import re
 from typing import List, Dict, Tuple, Optional, Any
 from pathlib import Path
 from datetime import date, datetime
 
-from services.document.pdf_runtime import convert_pdf_to_markdown_quiet, read_pdf_page_counts
+from services.document.office_preview import convert_office_to_pdf
+from services.document.pdf_runtime import convert_pdf_to_markdown_quiet, read_pdf_page_counts, read_pdf_page_texts
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +225,10 @@ class PageAwareParserEnhancer:
                     char_pos += 1
             
             full_text = "".join(text_parts)
+
+            aligned = self._align_docx_text_to_pdf_preview(full_text, file_path)
+            if aligned:
+                return aligned
             
             # 2. FALLBACK: If document is long but no page breaks were found
             # Word pages are roughly 3000 characters. 
@@ -236,12 +242,118 @@ class PageAwareParserEnhancer:
             logger.error(f"Error in DOCX page-aware parsing: {str(e)}")
             return None
 
+    def _align_docx_text_to_pdf_preview(self, docx_text: str, file_path: str) -> Optional[PageAwareText]:
+        """Align DOCX extraction text to the same PDF preview pages shown in UI."""
+        try:
+            preview_pdf = convert_office_to_pdf(file_path)
+            pdf_pages = read_pdf_page_texts(preview_pdf)
+            pdf_pages = [page for page in pdf_pages if page and page.strip()]
+            if not pdf_pages:
+                return None
+
+            docx_tokens = self._tokenize_with_positions(docx_text)
+            pdf_page_tokens = [self._tokenize_plain(page_text) for page_text in pdf_pages]
+            total_pdf_tokens = sum(len(tokens) for tokens in pdf_page_tokens)
+            if not docx_tokens or total_pdf_tokens == 0:
+                return None
+
+            boundaries = [PageBoundary(1, 0)]
+            current_token_index = 0
+            cumulative_pdf_tokens = 0
+
+            for page_index, page_tokens in enumerate(pdf_page_tokens[:-1], start=1):
+                cumulative_pdf_tokens += len(page_tokens)
+                estimated_index = int((cumulative_pdf_tokens / total_pdf_tokens) * len(docx_tokens))
+                next_page_tokens = pdf_page_tokens[page_index]
+                boundary_token_index = self._find_next_page_anchor(
+                    [token for token, _ in docx_tokens],
+                    next_page_tokens,
+                    estimated_index,
+                    current_token_index,
+                )
+                current_token_index = max(current_token_index + 1, boundary_token_index)
+                boundaries.append(PageBoundary(page_index + 1, docx_tokens[current_token_index][1]))
+
+            return PageAwareText(
+                docx_text,
+                boundaries,
+                len(pdf_pages),
+                metadata={
+                    "page_count_source": "office_pdf_preview_alignment",
+                    "preview_pdf_path": preview_pdf,
+                },
+            )
+        except Exception as e:
+            logger.warning(f"Could not align DOCX pages to PDF preview: {e}")
+            return None
+
+    def _find_next_page_anchor(
+        self,
+        doc_tokens: List[str],
+        next_page_tokens: List[str],
+        estimated_index: int,
+        min_index: int,
+    ) -> int:
+        anchor = [token for token in next_page_tokens if len(token) >= 2][:10]
+        if len(anchor) < 4:
+            return max(min_index, min(estimated_index, len(doc_tokens) - 1))
+
+        search_radius = 500
+        start = max(min_index, estimated_index - search_radius)
+        end = min(len(doc_tokens) - len(anchor), estimated_index + search_radius)
+        best_index = None
+        best_score = 0
+
+        for idx in range(start, max(start, end) + 1):
+            window = doc_tokens[idx:idx + len(anchor)]
+            score = sum(1 for left, right in zip(window, anchor) if left == right)
+            if score > best_score:
+                best_score = score
+                best_index = idx
+                if score == len(anchor):
+                    break
+
+        if best_index is not None and best_score >= max(4, len(anchor) // 2):
+            return best_index
+
+        return max(min_index, min(estimated_index, len(doc_tokens) - 1))
+
+    def _tokenize_with_positions(self, text: str) -> List[Tuple[str, int]]:
+        return [
+            (self._normalize_token(match.group(0)), match.start())
+            for match in re.finditer(r"\w+", text, flags=re.UNICODE)
+            if self._normalize_token(match.group(0))
+        ]
+
+    def _tokenize_plain(self, text: str) -> List[str]:
+        return [
+            self._normalize_token(match.group(0))
+            for match in re.finditer(r"\w+", text or "", flags=re.UNICODE)
+            if self._normalize_token(match.group(0))
+        ]
+
+    def _normalize_token(self, token: str) -> str:
+        normalized = unicodedata.normalize('NFD', token.lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return normalized.replace('đ', 'd')
+
     def _estimate_logical_pages(self, text: str, chars_per_page: int = 3000) -> PageAwareText:
         """Fallback to estimate pages based on character count for documents without markers."""
         total_pages = max(1, (len(text) + chars_per_page - 1) // chars_per_page)
+        return self._estimate_pages_by_total(text, total_pages, source="char_estimate")
+
+    def _estimate_pages_by_total(
+        self,
+        text: str,
+        total_pages: int,
+        source: str = "estimated",
+    ) -> PageAwareText:
+        """Create clean boundaries for a known total page count."""
+        total_pages = max(1, int(total_pages or 1))
+        chars_per_page = max(1, (len(text) + total_pages - 1) // total_pages)
         boundaries = []
         
-        # We'll try to find paragraph breaks near the 3000-char intervals
+        # Try to find paragraph breaks near each page interval.
         current_pos = 0
         for p in range(1, total_pages + 1):
             boundaries.append(PageBoundary(p, current_pos))
@@ -257,7 +369,7 @@ class PageAwareParserEnhancer:
             else:
                 current_pos = target_next
 
-        return PageAwareText(text, boundaries, total_pages)
+        return PageAwareText(text, boundaries, total_pages, metadata={"page_count_source": source})
     
     def enhance_excel(self, file_path: str) -> Optional[PageAwareText]:
         """
@@ -266,6 +378,9 @@ class PageAwareParserEnhancer:
         Each sheet is treated as a page.
         """
         try:
+            if Path(file_path).suffix.lower() == '.xls':
+                return self._enhance_xls(file_path)
+
             import openpyxl
             from openpyxl.utils import get_column_letter
             
@@ -395,6 +510,80 @@ class PageAwareParserEnhancer:
         
         except Exception as e:
             logger.error(f"Error in Excel page-aware parsing: {str(e)}")
+            return None
+
+    def _enhance_xls(self, file_path: str) -> Optional[PageAwareText]:
+        """Extract text and sheet boundaries from legacy XLS workbooks."""
+        try:
+            import xlrd
+
+            workbook = xlrd.open_workbook(file_path, formatting_info=False)
+            text_parts = []
+            boundaries = []
+            char_pos = 0
+            sheet_stats = []
+            total_non_empty_rows = 0
+            total_non_empty_cells = 0
+
+            for sheet_index, sheet in enumerate(workbook.sheets(), start=1):
+                sheet_header = f"\n--- Sheet: {sheet.name} (Page {sheet_index}) ---\n\n"
+                text_parts.append(sheet_header)
+                boundaries.append(PageBoundary(sheet_index, char_pos))
+                char_pos += len(sheet_header)
+
+                non_empty_rows = 0
+                non_empty_cells = 0
+                for row_idx in range(sheet.nrows):
+                    row_values = []
+                    has_content = False
+                    for col_idx in range(sheet.ncols):
+                        value = self._format_excel_cell(sheet.cell_value(row_idx, col_idx))
+                        if value:
+                            has_content = True
+                            non_empty_cells += 1
+                        row_values.append(value)
+
+                    if not has_content:
+                        continue
+
+                    non_empty_rows += 1
+                    row_text = "| " + " | ".join([str(row_idx + 1)] + row_values) + " |\n"
+                    text_parts.append(row_text)
+                    char_pos += len(row_text)
+
+                text_parts.append("\n")
+                char_pos += 1
+                total_non_empty_rows += non_empty_rows
+                total_non_empty_cells += non_empty_cells
+                sheet_stats.append({
+                    "sheet_name": sheet.name,
+                    "page_number": sheet_index,
+                    "non_empty_rows": non_empty_rows,
+                    "non_empty_cells": non_empty_cells,
+                    "max_row": sheet.nrows,
+                    "max_col": sheet.ncols,
+                    "merged_ranges": 0,
+                    "embedded_images": 0,
+                })
+
+            text = "".join(text_parts)
+            total_pages = max(1, workbook.nsheets)
+            return PageAwareText(
+                text,
+                boundaries or [PageBoundary(1, 0)],
+                total_pages,
+                metadata={
+                    "content_format": "spreadsheet_markdown",
+                    "sheet_count": workbook.nsheets,
+                    "total_non_empty_rows": total_non_empty_rows,
+                    "total_non_empty_cells": total_non_empty_cells,
+                    "total_merged_ranges": 0,
+                    "total_embedded_images": 0,
+                    "sheets": sheet_stats,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error in XLS page-aware parsing: {str(e)}")
             return None
 
     def _excel_used_bounds(self, ws):

@@ -296,7 +296,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
         }
 
         loadExcel()
-    }, [fileUrl, initialSheet])
+    }, [fileUrl, initialSheet, assetImages])
 
     useEffect(() => {
         if (!sheets.length || !initialSheet) return

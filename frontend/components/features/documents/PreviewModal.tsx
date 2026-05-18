@@ -2,27 +2,68 @@
 
 import React, { useState, useEffect } from 'react'
 import { PDFViewer } from './PDFViewer'
-import { WordViewer } from './WordViewer'
 import { ExcelViewer } from './ExcelViewer'
+import { buildApiUrl } from '@/config/api'
 
 interface PreviewModalProps {
     isOpen: boolean
     onClose: () => void
+    documentId?: string
     fileUrl: string
     fileName: string
     fileType: string
 }
 
-export function PreviewModal({ isOpen, onClose, fileUrl, fileName, fileType }: PreviewModalProps) {
+type DocumentAssetSource = {
+    id: string
+    page_number?: number | null
+    sheet_name?: string | null
+    anchor_cell?: string | null
+    caption?: string | null
+    image_url?: string | null
+}
+
+type ExcelAssetImage = {
+    id?: string
+    sheetName?: string
+    anchorCell?: string
+    imageEndpoint?: string
+    caption?: string
+}
+
+function normalizeApiEndpoint(endpoint?: string | null): string {
+    if (!endpoint) return ''
+    return endpoint.startsWith('/api/v1/') ? endpoint.slice('/api/v1'.length) : endpoint
+}
+
+function OriginalFileViewer({ fileUrl, fileName, onLoadSuccess }: { fileUrl: string; fileName: string; onLoadSuccess: () => void }) {
+    useEffect(() => {
+        onLoadSuccess()
+    }, [onLoadSuccess])
+
+    return (
+        <div className="flex h-full w-full flex-col bg-white">
+            <iframe
+                src={fileUrl}
+                title={fileName}
+                className="min-h-0 flex-1 border-0 bg-white"
+            />
+            <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                Opening the original file. If this browser cannot display the format, open it with Office on your machine.
+            </div>
+        </div>
+    )
+}
+
+export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, fileType }: PreviewModalProps) {
     const [error, setError] = useState<string | null>(null)
     const [viewerStatus, setViewerStatus] = useState<{ label: string; current: number; total: number } | null>(null)
+    const [excelAssetImages, setExcelAssetImages] = useState<ExcelAssetImage[]>([])
 
     useEffect(() => {
         setError(null)
         setViewerStatus(null)
     }, [fileUrl])
-
-    if (!isOpen) return null
 
     // Detect file types - handle both MIME types and extensions
     const fileTypeNorm = fileType.toLowerCase().trim()
@@ -62,6 +103,60 @@ export function PreviewModal({ isOpen, onClose, fileUrl, fileName, fileType }: P
 
     console.log('File detection:', { isPDF, isWord, isExcel, isImage, isText, isSupported, error, fileUrl })
 
+    useEffect(() => {
+        if (!isOpen || !isExcel || !documentId) {
+            setExcelAssetImages([])
+            return
+        }
+
+        let cancelled = false
+        const controller = new AbortController()
+
+        const loadExcelAssets = async () => {
+            try {
+                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const response = await fetch(buildApiUrl(`/documents/${documentId}/assets`), {
+                    headers: {
+                        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    signal: controller.signal,
+                })
+
+                if (!response.ok) {
+                    if (!cancelled) setExcelAssetImages([])
+                    return
+                }
+
+                const body = await response.json()
+                const data = body?.data || body
+                const assets = Array.isArray(data) ? data as DocumentAssetSource[] : []
+                const mapped = assets
+                    .map((asset) => ({
+                        id: asset.id,
+                        sheetName: asset.sheet_name || undefined,
+                        anchorCell: asset.anchor_cell || undefined,
+                        imageEndpoint: asset.image_url ? normalizeApiEndpoint(asset.image_url) : `/assets/${asset.id}/image`,
+                        caption: asset.caption || undefined,
+                    }))
+
+                if (!cancelled) setExcelAssetImages(mapped)
+            } catch (err) {
+                if ((err as Error).name !== 'AbortError' && !cancelled) {
+                    setExcelAssetImages([])
+                }
+            }
+        }
+
+        loadExcelAssets()
+
+        return () => {
+            cancelled = true
+            controller.abort()
+        }
+    }, [isOpen, isExcel, documentId])
+
+    if (!isOpen) return null
+
     const handleLoadSuccess = () => {
         console.log('✅ Document loaded successfully')
     }
@@ -79,10 +174,6 @@ export function PreviewModal({ isOpen, onClose, fileUrl, fileName, fileType }: P
 
             return { ...previous, label: 'Trang', current: page }
         })
-    }
-
-    const handleWordScrollStatsChange = (currentPage: number, totalPages: number) => {
-        setViewerStatus({ label: 'Trang', current: currentPage, total: totalPages })
     }
 
     const handleExcelSheetChange = (activeSheet: number, totalSheets: number) => {
@@ -143,17 +234,17 @@ export function PreviewModal({ isOpen, onClose, fileUrl, fileName, fileType }: P
                     )}
 
                     {!error && (isWord || isText) && (
-                        <WordViewer
+                        <OriginalFileViewer
                             fileUrl={fileUrl}
+                            fileName={fileName}
                             onLoadSuccess={handleLoadSuccess}
-                            onLoadError={handleLoadError}
-                            onScrollStatsChange={handleWordScrollStatsChange}
                         />
                     )}
 
                     {!error && isExcel && (
                         <ExcelViewer
                             fileUrl={fileUrl}
+                            assetImages={excelAssetImages}
                             onLoadSuccess={handleLoadSuccess}
                             onLoadError={handleLoadError}
                             onSheetChange={handleExcelSheetChange}
