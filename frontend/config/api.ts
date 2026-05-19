@@ -31,3 +31,21 @@ export function getApiBaseUrl(): string {
 export function buildApiUrl(endpoint: string): string {
     return `${getApiBaseUrl()}${normalizeEndpoint(endpoint)}`
 }
+
+export function getDirectApiBaseUrl(): string {
+    const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim()
+
+    if (configuredUrl && !configuredUrl.startsWith('/')) {
+        return normalizeTrailingSlash(configuredUrl)
+    }
+
+    if (typeof window !== 'undefined') {
+        return `${window.location.protocol}//${window.location.hostname}:8000${DEFAULT_API_PATH}`
+    }
+
+    return `${DEFAULT_BACKEND_ORIGIN}${DEFAULT_API_PATH}`
+}
+
+export function buildDirectApiUrl(endpoint: string): string {
+    return `${getDirectApiBaseUrl()}${normalizeEndpoint(endpoint)}`
+}

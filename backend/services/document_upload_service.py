@@ -145,24 +145,11 @@ class DocumentUploadService:
 
         # 5. Process (parse → chunk → embed)
         if run_processing:
-            import threading
-            from django.db import connection
-
-            def background_process(doc, path):
-                try:
-                    self._process_document(doc, path)
-                finally:
-                    # Đảm bảo đóng connection trong thread riêng để tránh leak hoặc lỗi
-                    connection.close()
-
-            thread = threading.Thread(
-                target=background_process,
-                args=(document, storage_path),
-                name=f"DocProcess-{document.id}"
+            transaction.on_commit(
+                lambda doc_id=str(document.id): self._dispatch_processing(doc_id)
             )
-            thread.daemon = True  # Luôn chạy ngầm
-            thread.start()
-            logger.info(f"[Upload] Started background processing for {document.id}")
+
+
 
         return document
 
@@ -451,6 +438,46 @@ class DocumentUploadService:
     # STEP 5 – Full processing pipeline: parse → chunk → embed
     # =========================================================================
 
+    def _dispatch_processing(self, document_id: str):
+        """Queue document processing with Celery, falling back to sync processing."""
+        if getattr(settings, 'CELERY_ENABLED', False):
+            try:
+                from services.document.tasks import process_document_task
+
+                async_result = process_document_task.delay(str(document_id))
+                self._store_celery_task_id(document_id, async_result.id)
+                logger.info(
+                    "[Upload] Queued Celery processing for document %s task=%s",
+                    document_id,
+                    async_result.id,
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    "[Upload] Celery enqueue failed for document %s; running sync fallback: %s",
+                    document_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        document = Document.objects.get(id=document_id)
+        self._process_document(document, document.storage_path)
+
+    def _store_celery_task_id(self, document_id: str, task_id: str):
+        """Persist the Celery task id for status/debug visibility."""
+        try:
+            document = Document.objects.get(id=document_id)
+            document.metadata = document.metadata or {}
+            document.metadata['celery_task_id'] = task_id
+            document.metadata['processing_dispatch'] = 'celery'
+            document.save(update_fields=['metadata', 'updated_at'])
+        except Exception as exc:
+            logger.warning(
+                "[Upload] Failed to store Celery task id for document %s: %s",
+                document_id,
+                exc,
+            )
+
     def _process_document(self, document, storage_path: str):
         """Simplified processing: delegate to DocumentIngestPipeline.
 
@@ -466,7 +493,9 @@ class DocumentUploadService:
         try:
             from services.pipeline.orchestrator import DocumentIngestPipeline
 
-            pipeline = DocumentIngestPipeline()
+            pipeline = DocumentIngestPipeline(
+                include_assets=getattr(settings, 'ASSET_PROCESS_INLINE_ON_UPLOAD', False)
+            )
             metadata = {
                 'source_name': document.original_name,
                 'file_type': document.file_type,
@@ -516,6 +545,7 @@ class DocumentUploadService:
     def _update_status(self, document, status: str, error: str = None):
         """Cập nhật trạng thái xử lý của document."""
         document.status = status
+        document.metadata = document.metadata or {}
         if error:
             document.metadata['processing_error'] = error
-        document.save(update_fields=['status', 'metadata'])
+        document.save(update_fields=['status', 'metadata', 'updated_at'])

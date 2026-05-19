@@ -56,9 +56,15 @@ class AssetPipelineStage(PipelineStage):
     def execute(self, context: PipelineContext) -> PipelineContext:
         """Thực thi asset extraction + OCR + VL caption."""
         t_start = time.monotonic()
+        context.metadata['asset_status'] = 'processing'
+        context.metadata['asset_ready'] = False
+        context.metadata['asset_started_at'] = timezone.now().isoformat()
 
         if not getattr(settings, 'ASSET_PIPELINE_ENABLED', True):
             self.logger.info("Asset pipeline disabled (ASSET_PIPELINE_ENABLED=False)")
+            context.metadata['asset_status'] = 'not_required'
+            context.metadata['asset_reason'] = 'disabled'
+            context.metadata['asset_count'] = 0
             return context
 
         try:
@@ -92,6 +98,8 @@ class AssetPipelineStage(PipelineStage):
             if file_ext not in ext_map:
                 self.logger.info(f"Asset extraction not supported for {file_ext}")
                 context.metadata['asset_count'] = 0
+                context.metadata['asset_status'] = 'not_required'
+                context.metadata['asset_reason'] = f'unsupported_file_type:{file_ext or "unknown"}'
                 return context
 
             extract_func = ext_map[file_ext][1]
@@ -102,6 +110,8 @@ class AssetPipelineStage(PipelineStage):
             if not raw_assets:
                 self.logger.info(f"No assets found in {os.path.basename(file_path)}")
                 context.metadata['asset_count'] = 0
+                context.metadata['asset_status'] = 'not_required'
+                context.metadata['asset_reason'] = 'no_assets_found'
                 return context
 
             # Giới hạn số lượng
@@ -255,6 +265,10 @@ class AssetPipelineStage(PipelineStage):
             context.metadata['asset_extracted_at'] = datetime.now().isoformat()
 
             total_ms = (time.monotonic() - t_start) * 1000
+            context.metadata['asset_status'] = 'ready'
+            context.metadata['asset_ready'] = True
+            context.metadata['asset_ready_at'] = timezone.now().isoformat()
+            context.metadata['asset_pipeline_ms'] = total_ms
             self.logger.info(
                 f"[ASSET] stage=complete document={document_id} "
                 f"assets={asset_count}/{len(raw_assets)} ocr={ocr_success} caption={caption_success} "
@@ -267,6 +281,9 @@ class AssetPipelineStage(PipelineStage):
             self.logger.error(f"Asset pipeline failed: {e}", exc_info=True)
             context.metadata['asset_error'] = str(e)[:500]
             context.metadata['asset_count'] = 0
+            context.metadata['asset_status'] = 'failed'
+            context.metadata['asset_ready'] = False
+            context.metadata['asset_failed_at'] = timezone.now().isoformat()
             return context
 
     # ═══════════════════════════════════════════════════════════════

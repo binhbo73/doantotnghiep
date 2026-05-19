@@ -158,127 +158,30 @@ class DocumentService(BaseService):
             PermissionDeniedError: If user lacks permission
         """
         try:
-            # ✅ CORRECT: Use UserRepository instead of User.objects.get()
-            # Validate user exists
-            try:
-                user = self.user_repository.get_by_id(user_id)
-            except Exception:
-                raise ValidationError(f"User {user_id} not found")
+            from services.document_upload_service import DocumentUploadService
 
-            self.validate_business_rule(user is not None, f"User {user_id} not found")
+            document = DocumentUploadService().upload(
+                file=file,
+                user_id=user_id,
+                folder_id=folder_id,
+                department_id=department_id,
+                description=description,
+                tags=tags or [],
+                run_processing=True,
+            )
 
-            # Validate file size
-            file_size_mb = file.size / (1024 * 1024)
-            if file_size_mb > self.MAX_FILE_SIZE_MB:
-                raise FileSizeExceededError(
-                    f"File size {file_size_mb:.1f}MB exceeds limit {self.MAX_FILE_SIZE_MB}MB"
-                )
-
-            # Detect MIME type and normalized file type label
-            mime_type = file.content_type or ''
-            if not mime_type:
-                import mimetypes
-                guessed_type, _ = mimetypes.guess_type(file.name)
-                mime_type = guessed_type or 'application/octet-stream'
-
-            if mime_type not in self.ALLOWED_FILE_TYPES:
-                raise ValidationError(
-                    f"File type '{mime_type}' not supported. "
-                    f"Allowed: {', '.join(self.ALLOWED_FILE_TYPES)}"
-                )
-
-            normalized_file_type = self._normalize_file_type(file.name, mime_type)
-
-            # ✅ NEW LOGIC: Resolve folder + inherit scope/department if folder_id provided
-            resolved_access_scope = 'company'  # Default for root documents
-            resolved_department_id = department_id
-
-            if folder_id:
-                # CASE A: Document placed in folder → inherit scope + department from folder
-                try:
-                    from apps.documents.models import Folder
-                    folder = Folder.objects.get(id=folder_id, is_deleted=False)
-
-                    # Inherit access_scope from folder (CRITICAL FIX)
-                    resolved_access_scope = folder.access_scope
-
-                    # Inherit department from folder if folder has one
-                    if folder.department_id:
-                        resolved_department_id = folder.department_id
-
-                    logger.info(
-                        f"Document {file.name} uploading to folder {folder_id}: "
-                        f"inherited scope={resolved_access_scope}, dept={resolved_department_id}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error resolving folder {folder_id}: {e}")
-                    raise ValidationError(f"Folder {folder_id} not found or invalid")
-            else:
-                # CASE B: Root document → allow user-specified access_scope or default to 'company'
-                # Root documents should default to 'company' scope, not 'personal'
-                if department_id is None:
-                    # Get department from UserProfile for default
-                    try:
-                        from apps.users.models import UserProfile
-                        user_profile = UserProfile.objects.get(account_id=user_id)
-                        resolved_department_id = user_profile.department_id
-                    except (UserProfile.DoesNotExist, Exception):
-                        resolved_department_id = None
-
-            # Prepare file hash and storage path BEFORE creating document
-            import hashlib
-            import os
-            file_content = file.read()
-            file_hash = hashlib.md5(file_content).hexdigest()
-            file.seek(0)  # Reset for later use
-            file_ext = os.path.splitext(file.name)[1]
-            hashed_name = f"{file_hash}{file_ext}"
-            storage_path = f"uploads/{user_id}/{hashed_name}"
-
-            # Create document with all required fields
-            with transaction.atomic():
-                document = self.document_repo.create(
-                    original_name=file.name,
-                    filename=hashed_name,
-                    storage_path=storage_path,
-                    file_type=normalized_file_type,
-                    mime_type=mime_type,
-                    file_size=file.size,
-                    uploader_id=user_id,
-                    department_id=resolved_department_id,
-                    folder_id=folder_id,
-                    status='pending',
-                    access_scope=resolved_access_scope,  # ✅ INHERIT FROM FOLDER
-                )
-
-                # Store actual file to disk
-                storage_dir = f"uploads/{user_id}"
-                if not os.path.exists(storage_dir):
-                    os.makedirs(storage_dir, exist_ok=True)
-                with open(os.path.join(storage_dir, hashed_name), 'wb') as f:
-                    f.write(file_content)
-
-                # Add tags if provided
-                if tags:
-                    self._add_tags_to_document(document.id, tags)
-
-                # Log action
-                self.log_action(
-                    'UPLOAD_DOCUMENT',
-                    resource_id=document.id,
-                    details=f"Uploaded '{file.name}' ({file_size_mb:.1f}MB)",
-                    user_id=user_id
-                )
-
-                # Audit
-                self._log_document_audit(
-                    action='UPLOAD',
-                    document_id=document.id,
-                    user_id=user_id
-                )
-
+            self.log_action(
+                'UPLOAD_DOCUMENT',
+                resource_id=document.id,
+                details=f"Uploaded '{file.name}' ({file.size / (1024 * 1024):.1f}MB)",
+                user_id=user_id,
+            )
+            self._log_document_audit(
+                action='UPLOAD',
+                document_id=document.id,
+                user_id=user_id,
+            )
             return document
-
         except Exception as e:
             self.log_error('upload_document', e, user_id=user_id)
             raise
@@ -1871,11 +1774,16 @@ class DocumentService(BaseService):
                 if embedding_model:
                     document.embedding_model = embedding_model
 
-                # Set status to processing
-                document.status = 'processing'
-                document.save()
+                document.status = 'pending'
+                document.metadata = document.metadata or {}
+                document.metadata.pop('processing_error', None)
+                document.metadata['reprocess_requested_at'] = timezone.now().isoformat()
+                document.save(update_fields=['chunking_strategy', 'embedding_model', 'status', 'metadata', 'updated_at'])
 
-                # Note: AsyncTask queueing would go here when task queue is implemented
+                from services.document_upload_service import DocumentUploadService
+                transaction.on_commit(
+                    lambda doc_id=str(document.id): DocumentUploadService()._dispatch_processing(doc_id)
+                )
 
             self._log_document_audit(
                 action='MUTATION',

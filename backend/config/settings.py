@@ -351,6 +351,8 @@ RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_M
 # ASSET PIPELINE (OCR + VL Caption + Image Extraction)
 # ============================================================
 ASSET_PIPELINE_ENABLED = os.environ.get("ASSET_PIPELINE_ENABLED", "true").lower() in ["true", "1", "yes"]
+ASSET_PROCESS_INLINE_ON_UPLOAD = os.environ.get("ASSET_PROCESS_INLINE_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
+ASSET_PROCESS_ASYNC_ON_UPLOAD = os.environ.get("ASSET_PROCESS_ASYNC_ON_UPLOAD", "true").lower() in ["true", "1", "yes"]
 ASSET_OCR_ENABLED = os.environ.get("ASSET_OCR_ENABLED", "true").lower() in ["true", "1", "yes"]
 ASSET_OCR_LANGUAGES = os.environ.get("ASSET_OCR_LANGUAGES", "vie+eng")
 ASSET_VL_CAPTION_ENABLED = os.environ.get("ASSET_VL_CAPTION_ENABLED", "true").lower() in ["true", "1", "yes"]
@@ -359,6 +361,8 @@ ASSET_CAPTION_METHOD = os.environ.get("ASSET_CAPTION_METHOD", "vl-model")  # 'vl
 ASSET_MAX_IMAGES_PER_DOC = int(os.environ.get("ASSET_MAX_IMAGES_PER_DOC", "50"))
 ASSET_MIN_IMAGE_SIZE_BYTES = int(os.environ.get("ASSET_MIN_IMAGE_SIZE_BYTES", "1024"))
 ASSET_IMAGE_MAX_WIDTH = int(os.environ.get("ASSET_IMAGE_MAX_WIDTH", "2000"))
+ASSET_TASK_TIME_LIMIT = int(os.environ.get("ASSET_TASK_TIME_LIMIT", "1800"))
+ASSET_TASK_SOFT_TIME_LIMIT = int(os.environ.get("ASSET_TASK_SOFT_TIME_LIMIT", "1500"))
 QDRANT_ASSET_VECTOR_SIZE = int(os.environ.get("QDRANT_ASSET_VECTOR_SIZE", str(QDRANT_VECTOR_SIZE)))
 
 # VL Model (Qwen2.5-VL-3B) for image captioning

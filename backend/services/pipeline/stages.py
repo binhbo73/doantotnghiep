@@ -451,6 +451,59 @@ class PersistenceStage(PipelineStage):
                 pass
             self.logger.error(f"[RAPTOR_BACKGROUND] Failed for {document_id}: {e}", exc_info=True)
 
+    def _process_document_assets_sync(self, document_id: str):
+        """Process document assets in a fallback background thread."""
+        try:
+            from services.document.tasks import process_document_assets_for_document
+
+            process_document_assets_for_document(str(document_id))
+        except Exception as e:
+            try:
+                self._update_document_indexing_metadata(
+                    document_id,
+                    asset_status='failed',
+                    asset_ready=False,
+                    asset_error=str(e)[:500],
+                    asset_failed_at=timezone.now().isoformat(),
+                )
+            except Exception:
+                pass
+            self.logger.error(f"[ASSET_BACKGROUND] Failed for {document_id}: {e}", exc_info=True)
+
+    def _queue_asset_processing(self, document_id: str):
+        """Queue image/OCR/VL asset processing without blocking text indexing."""
+        t_start = time.monotonic()
+        if getattr(settings, 'CELERY_ENABLED', False):
+            try:
+                from services.document.tasks import process_document_assets_task
+
+                async_result = process_document_assets_task.delay(str(document_id))
+                self._update_document_indexing_metadata(
+                    document_id,
+                    asset_task_id=async_result.id,
+                    asset_status='queued',
+                    asset_ready=False,
+                    asset_queued_at=timezone.now().isoformat(),
+                )
+                self.logger.info(
+                    f"[ASSET_BACKGROUND] mode=celery-queued document={document_id} "
+                    f"task={async_result.id} queue_time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                )
+                return
+            except Exception as e:
+                self.logger.warning(f"[ASSET_BACKGROUND] Celery enqueue failed, using thread: {e}")
+
+        thread = threading.Thread(
+            target=self._process_document_assets_sync,
+            args=(str(document_id),),
+            daemon=True,
+        )
+        thread.start()
+        self.logger.info(
+            f"[ASSET_BACKGROUND] mode=thread-queued document={document_id} "
+            f"queue_time={(time.monotonic() - t_start) * 1000:.1f}ms"
+        )
+
     def _queue_raptor_tree_build(self, document_id: str):
         """Queue RAPTOR build without blocking upload completion."""
         t_start = time.monotonic()
@@ -458,10 +511,17 @@ class PersistenceStage(PipelineStage):
             try:
                 from services.document.tasks import build_raptor_tree_task
 
-                build_raptor_tree_task.delay(str(document_id))
+                async_result = build_raptor_tree_task.delay(str(document_id))
+                self._update_document_indexing_metadata(
+                    document_id,
+                    raptor_task_id=async_result.id,
+                    raptor_status='queued',
+                    raptor_ready=False,
+                    raptor_queued_at=timezone.now().isoformat(),
+                )
                 self.logger.info(
                     f"[RAPTOR_BACKGROUND] mode=celery-queued document={document_id} "
-                    f"queue_time={(time.monotonic() - t_start) * 1000:.1f}ms"
+                    f"task={async_result.id} queue_time={(time.monotonic() - t_start) * 1000:.1f}ms"
                 )
                 return
             except Exception as e:
@@ -498,6 +558,7 @@ class PersistenceStage(PipelineStage):
             
             Document = apps.get_model('documents', 'Document')
             raptor_build_document_id = None
+            asset_processing_document_id = None
             
             # Use transaction for atomicity
             with transaction.atomic():
@@ -563,6 +624,9 @@ class PersistenceStage(PipelineStage):
                 # Decide upload indexing state before writing document metadata.
                 raptor_applied = context.metadata.get('raptor_applied', False)
                 build_raptor_on_upload = getattr(settings, 'RAG_BUILD_RAPTOR_ON_UPLOAD', False)
+                asset_pipeline_enabled = getattr(settings, 'ASSET_PIPELINE_ENABLED', True)
+                asset_inline = getattr(settings, 'ASSET_PROCESS_INLINE_ON_UPLOAD', False)
+                asset_async = getattr(settings, 'ASSET_PROCESS_ASYNC_ON_UPLOAD', True)
                 
                 db_metadata.update({
                     'page_count': context.metadata.get('page_count', 0),
@@ -576,6 +640,34 @@ class PersistenceStage(PipelineStage):
                     'raptor_status': 'queued' if raptor_applied and build_raptor_on_upload else 'not_required',
                     'raptor_ready': False,
                 })
+
+                if not asset_pipeline_enabled:
+                    db_metadata.update({
+                        'asset_status': 'not_required',
+                        'asset_ready': False,
+                        'asset_reason': 'disabled',
+                    })
+                elif asset_inline:
+                    db_metadata.update({
+                        'asset_status': context.metadata.get('asset_status', 'not_required'),
+                        'asset_ready': bool(context.metadata.get('asset_ready')),
+                        'asset_count': context.metadata.get('asset_count', 0),
+                    })
+                elif asset_async:
+                    db_metadata.update({
+                        'asset_status': 'queued',
+                        'asset_ready': False,
+                        'asset_count': 0,
+                        'asset_queued_at': timezone.now().isoformat(),
+                    })
+                    asset_processing_document_id = str(doc.id)
+                else:
+                    db_metadata.update({
+                        'asset_status': 'deferred',
+                        'asset_ready': False,
+                        'asset_reason': 'async_disabled',
+                    })
+
                 doc.metadata = db_metadata
                 doc.status = 'completed' if context.chunks else 'failed'
                 
@@ -596,6 +688,9 @@ class PersistenceStage(PipelineStage):
                         f"[PERSISTENCE] RAPTOR tree build deferred for {doc.id} "
                         f"(RAG_BUILD_RAPTOR_ON_UPLOAD=False)"
                     )
+
+            if asset_processing_document_id:
+                self._queue_asset_processing(asset_processing_document_id)
 
             if raptor_build_document_id:
                 self._queue_raptor_tree_build(raptor_build_document_id)

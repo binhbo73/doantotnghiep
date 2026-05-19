@@ -28,18 +28,27 @@ logger = logging.getLogger(__name__)
 class DocumentIngestPipeline:
     """Orchestrates complete document ingestion pipeline."""
     
-    def __init__(self):
+    def __init__(self, include_assets: Optional[bool] = None):
         """Initialize pipeline with all stages."""
+        if include_assets is None:
+            include_assets = getattr(settings, 'ASSET_PROCESS_INLINE_ON_UPLOAD', False)
+
         self.stages = [
             ValidationStage(name="validation"),
             ParsingStage(name="parsing"),
             ChunkingStage(name="chunking"),
-            AssetPipelineStage(name="asset_extraction"),
+        ]
+
+        if include_assets:
+            self.stages.append(AssetPipelineStage(name="asset_extraction"))
+
+        self.stages.extend([
             SummarizationStage(name="summarization"),
             PersistenceStage(name="persistence"),
-        ]
+        ])
         self.orchestrator = PipelineOrchestrator(self.stages)
         self.logger = logging.getLogger("pipeline.document_ingest")
+        self.include_assets = include_assets
 
     def execute(
         self,

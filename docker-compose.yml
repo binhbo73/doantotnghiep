@@ -106,11 +106,15 @@ services:
       CELERY_ENABLED: "true"
       # Asset Pipeline
       ASSET_PIPELINE_ENABLED: "true"
+      ASSET_PROCESS_INLINE_ON_UPLOAD: "false"
+      ASSET_PROCESS_ASYNC_ON_UPLOAD: "true"
       ASSET_OCR_ENABLED: "true"
       ASSET_OCR_LANGUAGES: "vie+eng"
       ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-true}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
+      ASSET_TASK_TIME_LIMIT: "1800"
+      ASSET_TASK_SOFT_TIME_LIMIT: "1500"
       VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
       VL_MODEL_NAME: "Qwen2.5-VL-3B-Instruct"
       VL_MODEL_TIMEOUT: "120"
@@ -200,16 +204,22 @@ services:
       RAG_RAPTOR_TASK_TIME_LIMIT: "1800"
       RAG_RAPTOR_TASK_SOFT_TIME_LIMIT: "1500"
       ASSET_PIPELINE_ENABLED: "true"
+      ASSET_PROCESS_INLINE_ON_UPLOAD: "false"
+      ASSET_PROCESS_ASYNC_ON_UPLOAD: "true"
       ASSET_OCR_ENABLED: "true"
       ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-true}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
+      ASSET_TASK_TIME_LIMIT: "1800"
+      ASSET_TASK_SOFT_TIME_LIMIT: "1500"
       VL_MODEL_BASE_URL: "http://llama-vl-server:8081/v1"
     volumes:
       - ./backend:/app
       - ./models:/app/models:ro
-      - ./logs:/app/logs
-      - ./uploads:/app/uploads
+      - backend_logs:/app/logs
+      - backend_uploads:/app/uploads
+      - backend_qdrant:/app/qdrant_data
+      - backend_media:/app/media
     deploy:
       resources:
         reservations:
