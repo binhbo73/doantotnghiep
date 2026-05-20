@@ -195,6 +195,12 @@ class DocumentChunker:
                 raise DocumentProcessingError("Empty text cannot be chunked")
             
             merged_metadata = metadata or {}
+            page_aware_metadata = getattr(page_aware_text, 'metadata', {}) or {}
+            if page_aware_metadata:
+                merged_metadata = {
+                    **merged_metadata,
+                    'page_aware_metadata': page_aware_metadata,
+                }
             file_type = (merged_metadata.get('file_type') or '').lower()
             self._apply_chunk_profile(file_type)
 
@@ -274,6 +280,12 @@ class DocumentChunker:
                 raise DocumentProcessingError("Empty text cannot be chunked")
             
             merged_metadata = metadata or {}
+            page_aware_metadata = getattr(page_aware_text, 'metadata', {}) or {}
+            if page_aware_metadata:
+                merged_metadata = {
+                    **merged_metadata,
+                    'page_aware_metadata': page_aware_metadata,
+                }
             file_type = (merged_metadata.get('file_type') or '').lower()
             self._apply_chunk_profile(file_type)
             if self._is_spreadsheet_file_type(file_type):
@@ -375,6 +387,13 @@ class DocumentChunker:
                 return []
             
             word_spans = self._build_word_spans(page_text)
+            page_aware_metadata = metadata.get('page_aware_metadata') or {}
+            toc_pages = {
+                int(page)
+                for page in (page_aware_metadata.get('toc_pages') or [])
+                if str(page).isdigit() or isinstance(page, int)
+            }
+            is_toc_page = bool(page_aware_metadata.get('layout_role') == 'toc') or page_number in toc_pages
             
             # Fallback for pages with no word spans
             if not word_spans:
@@ -406,6 +425,8 @@ class DocumentChunker:
                     'metadata': {
                         **metadata,
                         'page_number': page_number,
+                        'is_toc': is_toc_page,
+                        'layout_role': 'toc' if is_toc_page else metadata.get('layout_role'),
                     },
                 }
                 page_chunks.append(chunk_dict)
@@ -443,6 +464,13 @@ class DocumentChunker:
         while start_char < len(page_text):
             end_char = min(start_char + self.chunk_size, len(page_text))
             chunk_text = page_text[start_char:end_char]
+            page_aware_metadata = metadata.get('page_aware_metadata') or {}
+            toc_pages = {
+                int(page)
+                for page in (page_aware_metadata.get('toc_pages') or [])
+                if str(page).isdigit() or isinstance(page, int)
+            }
+            is_toc_page = bool(page_aware_metadata.get('layout_role') == 'toc') or page_number in toc_pages
             
             if chunk_text.strip():
                 page_chunks.append({
@@ -456,6 +484,8 @@ class DocumentChunker:
                     'metadata': {
                         **metadata,
                         'page_number': page_number,
+                        'is_toc': is_toc_page,
+                        'layout_role': 'toc' if is_toc_page else metadata.get('layout_role'),
                     },
                 })
                 seq += 1
@@ -601,16 +631,20 @@ class DocumentChunker:
         ext = self._normalize_file_extension(normalized)
 
         if ext == 'pdf':
-            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 160)
-            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_PDF', 32)
+            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 320)
+            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_PDF', 64)
             profile = 'pdf'
-        elif ext in ('docx', 'doc', 'md', 'xlsx', 'xls'):
-            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_DOC', 240)
-            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_DOC', 48)
+        elif ext in ('xlsx', 'xls', 'csv'):
+            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_SPREADSHEET', 520)
+            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_SPREADSHEET', 80)
+            profile = 'spreadsheet'
+        elif ext in ('docx', 'doc', 'md', 'markdown'):
+            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_DOC', 420)
+            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_DOC', 84)
             profile = 'doc'
         elif ext in ('txt', 'text'):
-            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_TEXT', 200)
-            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_TEXT', 40)
+            self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_TEXT', 360)
+            self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_TEXT', 72)
             profile = 'text'
         else:
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE', self.chunk_size)

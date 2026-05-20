@@ -21,6 +21,8 @@ Usage:
 
 import time
 import logging
+import re
+import unicodedata
 from typing import List, Dict, Any, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -41,6 +43,8 @@ class BenchmarkResult:
     map_score: float = 0.0  # Mean Average Precision
     precision_at_k: float = 0.0  # Precision@K
     recall_at_k: float = 0.0  # Recall@K
+    citation_accuracy: float = 0.0  # Expected citations covered by top-K
+    hallucination_rate: float = 0.0  # Unsupported answer claims / all claims
     
     # Latency metrics (milliseconds)
     total_latency_ms: float = 0.0
@@ -82,6 +86,8 @@ class BenchmarkResult:
             'map': round(self.map_score, 4),
             'precision_at_k': round(self.precision_at_k, 4),
             'recall_at_k': round(self.recall_at_k, 4),
+            'citation_accuracy': round(self.citation_accuracy, 4),
+            'hallucination_rate': round(self.hallucination_rate, 4),
             'latency_ms': round(self.total_latency_ms, 2),
             'embedding_ms': round(self.embedding_latency_ms, 2),
             'sparse_ms': round(self.sparse_latency_ms, 2),
@@ -111,6 +117,8 @@ class RetrieverBenchmark:
         self,
         query: str,
         relevant_chunk_ids: Set[str],
+        expected_citation_ids: Optional[Set[str]] = None,
+        answer_text: str = '',
         top_k: int = 10,
         use_reranking: bool = False
     ) -> BenchmarkResult:
@@ -162,6 +170,18 @@ class RetrieverBenchmark:
         result.map_score = self._calculate_map(results, relevant_chunk_ids)
         result.precision_at_k = self._calculate_precision_at_k(results, relevant_chunk_ids, top_k)
         result.recall_at_k = self._calculate_recall_at_k(results, relevant_chunk_ids, top_k)
+        result.citation_accuracy = self._calculate_citation_accuracy(
+            results,
+            expected_citation_ids or relevant_chunk_ids,
+            top_k,
+        )
+        result.hallucination_rate = self._estimate_hallucination_rate(
+            answer_text=answer_text,
+            evidence_texts=[
+                r.get('snippet') or r.get('citation_excerpt') or r.get('content') or ''
+                for r in results[:top_k]
+            ],
+        )
         
         return result
 
@@ -289,6 +309,66 @@ class RetrieverBenchmark:
         )
         return relevant_in_top_k / len(relevant_ids)
 
+    @staticmethod
+    def _calculate_citation_accuracy(
+        results: List[Dict],
+        expected_citation_ids: Set[str],
+        k: int = 10,
+    ) -> float:
+        """Fraction of expected citation chunks covered by retrieved top-K."""
+        if not expected_citation_ids:
+            return 1.0
+        retrieved_ids = {str(r.get('chunk_id')) for r in results[:k] if r.get('chunk_id')}
+        expected = {str(item) for item in expected_citation_ids if item}
+        if not expected:
+            return 1.0
+        return len(retrieved_ids & expected) / len(expected)
+
+    @classmethod
+    def _estimate_hallucination_rate(
+        cls,
+        answer_text: str,
+        evidence_texts: List[str],
+        min_overlap: float = 0.18,
+    ) -> float:
+        """Heuristic unsupported-claim rate using token overlap with evidence.
+
+        This is intentionally conservative and deterministic. For production
+        evals, it can be replaced by an LLM judge, but this gives a repeatable
+        baseline without adding another model dependency.
+        """
+        if not answer_text:
+            return 0.0
+        evidence = cls._normalize_for_eval(' '.join(evidence_texts))
+        evidence_tokens = set(re.findall(r'\w+', evidence))
+        claims = [
+            item.strip()
+            for item in re.split(r'(?<=[.!?。])\s+|\n+', answer_text)
+            if len(item.strip()) >= 20
+        ]
+        if not claims:
+            return 0.0
+
+        unsupported = 0
+        for claim in claims:
+            claim_tokens = {
+                token
+                for token in re.findall(r'\w+', cls._normalize_for_eval(claim))
+                if len(token) >= 3
+            }
+            if not claim_tokens:
+                continue
+            overlap = len(claim_tokens & evidence_tokens) / max(1, len(claim_tokens))
+            if overlap < min_overlap:
+                unsupported += 1
+        return unsupported / max(1, len(claims))
+
+    @staticmethod
+    def _normalize_for_eval(text: str) -> str:
+        text = (text or '').lower().replace('đ', 'd').replace('Đ', 'd')
+        normalized = unicodedata.normalize('NFD', text)
+        return ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+
 
 class BenchmarkSuite:
     """Run multiple benchmark queries."""
@@ -320,6 +400,8 @@ class BenchmarkSuite:
             result = self.benchmark.evaluate_query(
                 query=q['query'],
                 relevant_chunk_ids=set(q.get('relevant_chunk_ids', [])),
+                expected_citation_ids=set(q.get('expected_citation_ids', [])),
+                answer_text=q.get('answer_text', ''),
                 top_k=top_k,
                 use_reranking=use_reranking
             )
@@ -339,6 +421,8 @@ class BenchmarkSuite:
         avg_map = sum(r.map_score for r in self.results) / len(self.results)
         avg_precision = sum(r.precision_at_k for r in self.results) / len(self.results)
         avg_recall = sum(r.recall_at_k for r in self.results) / len(self.results)
+        avg_citation_accuracy = sum(r.citation_accuracy for r in self.results) / len(self.results)
+        avg_hallucination_rate = sum(r.hallucination_rate for r in self.results) / len(self.results)
         avg_latency = sum(r.total_latency_ms for r in self.results) / len(self.results)
 
         return {
@@ -348,6 +432,8 @@ class BenchmarkSuite:
             'average_map': round(avg_map, 4),
             'average_precision': round(avg_precision, 4),
             'average_recall': round(avg_recall, 4),
+            'average_citation_accuracy': round(avg_citation_accuracy, 4),
+            'average_hallucination_rate': round(avg_hallucination_rate, 4),
             'average_latency_ms': round(avg_latency, 2),
             'results': [r.to_dict() for r in self.results]
         }

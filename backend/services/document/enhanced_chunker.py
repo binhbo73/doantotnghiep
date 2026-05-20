@@ -133,6 +133,7 @@ class EnhancedDocumentChunker:
             chunks_with_embeddings = []
             prev_chunk_obj = None
             db_chunk_index = 0
+            text_preview_chars = int(getattr(settings, 'RAG_QDRANT_TEXT_PREVIEW_CHARS', 1000))
 
             # Group chunks by page for page-aware persistence/RAPTOR processing.
             page_groups = {}
@@ -208,7 +209,7 @@ class EnhancedDocumentChunker:
                                     'document_id': str(document_id),
                                     'chunk_id': str(page_container.id),
                                     'page_number': page_number,
-                                    'text_preview': page_container_content[:200],
+                                    'text_preview': page_container_content[:text_preview_chars],
                                     'node_type': 'section',
                                     'hierarchy_level': 1,
                                 }
@@ -333,8 +334,9 @@ class EnhancedDocumentChunker:
                                     'sheet_name': persisted_metadata.get('sheet_name'),
                                     'row_start': persisted_metadata.get('row_start'),
                                     'row_end': persisted_metadata.get('row_end'),
-                                    'text_preview': chunk_text[:200],
+                                    'text_preview': chunk_text[:text_preview_chars],
                                     'node_type': 'detail',
+                                    'metadata': persisted_metadata,
                                 }
                             )
                             

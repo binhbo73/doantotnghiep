@@ -20,6 +20,7 @@ import re
 from typing import List, Dict, Tuple, Optional, Any
 from pathlib import Path
 from datetime import date, datetime
+from django.conf import settings
 
 from services.document.office_preview import convert_office_to_pdf
 from services.document.pdf_runtime import convert_pdf_to_markdown_quiet, read_pdf_page_counts, read_pdf_page_texts
@@ -83,6 +84,101 @@ class PageAwareParserEnhancer:
     def __init__(self):
         pass
 
+    def _page_texts_to_page_aware(
+        self,
+        page_texts: List[str],
+        source: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[PageAwareText]:
+        """Build PageAwareText from already separated page text."""
+        clean_pages = page_texts or []
+        if not clean_pages or not any((page or '').strip() for page in clean_pages):
+            return None
+
+        text_parts = []
+        boundaries = []
+        char_pos = 0
+        total_pages = len(clean_pages)
+        for page_number, page_text in enumerate(clean_pages, start=1):
+            page_header = f"\n--- Page {page_number} ---\n\n"
+            text_parts.append(page_header)
+            boundaries.append(PageBoundary(page_number, char_pos))
+            char_pos += len(page_header)
+
+            body = (page_text or '').strip()
+            if body:
+                body += "\n"
+                text_parts.append(body)
+                char_pos += len(body)
+
+        return self._annotate_toc_metadata(PageAwareText(
+            ''.join(text_parts),
+            boundaries or [PageBoundary(1, 0)],
+            max(1, total_pages),
+            metadata={
+                "page_count_source": source,
+                **(metadata or {}),
+            },
+        ), clean_pages)
+
+    def _normalize_toc_text(self, text: str) -> str:
+        normalized = unicodedata.normalize('NFD', (text or '').lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return normalized.replace('đ', 'd')
+
+    def _is_toc_like_page_text(self, text: str) -> bool:
+        if not text or not text.strip():
+            return False
+
+        normalized = self._normalize_toc_text(text)
+        if any(marker in normalized for marker in ('muc luc', 'table of contents', 'contents', 'index')):
+            return True
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) < 3:
+            return False
+
+        toc_like_lines = 0.0
+        for line in lines[:30]:
+            if re.search(r'\.{2,}\s*\d+\s*$', line) or re.search(r'\s\d+\s*$', line):
+                toc_like_lines += 1.5
+            elif len(line.split()) <= 10:
+                toc_like_lines += 0.5
+
+        ratio = toc_like_lines / max(1, min(len(lines), 30))
+        return ratio >= 0.45
+
+    def _detect_toc_pages(self, page_texts: List[str]) -> List[int]:
+        toc_pages = []
+        for index, page_text in enumerate(page_texts, start=1):
+            if self._is_toc_like_page_text(page_text):
+                toc_pages.append(index)
+        return toc_pages
+
+    def _annotate_toc_metadata(
+        self,
+        page_aware_text: PageAwareText,
+        page_texts: Optional[List[str]] = None,
+    ) -> PageAwareText:
+        if not page_aware_text:
+            return page_aware_text
+
+        if page_texts is None:
+            page_texts = [
+                page_aware_text.text[boundary.char_start:boundary.char_end]
+                for boundary in page_aware_text.boundaries
+            ]
+
+        toc_pages = self._detect_toc_pages(page_texts)
+        metadata = dict(page_aware_text.metadata or {})
+        if toc_pages:
+            metadata['toc_pages'] = toc_pages
+            metadata['has_toc'] = True
+            if len(toc_pages) == len(page_aware_text.boundaries):
+                metadata['layout_role'] = 'toc'
+        page_aware_text.metadata = metadata
+        return page_aware_text
+
     def _sanitize_pdf_markdown(self, text: str) -> str:
         """Remove embedded image payloads from markdown to keep chunking text-only."""
         if not text:
@@ -145,6 +241,14 @@ class PageAwareParserEnhancer:
             PageAwareText with page mapping
         """
         try:
+            if getattr(settings, 'RAG_PDF_EXACT_PAGE_TEXT', True):
+                page_aware = self._page_texts_to_page_aware(
+                    read_pdf_page_texts(file_path),
+                    source="pypdf_page_text",
+                )
+                if page_aware:
+                    return page_aware
+
             import tempfile
             import opendataloader_pdf
             
@@ -183,11 +287,26 @@ class PageAwareParserEnhancer:
             )
             boundaries = self._extract_boundaries(text_with_markers)
             
-            return PageAwareText(text_with_markers, boundaries, total_pages)
+            return self._annotate_toc_metadata(PageAwareText(text_with_markers, boundaries, total_pages))
         
         except Exception as e:
             logger.error(f"Error in PDF page-aware parsing: {str(e)}")
             return None
+
+    def enhance_office_pdf(self, file_path: str) -> Optional[PageAwareText]:
+        """Extract Office documents by converting to the same PDF preview used by the UI."""
+        try:
+            preview_pdf = convert_office_to_pdf(file_path)
+            page_aware = self._page_texts_to_page_aware(
+                read_pdf_page_texts(preview_pdf),
+                source="office_pdf_preview",
+                metadata={"preview_pdf_path": preview_pdf},
+            )
+                if page_aware:
+                    return self._annotate_toc_metadata(page_aware)
+        except Exception as e:
+            logger.warning(f"Office PDF page-aware parsing failed for {file_path}: {e}")
+        return None
     
     def enhance_docx(self, file_path: str) -> Optional[PageAwareText]:
         """
@@ -274,7 +393,7 @@ class PageAwareParserEnhancer:
                 current_token_index = max(current_token_index + 1, boundary_token_index)
                 boundaries.append(PageBoundary(page_index + 1, docx_tokens[current_token_index][1]))
 
-            return PageAwareText(
+            return self._annotate_toc_metadata(PageAwareText(
                 docx_text,
                 boundaries,
                 len(pdf_pages),
@@ -282,7 +401,7 @@ class PageAwareParserEnhancer:
                     "page_count_source": "office_pdf_preview_alignment",
                     "preview_pdf_path": preview_pdf,
                 },
-            )
+            ), pdf_pages)
         except Exception as e:
             logger.warning(f"Could not align DOCX pages to PDF preview: {e}")
             return None
@@ -340,7 +459,7 @@ class PageAwareParserEnhancer:
     def _estimate_logical_pages(self, text: str, chars_per_page: int = 3000) -> PageAwareText:
         """Fallback to estimate pages based on character count for documents without markers."""
         total_pages = max(1, (len(text) + chars_per_page - 1) // chars_per_page)
-        return self._estimate_pages_by_total(text, total_pages, source="char_estimate")
+        return self._annotate_toc_metadata(self._estimate_pages_by_total(text, total_pages, source="char_estimate"))
 
     def _estimate_pages_by_total(
         self,
@@ -369,7 +488,7 @@ class PageAwareParserEnhancer:
             else:
                 current_pos = target_next
 
-        return PageAwareText(text, boundaries, total_pages, metadata={"page_count_source": source})
+        return self._annotate_toc_metadata(PageAwareText(text, boundaries, total_pages, metadata={"page_count_source": source}))
     
     def enhance_excel(self, file_path: str) -> Optional[PageAwareText]:
         """

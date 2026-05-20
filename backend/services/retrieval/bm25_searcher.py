@@ -17,6 +17,7 @@ Configuration:
 import logging
 import re
 import time
+import unicodedata
 from typing import List, Dict, Any
 from django.conf import settings
 from django.contrib.postgres.search import SearchQuery, SearchRank
@@ -67,18 +68,14 @@ class BM25Searcher:
                 logger.debug("No valid search terms extracted")
                 return []
 
-            # Search directly on the migrated tsvector field
-            # Fix: OR logic for multi-word queries - AND logic fails for Tieng Viet
-            # vi khong chunk nao chua TAT CA cac tu cung luc
-            or_terms = ' | '.join(terms)
-            search_query = SearchQuery(
-                or_terms,
-                search_type='raw',
-                config=self.FTS_CONFIG
-            )
+            # Adaptive AND/OR: AND first for precision, OR fallback for recall
+            search_query = self._build_adaptive_query(terms)
 
             # Build query set
             t_db_start = time.monotonic()
+            strategy = 'AND' if ' & ' in str(search_query) else 'OR'
+            if ' <-> ' in str(search_query):
+                strategy = 'PHRASE'
             queryset = self.DocumentChunk.objects.annotate(
                 rank=SearchRank(F('search_vector'), search_query)
             ).filter(
@@ -96,6 +93,30 @@ class BM25Searcher:
 
             # Order by BM25 rank and execute query
             queryset = queryset.order_by('-rank')[:top_k]
+
+            # Fallback: if strict phrase/AND returns too few, retry with OR.
+            # This is important for Vietnamese because the same concept often
+            # spans tokenization/chunk boundaries and phrase search can be too
+            # brittle for two-word queries.
+            results_count = queryset.count()
+            fallback_threshold = 1 if strategy == 'PHRASE' else max(2, top_k // 2)
+            if results_count < fallback_threshold and strategy in ('AND', 'PHRASE') and len(terms) >= 2:
+                or_query = SearchQuery(
+                    self._join_terms(terms, ' | '),
+                    search_type='raw',
+                    config=self.FTS_CONFIG
+                )
+                fallback_qs = self.DocumentChunk.objects.annotate(
+                    rank=SearchRank(F('search_vector'), or_query)
+                ).filter(
+                    search_vector=or_query,
+                    node_type='detail',
+                    is_deleted=False
+                )
+                if document_ids:
+                    fallback_qs = fallback_qs.filter(document_id__in=document_ids if isinstance(document_ids, list) else [document_ids])
+                queryset = fallback_qs.order_by('-rank')[:top_k]
+                strategy = 'OR (fallback)'
             
             # Execute query and fetch results
             results = []
@@ -105,6 +126,9 @@ class BM25Searcher:
                     'document_id': str(chunk.document_id),
                     'score': float(chunk.rank or 0.0),  # BM25 score (typically 0-1 after normalization)
                     'content': chunk.content[:300] if chunk.content else '',
+                    'page': chunk.page_number,
+                    'chunk_index': chunk.chunk_index,
+                    'metadata': chunk.metadata or {},
                     'source': 'bm25'
                 })
             
@@ -112,8 +136,9 @@ class BM25Searcher:
             t_bm25_total = (time.monotonic() - t_bm25_start) * 1000
 
             logger.info(
-                f"[BM25_PROFILE] query='{query[:40]}...' results={len(results)} | "
-                f"timing: parse={t_parse_ms:.1f}ms, db_query={t_db_ms:.1f}ms, total={t_bm25_total:.1f}ms"
+                f"[BM25_PROFILE] query='{query[:40]}...' strategy={strategy} "
+                f"results={len(results)} | "
+                f"timing: parse={t_parse_ms:.1f}ms, db={t_db_ms:.1f}ms, total={t_bm25_total:.1f}ms"
             )
             logger.debug(f"BM25 search: {len(results)} results for '{query}'")
             return results
@@ -147,7 +172,7 @@ class BM25Searcher:
 
             # Fix: OR logic for multi-word queries - AND logic fails for Tieng Viet
             # vi khong chunk nao chua TAT CA cac tu cung luc
-            or_terms = ' | '.join(terms)
+            or_terms = self._join_terms(terms, ' | ')
             search_query = SearchQuery(
                 or_terms,
                 search_type='raw',
@@ -181,6 +206,8 @@ class BM25Searcher:
                     'score': float(chunk.rank or 0.0),
                     'content': chunk.content[:300] if chunk.content else '',
                     'page': chunk.page_number,
+                    'chunk_index': chunk.chunk_index,
+                    'metadata': chunk.metadata or {},
                     'source': 'bm25'
                 })
 
@@ -226,6 +253,68 @@ class BM25Searcher:
             return [fallback] if fallback else []
 
         return valid_terms
+
+    def _normalize_term(self, term: str) -> str:
+        normalized = unicodedata.normalize('NFD', (term or '').lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return normalized.replace('đ', 'd').replace('Đ', 'd')
+
+    def _term_variants(self, term: str) -> List[str]:
+        variants = []
+        for item in (term, self._normalize_term(term)):
+            item = re.sub(r"[^\w]+", "", item or "", flags=re.UNICODE)
+            if item and item not in variants:
+                variants.append(item)
+        return variants
+
+    def _tsquery_term(self, term: str) -> str:
+        variants = self._term_variants(term)
+        if not variants:
+            return ''
+        if len(variants) == 1:
+            return variants[0]
+        return '(' + ' | '.join(variants) + ')'
+
+    def _join_terms(self, terms: List[str], operator: str) -> str:
+        query_terms = [self._tsquery_term(term) for term in terms]
+        query_terms = [term for term in query_terms if term]
+        return operator.join(query_terms)
+
+    def _build_adaptive_query(self, terms: List[str]) -> SearchQuery:
+        """Build adaptive FTS query: phrase for 1-2 terms, AND for 3+, OR fallback handled by caller.
+
+        Strategy:
+        - 1 term: plain search
+        - 2 terms: phrase search (terms must appear adjacent) for precision
+        - 3+ terms: AND logic (all terms must appear) for precision
+        - If AND returns too few results, caller falls back to OR
+        """
+        if not terms:
+            return SearchQuery('', search_type='raw', config=self.FTS_CONFIG)
+
+        if len(terms) == 1:
+            return SearchQuery(
+                self._tsquery_term(terms[0]),
+                search_type='raw',
+                config=self.FTS_CONFIG
+            )
+
+        if len(terms) == 2:
+            # Two terms: phrase search for precision
+            phrase = self._join_terms(terms, ' <-> ')
+            return SearchQuery(
+                phrase,
+                search_type='raw',
+                config=self.FTS_CONFIG
+            )
+
+        # 3+ terms: AND logic
+        and_terms = self._join_terms(terms, ' & ')
+        return SearchQuery(
+            and_terms,
+            search_type='raw',
+            config=self.FTS_CONFIG
+        )
 
     def get_term_frequency_stats(self, query: str) -> Dict[str, Any]:
         """Get term frequency statistics for a query.

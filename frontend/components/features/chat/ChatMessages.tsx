@@ -64,6 +64,10 @@ export interface Message {
 
 type Citation = NonNullable<Message['citations']>[number]
 
+type MessageContentBlock =
+    | { type: 'text'; content: string }
+    | { type: 'table'; headers: string[]; rows: string[][] }
+
 const normalizeApiEndpoint = (endpoint?: string | null) => {
     if (!endpoint) return ''
     return endpoint.startsWith('/api/v1/') ? endpoint.slice('/api/v1'.length) : endpoint
@@ -147,6 +151,68 @@ const getCitationMeta = (citation: Citation) => {
         parts.push(`ky tu ${citation.start_char || 0}-${citation.end_char || ''}`)
     }
     return parts.join(', ')
+}
+
+const isMarkdownTableSeparator = (line: string) => {
+    const trimmed = line.trim()
+    if (!trimmed) return false
+
+    return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed)
+}
+
+const splitMarkdownTableRow = (line: string) => {
+    const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+    return trimmed.split('|').map((cell) => cell.trim())
+}
+
+const parseMessageContentBlocks = (content: string): MessageContentBlock[] => {
+    const lines = content.replace(/\r\n/g, '\n').split('\n')
+    const blocks: MessageContentBlock[] = []
+    let index = 0
+
+    while (index < lines.length) {
+        if (!lines[index].trim()) {
+            index += 1
+            continue
+        }
+
+        const looksLikeTable =
+            index + 1 < lines.length &&
+            lines[index].includes('|') &&
+            isMarkdownTableSeparator(lines[index + 1])
+
+        if (looksLikeTable) {
+            const headers = splitMarkdownTableRow(lines[index])
+            const rows: string[][] = []
+            index += 2
+
+            while (index < lines.length && lines[index].trim() && lines[index].includes('|')) {
+                rows.push(splitMarkdownTableRow(lines[index]))
+                index += 1
+            }
+
+            blocks.push({ type: 'table', headers, rows })
+            continue
+        }
+
+        const textLines: string[] = []
+        while (index < lines.length && lines[index].trim()) {
+            const isTableStart =
+                index + 1 < lines.length &&
+                lines[index].includes('|') &&
+                isMarkdownTableSeparator(lines[index + 1])
+
+            if (isTableStart) break
+            textLines.push(lines[index])
+            index += 1
+        }
+
+        if (textLines.length) {
+            blocks.push({ type: 'text', content: textLines.join('\n') })
+        }
+    }
+
+    return blocks
 }
 
 const SOURCE_LINE_PATTERN = /^\s*\[(?:Ngu[^\]:]*|Source):[^\]]+\](?:\s*\[\d{1,3}\])?\s*$/i
@@ -477,11 +543,11 @@ function InlineAssetGallery({ citations = [], messageContent = '' }: { citations
     const assets = visibleCitations
         .filter((citation) => {
             if (citation.type !== 'asset' && !getAssetId(citation)) return false;
-            
+
             // Chỉ hiện ảnh nếu số thứ tự của nó (ví dụ [2]) có xuất hiện trong nội dung tin nhắn
             const citationNumber = String(citation.number || '');
             if (!citationNumber) return true; // Fallback nếu không có số
-            
+
             const escapedNumber = citationNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const pattern = new RegExp(`\\[${escapedNumber}\\]|\\]\\s*${escapedNumber}(?:[.\\s]|$)`, 'i');
             return pattern.test(messageContent);
@@ -679,22 +745,22 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                         className="shrink-0 rounded-full p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
                         aria-label="Dong popup"
                     >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                     </button>
                 </div>
                 <div className="max-h-72 overflow-y-auto px-5 py-4 text-sm leading-6 text-slate-600 dark:text-slate-300">
                     {meta && <div className="mb-3 text-xs font-semibold text-slate-500 dark:text-slate-400">{meta}</div>}
                     <div className="whitespace-pre-wrap">
-                    {answerCtx && (
-                        <div className="mb-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                            <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
-                                Cau tra loi
+                        {answerCtx && (
+                            <div className="mb-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                                <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
+                                    Cau tra loi
+                                </div>
+                                <div className="text-slate-900 dark:text-slate-100 font-semibold whitespace-pre-wrap leading-relaxed">
+                                    {answerCtx}
+                                </div>
                             </div>
-                            <div className="text-slate-900 dark:text-slate-100 font-semibold whitespace-pre-wrap leading-relaxed">
-                                {answerCtx}
-                            </div>
-                        </div>
-                    )}
+                        )}
                         {excerpt ? renderHighlightedExcerpt(excerpt, citation) : 'Khong co doan trich hien thi.'}
                     </div>
                 </div>
@@ -847,7 +913,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                             </div>
                         ) : (
                             <div className="glass-nugget p-6 rounded-2xl shadow-sm space-y-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-sm border border-outline-variant/10 dark:border-slate-700/20">
-                                <div className="prose prose-sm dark:prose-invert max-w-none">
+                                <div className="prose prose-sm dark:prose-invert max-w-none space-y-4">
                                     {message.isLoading ? (
                                         <div className="space-y-3">
                                             {[1, 2, 3].map((i) => (
@@ -859,15 +925,63 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                             ))}
                                         </div>
                                     ) : (
-                                        <p className="text-on-surface dark:text-slate-100 leading-relaxed whitespace-pre-wrap">
-                                            {renderMessageContent(message.content, message.citations)}
-                                        </p>
+                                        <>
+                                            {parseMessageContentBlocks(message.content).map((block, blockIndex) => {
+                                                if (block.type === 'table') {
+                                                    const maxColumns = Math.max(block.headers.length, ...block.rows.map((row) => row.length))
+                                                    const normalizedHeaders = [...block.headers, ...Array(Math.max(0, maxColumns - block.headers.length)).fill('')]
+
+                                                    return (
+                                                        <div key={`table-${blockIndex}`} className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+                                                            <table className="min-w-full border-collapse text-sm text-slate-900 dark:text-slate-100">
+                                                                <thead className="bg-slate-50 dark:bg-slate-800">
+                                                                    <tr>
+                                                                        {normalizedHeaders.map((header, headerIndex) => (
+                                                                            <th
+                                                                                key={`header-${blockIndex}-${headerIndex}`}
+                                                                                className="border border-slate-200 dark:border-slate-700 px-3 py-2 text-left font-semibold align-top"
+                                                                            >
+                                                                                <span className="whitespace-pre-wrap">{header}</span>
+                                                                            </th>
+                                                                        ))}
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    {block.rows.map((row, rowIndex) => {
+                                                                        const cells = [...row, ...Array(Math.max(0, maxColumns - row.length)).fill('')]
+
+                                                                        return (
+                                                                            <tr key={`row-${blockIndex}-${rowIndex}`} className="even:bg-slate-50/60 dark:even:bg-slate-800/50">
+                                                                                {cells.map((cell, cellIndex) => (
+                                                                                    <td
+                                                                                        key={`cell-${blockIndex}-${rowIndex}-${cellIndex}`}
+                                                                                        className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top leading-relaxed whitespace-pre-wrap"
+                                                                                    >
+                                                                                        {cell}
+                                                                                    </td>
+                                                                                ))}
+                                                                            </tr>
+                                                                        )
+                                                                    })}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    )
+                                                }
+
+                                                return (
+                                                    <p key={`text-${blockIndex}`} className="text-on-surface dark:text-slate-100 leading-relaxed whitespace-pre-wrap">
+                                                        {renderMessageContent(block.content, message.citations)}
+                                                    </p>
+                                                )
+                                            })}
+                                        </>
                                     )}
                                 </div>
 
                                 {!message.isLoading && message.citations && (
-                                    <InlineAssetGallery 
-                                        citations={message.citations} 
+                                    <InlineAssetGallery
+                                        citations={message.citations}
                                         messageContent={message.content}
                                     />
                                 )}

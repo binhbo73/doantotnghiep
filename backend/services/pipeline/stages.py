@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 class ValidationStage(PipelineStage):
     """Validate uploaded file."""
     
-    ALLOWED_EXTENSIONS = {'.pdf', '.docx', '.txt', '.xlsx', '.xls', '.csv'}
-    MAX_FILE_SIZE_MB = 50
+    ALLOWED_EXTENSIONS = {'.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls', '.csv'}
+    MAX_FILE_SIZE_MB = 100
     
     def execute(self, context: PipelineContext) -> PipelineContext:
         """Validate file type and size.
@@ -111,6 +111,8 @@ class ParsingStage(PipelineStage):
                 page_aware_text = parser.enhance_pdf(file_path)
             elif file_ext == '.docx':
                 page_aware_text = parser.enhance_docx(file_path)
+            elif file_ext == '.doc':
+                page_aware_text = parser.enhance_office_pdf(file_path)
             elif file_ext in {'.xlsx', '.xls'}:
                 page_aware_text = parser.enhance_excel(file_path)
             elif file_ext == '.csv':

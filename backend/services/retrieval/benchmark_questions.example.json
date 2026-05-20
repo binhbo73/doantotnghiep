@@ -1,0 +1,16 @@
+[
+  {
+    "query": "Tom tat noi dung chinh cua tai lieu",
+    "document_ids": ["replace-with-document-uuid"],
+    "relevant_chunk_ids": ["replace-with-relevant-chunk-uuid"],
+    "expected_citation_ids": ["replace-with-relevant-chunk-uuid"],
+    "answer_text": ""
+  },
+  {
+    "query": "Liet ke day du cac muc quan trong trong tai lieu",
+    "document_ids": ["replace-with-document-uuid"],
+    "relevant_chunk_ids": ["replace-with-relevant-chunk-uuid-1", "replace-with-relevant-chunk-uuid-2"],
+    "expected_citation_ids": ["replace-with-relevant-chunk-uuid-1", "replace-with-relevant-chunk-uuid-2"],
+    "answer_text": ""
+  }
+]

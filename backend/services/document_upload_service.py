@@ -70,6 +70,8 @@ class DocumentUploadService:
         'application/msword',
         'text/plain',
         'text/markdown',
+        'text/csv',
+        'application/csv',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # .xlsx
         'application/vnd.ms-excel',  # .xls
     }
@@ -182,6 +184,7 @@ class DocumentUploadService:
                 '.doc': 'application/msword',
                 '.txt': 'text/plain',
                 '.md': 'text/markdown',
+                '.csv': 'text/csv',
                 '.pdf': 'application/pdf',
             }
             mime = extension_map.get(ext, mime)
@@ -214,6 +217,8 @@ class DocumentUploadService:
             return 'xlsx'
         if ext == '.xls':
             return 'xls'
+        if ext == '.csv':
+            return 'csv'
 
         mime_map = {
             'application/pdf': 'pdf',
@@ -221,6 +226,8 @@ class DocumentUploadService:
             'application/msword': 'doc',
             'text/plain': 'txt',
             'text/markdown': 'markdown',
+            'text/csv': 'csv',
+            'application/csv': 'csv',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
             'application/vnd.ms-excel': 'xls',
         }

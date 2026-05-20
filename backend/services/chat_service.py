@@ -71,8 +71,9 @@ Cách làm việc:
    - Liệt kê/đầy đủ/chi tiết: trích xuất đầy đủ các mục chính, mục con, dấu gạch, số thứ tự liên quan.
    - So sánh: nếu điểm giống, khác, tiêu chí so sánh có trong tài liệu thì trình bày theo bảng hoặc bullet.
    - Quy trình/các bước: giữ đúng thứ tự bước trong tài liệu.
-   - Số liệu/bảng biểu: chép đúng số, đơn vị, điều kiện, mốc thời gian.
-   - Bảng tính/Excel/CSV hoặc đoạn trích có bảng markdown: nếu câu hỏi hỏi nhiều dòng/cột, trả lời bằng markdown, giữ tên cột và số liệu đúng như tài liệu.
+    - Số liệu/bảng biểu: chép đúng số, đơn vị, điều kiện, mốc thời gian.
+    - Bảng dữ liệu / hàng cột: nếu tài liệu có bảng (dạng |cột1|cột2| hoặc bảng HTML/Excel/DOCX), PHẢI trả lời bằng bảng markdown giữ NGUYÊN cấu trúc |cột|cột|, không chuyển thành bullet hay paragraph. Giữ tên cột và số liệu đúng như tài liệu. Nếu bảng dài, trả lời toàn bộ bảng, không cắt xén.
+    - Thuật ngữ / định nghĩa: chỉ khi người dùng hỏi ý nghĩa của một khái niệm thì mới trả lời theo kiểu giải thích ngắn, không lẫn với role bảng.
    - Hỏi xem ảnh/hình/minh chứng: trả lời ngắn gọn "Có ảnh phù hợp" kèm vị trí ảnh và trích dẫn; không lặp lại mô tả caption dài nếu không cần.
 2. Khi câu hỏi yêu cầu đầy đủ, giữ cấu trúc tài liệu: mục chính -> ý con -> chi tiết.
 3. Khi câu hỏi không yêu cầu đầy đủ, trả lời ngắn gọn, đúng trọng tâm, vẫn phải có trích dẫn.
@@ -104,6 +105,25 @@ Cách làm việc:
             )
         return self._router
 
+    def _get_intent_classifier(self):
+        """Lazy-init QueryIntentClassifier."""
+        if not hasattr(self, '_intent_classifier'):
+            from services.retrieval.query_intent import QueryIntentClassifier
+            self._intent_classifier = QueryIntentClassifier(embedding_client=self.embedding)
+        return self._intent_classifier
+
+    def _get_query_intent(self, query: str):
+        """Classify query intent once and cache."""
+        if not hasattr(self, '_query_intent_cache'):
+            self._query_intent_cache = {}
+        key = query.strip()[:80]
+        if key not in self._query_intent_cache:
+            classifier = self._get_intent_classifier()
+            intent = classifier.classify(query)
+            config = classifier.get_retrieval_config(intent)
+            self._query_intent_cache[key] = (intent, config)
+        return self._query_intent_cache[key]
+
     def _normalize_query_text(self, text: str) -> str:
         """Lowercase Vietnamese text and remove accents for intent checks."""
         normalized = unicodedata.normalize('NFD', text or '')
@@ -112,6 +132,267 @@ Cách làm việc:
             if unicodedata.category(ch) != 'Mn'
         )
         return re.sub(r'\s+', ' ', without_marks.lower()).strip()
+
+    def _candidate_content_signature(self, candidate: Dict[str, Any]) -> str:
+        """Create a stable signature for near-duplicate chunk content."""
+        text = (
+            candidate.get('citation_excerpt')
+            or candidate.get('snippet')
+            or candidate.get('content')
+            or ''
+        )
+        normalized = self._normalize_query_text(text)
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        if len(normalized) < 25:
+            return ''
+        tokens = [token for token in re.findall(r'\w+', normalized) if len(token) > 2]
+        if len(tokens) > 40:
+            tokens = tokens[:40]
+        return ' '.join(tokens)
+
+    def _looks_like_front_matter_candidate(self, candidate: Dict[str, Any]) -> bool:
+        """Detect TOC/front-matter chunks so they can be downranked or skipped."""
+        metadata = candidate.get('metadata') or {}
+        if metadata.get('is_toc') or metadata.get('layout_role') == 'toc':
+            return True
+
+        snippet = self._normalize_query_text(candidate.get('snippet') or candidate.get('citation_excerpt') or '')
+        return any(marker in snippet for marker in ('muc luc', 'table of contents', 'contents', 'index'))
+
+    def _filter_front_matter_candidates(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Keep TOC/front-matter only when the user is explicitly asking for it."""
+        if not candidates:
+            return candidates
+
+        query_norm = self._normalize_query_text(query)
+        asks_toc = any(marker in query_norm for marker in ('muc luc', 'table of contents', 'contents', 'index'))
+        if asks_toc:
+            return candidates
+
+        body_candidates = [candidate for candidate in candidates if not self._looks_like_front_matter_candidate(candidate)]
+        if body_candidates:
+            return body_candidates
+        return candidates
+
+    def _is_better_candidate(self, existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
+        """Prefer body content over front-matter and higher-scoring evidence."""
+        existing_score = float(existing.get('score', 0.0) or 0.0)
+        candidate_score = float(candidate.get('score', 0.0) or 0.0)
+        if candidate_score > existing_score + 0.03:
+            return True
+
+        existing_body = not self._looks_like_front_matter_candidate(existing)
+        candidate_body = not self._looks_like_front_matter_candidate(candidate)
+        if candidate_body and not existing_body:
+            return True
+
+        existing_len = len((existing.get('snippet') or existing.get('citation_excerpt') or ''))
+        candidate_len = len((candidate.get('snippet') or candidate.get('citation_excerpt') or ''))
+        if candidate_len > existing_len and candidate_score >= existing_score - 0.02:
+            return True
+
+        return False
+
+    def _deduplicate_candidates_by_content(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove near-duplicate chunks so the final context covers more unique content."""
+        if not candidates:
+            return []
+
+        asset_candidates = [c for c in candidates if c.get('source') == 'asset']
+        chunk_candidates = [c for c in candidates if c.get('source') != 'asset']
+        grouped: Dict[str, Dict[str, Any]] = {}
+
+        for candidate in chunk_candidates:
+            signature = self._candidate_content_signature(candidate)
+            if not signature:
+                signature = f"__fallback__:{candidate.get('chunk_id') or id(candidate)}"
+
+            existing = grouped.get(signature)
+            if existing is None or self._is_better_candidate(existing, candidate):
+                grouped[signature] = candidate
+
+        deduped_chunks = sorted(
+            grouped.values(),
+            key=lambda item: float(item.get('score', 0.0) or 0.0),
+            reverse=True,
+        )
+        return deduped_chunks + asset_candidates
+
+    def _stitch_sequential_chunks(self, candidates):
+        """Merge sequential chunks from same doc into continuous blocks for LLM."""
+        if not candidates or len(candidates) <= 1:
+            return candidates
+        assets = [c for c in candidates if c.get('source') == 'asset']
+        chunks = [c for c in candidates if c.get('source') != 'asset']
+        if not chunks:
+            return assets
+        by_doc = {}
+        for c in chunks:
+            doc_id = str(c.get('document_id', '__unknown__'))
+            by_doc.setdefault(doc_id, []).append(c)
+        stitched = []
+        for _doc_id, doc_chunks in by_doc.items():
+            doc_chunks.sort(key=lambda x: int(x.get('chunk_index') or 0))
+            group = []
+            for c in doc_chunks:
+                if not group:
+                    group.append(c)
+                    continue
+                last_idx = int(group[-1].get('chunk_index') or 0)
+                curr_idx = int(c.get('chunk_index') or 0)
+                if curr_idx - last_idx <= 1:
+                    group.append(c)
+                else:
+                    stitched.append(self._merge_stitch_group(group))
+                    group = [c]
+            if group:
+                stitched.append(self._merge_stitch_group(group))
+        stitched.sort(key=lambda x: float(x.get('score', 0) or 0), reverse=True)
+        return stitched + assets
+
+    def _merge_stitch_group(self, group):
+        """Merge sequential chunks into one block."""
+        if len(group) == 1:
+            return group[0]
+        merged = group[0].copy()
+        snippets = [c.get('snippet') or c.get('citation_excerpt') or '' for c in group]
+        merged['snippet'] = '\n\n'.join(s for s in snippets if s)
+        merged['citation_excerpt'] = merged['snippet']
+        merged['score'] = float(max(float(c.get('score', 0) or 0) for c in group))
+        pages = [c.get('page') for c in group if c.get('page')]
+        merged['page'] = min(pages) if pages else None
+        merged['_stitched_from'] = len(group)
+        return merged
+
+    def _self_rag_relevance_check(self, query: str, candidates, threshold: float = 0.3) -> Dict[str, Any]:
+        """Self-RAG: use LLM to score each chunk's relevance. Re-retrieve if too few pass.
+
+        Returns dict with 'passed' (bool), 'avg_score' (float), 'low_relevance_ids' (list).
+        If < 40% of candidates are relevant, triggers re-retrieval request.
+        """
+        if not getattr(settings, 'RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED', True):
+            return {'passed': True, 'avg_score': 0.5, 'low_relevance_ids': []}
+
+        if not candidates or not self.llama:
+            return {'passed': True, 'avg_score': 0.5, 'low_relevance_ids': []}
+
+        # Score top 8 candidates
+        top_n = candidates[:8]
+        snippets = [(c.get('snippet') or c.get('citation_excerpt') or '')[:300] for c in top_n]
+
+        prompt = (
+            "Danh gia do lien quan cua moi doan van duoi day voi cau hoi. "
+            "Cham diem tu 1 (khong lien quan) den 5 (rat lien quan). "
+            "TRA VE CHI CAC CON SO, MOI SO TREN 1 DONG.\n\n"
+            f"Cau hoi: {query}\n\n"
+        )
+        for i, snip in enumerate(snippets, 1):
+            prompt += f"Doan {i}: {snip}\n\n"
+        prompt += "Diem (1-5):"
+
+        try:
+            response = self.llama.complete(prompt=prompt, max_tokens=40, temperature=0.1)
+            scores = []
+            for line in (response or '').strip().split('\n'):
+                try:
+                    s = int(line.strip())
+                    scores.append(s / 5.0)  # normalize to 0-1
+                except ValueError:
+                    continue
+
+            if not scores:
+                return {'passed': True, 'avg_score': 0.5, 'low_relevance_ids': []}
+
+            avg = sum(scores) / len(scores)
+            low_ids = [
+                candidates[i].get('chunk_id', '')
+                for i, s in enumerate(scores)
+                if i < len(candidates) and s < threshold
+            ]
+            passed = (len(scores) - len(low_ids)) / max(1, len(scores)) >= 0.4
+
+            if not passed:
+                logger.warning(
+                    f"[SELF_RAG] Low relevance: {len(low_ids)}/{len(scores)} below {threshold} "
+                    f"avg={avg:.2f}. Triggering re-retrieval."
+                )
+            return {'passed': passed, 'avg_score': round(avg, 3), 'low_relevance_ids': low_ids}
+        except Exception as e:
+            logger.debug(f"[SELF_RAG] Check failed: {e}")
+            return {'passed': True, 'avg_score': 0.5, 'low_relevance_ids': []}
+
+    def _feedback_log_grounding(self, query: str, grounding_result: Dict[str, Any]):
+        """Feedback loop: log grounding scores for future weight tuning.
+
+        Stores per-query grounding stats. Over time, these can be used to
+        adjust semantic/lexical/base weights automatically.
+        """
+        if not hasattr(self, '_feedback_buffer'):
+            self._feedback_buffer: List[Dict[str, Any]] = []
+
+        self._feedback_buffer.append({
+            'query': query[:120],
+            'grounded': grounding_result.get('grounded', True),
+            'avg_similarity': grounding_result.get('avg_similarity', 1.0),
+            'ungrounded_count': len(grounding_result.get('ungrounded_claims', [])),
+        })
+
+        # Keep last 100 entries
+        if len(self._feedback_buffer) > 100:
+            self._feedback_buffer = self._feedback_buffer[-100:]
+
+        # Compute running stats
+        total = len(self._feedback_buffer)
+        grounded_count = sum(1 for e in self._feedback_buffer if e['grounded'])
+        avg_sim = sum(e['avg_similarity'] for e in self._feedback_buffer) / max(1, total)
+
+        logger.debug(
+            f"[FEEDBACK] {grounded_count}/{total} grounded ({100*grounded_count/max(1,total):.0f}%) "
+            f"avg_similarity={avg_sim:.3f}"
+        )
+
+    def _verify_answer_grounding(self, answer_text, candidates, threshold=0.45):
+        """Post-generation check: verify each claim has supporting evidence via embedding similarity."""
+        import math
+        if not answer_text or not candidates:
+            return {'grounded': True, 'ungrounded_claims': [], 'avg_similarity': 1.0}
+        claims = [s.strip() for s in __import__('re').split(r'(?<=[.!?。])\s+', answer_text) if len(s.strip()) > 20]
+        if not claims:
+            return {'grounded': True, 'ungrounded_claims': [], 'avg_similarity': 1.0}
+        chunk_texts = [c.get('snippet') or c.get('citation_excerpt') or '' for c in candidates[:10]]
+        chunk_texts = [t for t in chunk_texts if t]
+        if not chunk_texts:
+            return {'grounded': True, 'ungrounded_claims': [], 'avg_similarity': 1.0}
+        try:
+            claim_embs = [self.embedding.create_embedding(cl) for cl in claims]
+            chunk_embs = [self.embedding.create_embedding(ct) for ct in chunk_texts]
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"[GROUNDING] Embedding failed: {e}")
+            return {'grounded': True, 'ungrounded_claims': [], 'avg_similarity': 1.0}
+        sims = []
+        ungrounded = []
+        for i, ce in enumerate(claim_embs):
+            if not ce:
+                continue
+            max_sim = 0.0
+            for che in chunk_embs:
+                if not che:
+                    continue
+                dot = sum(a*b for a, b in zip(ce, che))
+                na = math.sqrt(sum(a*a for a in ce))
+                nb = math.sqrt(sum(b*b for b in che))
+                sim = dot/(na*nb) if na and nb else 0.0
+                max_sim = max(max_sim, sim)
+            sims.append(max_sim)
+            if max_sim < threshold:
+                ungrounded.append({'claim': claims[i][:200], 'similarity': round(max_sim, 3)})
+        avg_sim = sum(sims)/len(sims) if sims else 1.0
+        grounded = len(ungrounded) == 0
+        if not grounded:
+            import logging
+            logging.getLogger(__name__).warning(f"[GROUNDING] {len(ungrounded)}/{len(claims)} ungrounded avg={avg_sim:.3f}")
+        return {'grounded': grounded, 'ungrounded_claims': ungrounded, 'avg_similarity': round(avg_sim, 3)}
 
     def _is_list_style_query(self, query: str) -> bool:
         """Detect questions that need comprehensive extraction, not a short fact."""
@@ -149,19 +430,44 @@ Cách làm việc:
         return has_list_intent and has_image
 
     def _get_rag_top_k(self, query: str, default_top_k: int) -> int:
-        """Increase retrieval depth for list-style questions to reduce missing points."""
+        """Intent-driven top_k: use QueryIntentClassifier for adaptive depth."""
+        try:
+            _intent, config = self._get_query_intent(query)
+            return config.top_k
+        except Exception:
+            pass
         base_top_k = int(getattr(settings, 'RAG_RETRIEVAL_TOP_K', default_top_k))
         list_top_k = int(getattr(settings, 'RAG_RETRIEVAL_TOP_K_LIST', max(base_top_k, 12)))
         return list_top_k if self._is_list_style_query(query) else base_top_k
 
     def _get_rag_max_tokens(self, query: str) -> int:
-        """Allow longer output for list-style questions so answers are not truncated."""
+        """Intent-driven max_tokens: LIST queries get up to 2048 tokens to prevent truncation."""
+        try:
+            _intent, config = self._get_query_intent(query)
+            from services.retrieval.query_intent import QueryIntent
+            if _intent == QueryIntent.LIST:
+                return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_LIST', 2048))
+            elif _intent == QueryIntent.TABLE:
+                return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_TABLE', 2048))
+            elif _intent in (QueryIntent.ANALYTICAL, QueryIntent.COMPARATIVE):
+                return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_ANALYTICAL', 1536))
+            elif _intent == QueryIntent.PROCEDURAL:
+                return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_PROCEDURAL', 1024))
+            else:
+                return int(getattr(settings, 'RAG_LLM_MAX_TOKENS', 768))
+        except Exception:
+            pass
         base_tokens = int(getattr(settings, 'RAG_LLM_MAX_TOKENS', 384))
         list_tokens = int(getattr(settings, 'RAG_LLM_MAX_TOKENS_LIST', max(base_tokens, 1024)))
         return list_tokens if self._is_list_style_query(query) else base_tokens
 
     def _get_context_snippet_chars(self, query: str) -> int:
-        """Allow larger per-chunk context for list-style questions."""
+        """Intent-driven snippet_chars: use QueryIntentClassifier. LIST gets 3000 chars to hold full tables."""
+        try:
+            _intent, config = self._get_query_intent(query)
+            return config.snippet_chars
+        except Exception:
+            pass
         base_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS', 1400))
         list_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_LIST', max(base_chars, 3000)))
         return list_chars if self._is_list_style_query(query) else base_chars
@@ -193,7 +499,12 @@ Cách làm việc:
         return max(1200, min(configured_chars, token_safe_chars))
 
     def _get_neighbor_window(self, query: str) -> Tuple[int, int, int]:
-        """Return before/after/max chunks for context expansion."""
+        """Intent-driven neighbor window for context expansion."""
+        try:
+            _intent, config = self._get_query_intent(query)
+            return config.neighbor_before, config.neighbor_after, config.max_context_chunks
+        except Exception:
+            pass
         if not self._is_list_style_query(query):
             return 0, 0, int(getattr(settings, 'RAG_CONTEXT_MAX_CHUNKS', 8))
 
@@ -962,6 +1273,7 @@ Cách làm việc:
         self,
         query: str,
         resolved_doc_ids: List[str],
+        conversation_history: List[Dict[str, Any]] = None,
         top_k: int = 4,  # Fix E: Giam tu 5 -> 4 de nhanh hon, it noise hon
         snippet_chars: int = 900,
     ) -> Tuple[str, List[Dict]]:
@@ -994,12 +1306,15 @@ Cách làm việc:
                 query=query,
                 user_context=user_context,
                 top_k=top_k,
+                conversation_history=conversation_history,
             )
             t_route_done = (time.monotonic() - t_route_start) * 1000
 
             if not candidates:
                 logger.debug("[_retrieve_context] Không tìm thấy chunks phù hợp")
                 return '', []
+
+            candidates = self._filter_front_matter_candidates(query, candidates)
 
             # Lấy thông tin tên tài liệu để gắn citation (batch query, tránh N+1)
             # Retrieval payloads only carry short previews. Fetch the selected
@@ -1009,7 +1324,30 @@ Cách làm việc:
             asset_candidates_ctx = [c for c in candidates if c.get('source') == 'asset']
             chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
             chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
-            candidates = chunk_candidates_ctx + asset_candidates_ctx
+            candidates = self._deduplicate_candidates_by_content(chunk_candidates_ctx + asset_candidates_ctx)
+            # Context stitching: merge sequential chunks into continuous blocks
+            candidates = self._stitch_sequential_chunks(candidates)
+            # Self-RAG: relevance check, re-retrieve if too few relevant
+            relevance = self._self_rag_relevance_check(query, candidates)
+            if not relevance['passed'] and len(resolved_doc_ids) > 0:
+                logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
+                try:
+                    router = self._get_router()
+                    re_candidates = router.route(
+                        query=query,
+                        user_context={'document_ids': resolved_doc_ids},
+                        top_k=max(8, top_k * 2),
+                        conversation_history=conversation_history,
+                    )
+                    if re_candidates:
+                        re_assets = [c for c in re_candidates if c.get('source') == 'asset']
+                        re_chunks = [c for c in re_candidates if c.get('source') != 'asset']
+                        candidates = self._deduplicate_candidates_by_content(re_chunks + re_assets)
+                        candidates = self._stitch_sequential_chunks(candidates)
+                        candidates = self._filter_front_matter_candidates(query, candidates)
+                        logger.info(f"[SELF_RAG] Re-retrieved {len(candidates)} candidates")
+                except Exception as e:
+                    logger.warning(f"[SELF_RAG] Re-retrieval failed: {e}")
             t_chunk_fetch_done = (time.monotonic() - t_chunk_fetch_start) * 1000
 
             t_doc_fetch_start = time.monotonic()
@@ -1203,18 +1541,19 @@ Cách làm việc:
                 document_ids=[],
                 folder_ids=[],
             )
-            
-            context_str, rag_candidates = self._retrieve_context(
-                query=query,
-                resolved_doc_ids=resolved_ids,
-                top_k=self._get_rag_top_k(query, default_top_k=3),
-                snippet_chars=self._get_context_snippet_chars(query),
-            )
-            
+
             # 4. Lấy lịch sử
             messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
             if len(messages_for_llm) > 6:
                 messages_for_llm = messages_for_llm[-6:]
+            
+            context_str, rag_candidates = self._retrieve_context(
+                query=query,
+                resolved_doc_ids=resolved_ids,
+                conversation_history=messages_for_llm,
+                top_k=self._get_rag_top_k(query, default_top_k=3),
+                snippet_chars=self._get_context_snippet_chars(query),
+            )
 
             # 5. Đính kèm tài liệu vào câu hỏi nếu có
             # P2#9: Unified context injection (same as ask_stream)
@@ -1338,6 +1677,7 @@ Cách làm việc:
                 context_str, rag_candidates = self._retrieve_context(
                     query=query,
                     resolved_doc_ids=resolved_ids,
+                    conversation_history=messages_for_llm,
                     top_k=self._get_rag_top_k(query, default_top_k=4),
                     snippet_chars=self._get_context_snippet_chars(query),
                 )
@@ -1399,8 +1739,26 @@ Cách làm việc:
                 # Sau khi stream text hoan tat, gui citation data qua SSE
                 # de frontend hien thi popup nguon tham khao ngay trong phien chat.
                 if full_response and rag_candidates:
-                    citations = self._build_citation_payload(rag_candidates, full_response, query)
-                    yield {'citations': citations}
+                    try:
+                        citations = self._build_citation_payload(rag_candidates, full_response, query)
+                        # Answer grounding check + feedback logging
+                        grounding = self._verify_answer_grounding(full_response, rag_candidates)
+                        citations.append({'_grounding': grounding})
+                        self._feedback_log_grounding(query, grounding)
+                        yield {'citations': citations}
+                    except Exception as cite_err:
+                        logger.error(f"[ask_stream] Citation build failed: {cite_err}", exc_info=True)
+                        # Fallback: yield basic citations without advanced logic
+                        fallback = []
+                        for i, c in enumerate(rag_candidates[:5], 1):
+                            fallback.append({
+                                'id': str(c.get('chunk_id', i)),
+                                'number': i,
+                                'title': c.get('document_title', 'Tai lieu'),
+                                'excerpt': (c.get('snippet') or '')[:300],
+                                'source': c.get('source', ''),
+                            })
+                        yield {'citations': fallback}
 
             finally:
                 # ── BƯỚC 7: Lưu kết quả vào DB (LUÔN chạy kể cả khi client ngắt kết nối) ──
@@ -1408,7 +1766,10 @@ Cách làm việc:
                     try:
                         # Build citations nếu chưa có (client ngắt kết nối giữa stream)
                         if not citations:
-                            citations = self._build_citation_payload(rag_candidates, full_response, query)
+                            try:
+                                citations = self._build_citation_payload(rag_candidates, full_response, query)
+                            except Exception:
+                                citations = []
 
                         self.message_repo.create_bot_message(
                             conversation_id=conversation.id,

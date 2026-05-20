@@ -33,14 +33,17 @@ class HybridRetriever:
         self, query: str, top_k: int = 10, sparse_k: int = 10,
         document_ids: List[str] = None,
         query_embedding: Optional[List[float]] = None,
+        dense_weight: float = 0.5,
     ) -> List[Dict[str, Any]]:
         """Return merged candidates: chunks + assets."""
         t_start = time.monotonic()
+        dense_weight = max(0.0, min(1.0, float(dense_weight)))
+        sparse_weight = 1.0 - dense_weight
 
         doc_hash = hashlib.md5(
             ','.join(sorted(document_ids or [])).encode()
         ).hexdigest()[:12]
-        cache_key = f"hybrid_retrieval:v4:{query}:{top_k}:{sparse_k}:{doc_hash}"
+        cache_key = f"hybrid_retrieval:v5:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:{doc_hash}"
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -95,6 +98,9 @@ class HybridRetriever:
                                 'chunk_id': cid, 'document_id': doc_id,
                                 'score': 0.0, 'source': 'bm25',
                                 'snippet': result['content'][:300],
+                                'page': result.get('page'),
+                                'chunk_index': result.get('chunk_index'),
+                                'metadata': result.get('metadata') or {},
                             }
                             sparse_scores[cid] = score
                         local_max = max(local_max, score)
@@ -156,11 +162,15 @@ class HybridRetriever:
                         dense_scores[cid] = score
                         if cid in candidates:
                             candidates[cid]['source'] = 'hybrid'
+                            if payload.get('page_number') and not candidates[cid].get('page'):
+                                candidates[cid]['page'] = payload.get('page_number')
                         else:
                             candidates[cid] = {
                                 'chunk_id': cid, 'document_id': doc_id,
                                 'score': 0.0, 'source': 'dense',
                                 'snippet': (payload.get('text_preview') or '')[:300],
+                                'page': payload.get('page_number'),
+                                'metadata': payload.get('metadata') or {},
                             }
                     local_max = max(local_max, score)
             except Exception as e:
@@ -244,25 +254,33 @@ class HybridRetriever:
             f2.result()
             f3.result()
 
-        # ── Normalize + combine chunk scores ───────────────────
-        def _softmax(scores_dict, temperature=0.5):
-            if not scores_dict:
-                return {}
-            values = list(scores_dict.values())
-            max_val = max(values)
-            exps = [math.exp((v - max_val) / temperature) for v in values]
-            total = sum(exps)
-            if total == 0:
-                return {k: 0.0 for k in scores_dict}
-            return {k: exps[i] / total for i, k in enumerate(scores_dict.keys())}
-
-        sparse_scores = _softmax(sparse_scores)
-        dense_scores = _softmax(dense_scores)
+        # Weighted RRF fusion. BM25 and vector scores are not calibrated to the
+        # same scale, so fusing by rank is more stable than averaging scores.
+        rrf_k = 60.0
+        max_rrf = 1.0 / (rrf_k + 1.0)
+        sparse_ranks = {
+            cid: rank
+            for rank, (cid, _score) in enumerate(
+                sorted(sparse_scores.items(), key=lambda item: item[1], reverse=True),
+                start=1,
+            )
+        }
+        dense_ranks = {
+            cid: rank
+            for rank, (cid, _score) in enumerate(
+                sorted(dense_scores.items(), key=lambda item: item[1], reverse=True),
+                start=1,
+            )
+        }
 
         for cid, candidate in candidates.items():
-            s = sparse_scores.get(cid, 0.0)
-            d = dense_scores.get(cid, 0.0)
-            candidate['score'] = 0.5 * s + 0.5 * d
+            sparse_rrf = 1.0 / (rrf_k + sparse_ranks[cid]) if cid in sparse_ranks else 0.0
+            dense_rrf = 1.0 / (rrf_k + dense_ranks[cid]) if cid in dense_ranks else 0.0
+            fused = (sparse_weight * sparse_rrf) + (dense_weight * dense_rrf)
+            candidate['score'] = fused / max_rrf if max_rrf else fused
+            candidate['_sparse_rank'] = sparse_ranks.get(cid)
+            candidate['_dense_rank'] = dense_ranks.get(cid)
+            candidate['_fusion'] = 'weighted_rrf'
 
         sorted_candidates = sorted(candidates.values(), key=lambda x: x['score'], reverse=True)
 
@@ -339,7 +357,7 @@ class HybridRetriever:
             f"[RETRIEVAL] query='{query[:40]}...' results={len(sorted_candidates)} "
             f"assets={n_assets} | sparse={timing.get('sparse_ms',0):.0f}ms "
             f"dense={timing.get('qdrant_ms',0):.0f}ms asset={timing.get('asset_ms',0):.0f}ms "
-            f"total={t_total:.0f}ms"
+            f"fusion=weighted_rrf dense_weight={dense_weight:.2f} total={t_total:.0f}ms"
         )
 
         # Separate assets and non-assets

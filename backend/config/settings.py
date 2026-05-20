@@ -180,6 +180,11 @@ RAG_CONTEXT_MAX_CHUNKS = int(os.environ.get("RAG_CONTEXT_MAX_CHUNKS", "8"))
 RAG_CONTEXT_MAX_CHUNKS_LIST = int(os.environ.get("RAG_CONTEXT_MAX_CHUNKS_LIST", "12"))
 RAG_CONTEXT_NEIGHBOR_BEFORE_LIST = int(os.environ.get("RAG_CONTEXT_NEIGHBOR_BEFORE_LIST", "1"))
 RAG_CONTEXT_NEIGHBOR_AFTER_LIST = int(os.environ.get("RAG_CONTEXT_NEIGHBOR_AFTER_LIST", "4"))
+QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]
+QUERY_REWRITE_LLM_ENABLED = os.environ.get("QUERY_REWRITE_LLM_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_HYDE_ENABLED = os.environ.get("RAG_HYDE_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_QUERY_DECOMPOSITION_ENABLED = os.environ.get("RAG_QUERY_DECOMPOSITION_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED = os.environ.get("RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED", "true").lower() in ["true", "1", "yes"]
 RAG_PROMPT_RESERVED_TOKENS = int(os.environ.get("RAG_PROMPT_RESERVED_TOKENS", "800"))
 RAG_CONTEXT_CHARS_PER_TOKEN = float(os.environ.get("RAG_CONTEXT_CHARS_PER_TOKEN", "3.2"))
 
@@ -228,16 +233,19 @@ QDRANT_QUANTIZATION = os.environ.get("QDRANT_QUANTIZATION", "")
 # ============================================================
 # CHUNKING
 # ============================================================
-CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "200"))
-CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "40"))
-CHUNK_TOKEN_SIZE_PDF = int(os.environ.get("CHUNK_TOKEN_SIZE_PDF", "160"))  # Reduced from 200 for safety
-CHUNK_TOKEN_OVERLAP_PDF = int(os.environ.get("CHUNK_TOKEN_OVERLAP_PDF", "32"))  # Reduced proportionally
-CHUNK_TOKEN_SIZE_DOC = int(os.environ.get("CHUNK_TOKEN_SIZE_DOC", "240"))
-CHUNK_TOKEN_OVERLAP_DOC = int(os.environ.get("CHUNK_TOKEN_OVERLAP_DOC", "48"))
-CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "200"))  # Reduced from 260
-CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "40"))  # Reduced proportionally
+CHUNK_TOKEN_SIZE = int(os.environ.get("CHUNK_TOKEN_SIZE", "360"))
+CHUNK_TOKEN_OVERLAP = int(os.environ.get("CHUNK_TOKEN_OVERLAP", "72"))
+CHUNK_TOKEN_SIZE_PDF = int(os.environ.get("CHUNK_TOKEN_SIZE_PDF", "320"))
+CHUNK_TOKEN_OVERLAP_PDF = int(os.environ.get("CHUNK_TOKEN_OVERLAP_PDF", "64"))
+CHUNK_TOKEN_SIZE_DOC = int(os.environ.get("CHUNK_TOKEN_SIZE_DOC", "420"))
+CHUNK_TOKEN_OVERLAP_DOC = int(os.environ.get("CHUNK_TOKEN_OVERLAP_DOC", "84"))
+CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "360"))
+CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "72"))
+CHUNK_TOKEN_SIZE_SPREADSHEET = int(os.environ.get("CHUNK_TOKEN_SIZE_SPREADSHEET", "520"))
+CHUNK_TOKEN_OVERLAP_SPREADSHEET = int(os.environ.get("CHUNK_TOKEN_OVERLAP_SPREADSHEET", "80"))
 CHUNK_SIZE = CHUNK_TOKEN_SIZE
 CHUNK_OVERLAP = CHUNK_TOKEN_OVERLAP
+POSTGRES_FTS_CONFIG = os.environ.get("POSTGRES_FTS_CONFIG", "simple")
 
 # ============================================================
 # REST FRAMEWORK & JWT
@@ -346,6 +354,9 @@ RAG_SPREADSHEET_RAPTOR_ENABLED = os.environ.get("RAG_SPREADSHEET_RAPTOR_ENABLED"
 RAG_SPREADSHEET_RAPTOR_MIN_SHEETS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_SHEETS", "3"))
 RAG_SPREADSHEET_RAPTOR_MIN_ROWS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_ROWS", "200"))
 RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS", "12"))
+RAG_PDF_EXACT_PAGE_TEXT = os.environ.get("RAG_PDF_EXACT_PAGE_TEXT", "true").lower() in ["true", "1", "yes"]
+RAG_QDRANT_TEXT_PREVIEW_CHARS = int(os.environ.get("RAG_QDRANT_TEXT_PREVIEW_CHARS", "1000"))
+RAG_RERANK_SNIPPET_CHARS = int(os.environ.get("RAG_RERANK_SNIPPET_CHARS", "1800"))
 
 # ============================================================
 # ASSET PIPELINE (OCR + VL Caption + Image Extraction)

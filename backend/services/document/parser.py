@@ -47,6 +47,7 @@ import os
 import mimetypes
 import hashlib
 import re
+import unicodedata
 from typing import Tuple, Dict, Any, Optional
 from pathlib import Path
 from django.conf import settings
@@ -248,9 +249,14 @@ class DocumentParser:
 
             # 6. Normalize extracted text to improve chunk quality for RAG
             text = self._normalize_extracted_text(text)
+
+            # 6.5. Detect TOC/front-matter for downstream retrieval filtering
+            toc_metadata = self._detect_toc_metadata(text)
             
             # 7. Extract metadata
             metadata = self._extract_metadata(text, file_path, file_type, page_count=page_count)
+            if toc_metadata:
+                metadata.update(toc_metadata)
             metadata['from_cache'] = False
             
             # 8. Cache result
@@ -587,6 +593,36 @@ class DocumentParser:
         normalized = re.sub(r'\n{3,}', '\n\n', normalized)
 
         return normalized.strip()
+
+    def _normalize_toc_text(self, text: str) -> str:
+        normalized = unicodedata.normalize('NFD', (text or '').lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return normalized.replace('đ', 'd')
+
+    def _detect_toc_metadata(self, text: str) -> Dict[str, Any]:
+        if not text or not text.strip():
+            return {}
+
+        normalized = self._normalize_toc_text(text)
+        if any(marker in normalized for marker in ('muc luc', 'table of contents', 'contents', 'index')):
+            return {'has_toc': True, 'layout_role': 'toc'}
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if len(lines) < 3:
+            return {}
+
+        toc_like_lines = 0.0
+        for line in lines[:30]:
+            if re.search(r'\.{2,}\s*\d+\s*$', line) or re.search(r'\s\d+\s*$', line):
+                toc_like_lines += 1.5
+            elif len(line.split()) <= 10:
+                toc_like_lines += 0.5
+
+        ratio = toc_like_lines / max(1, min(len(lines), 30))
+        if ratio >= 0.45:
+            return {'has_toc': True, 'layout_role': 'toc', 'toc_score': round(ratio, 3)}
+
+        return {}
 
     def parse_xls(self, file_path: str) -> str:
         """
