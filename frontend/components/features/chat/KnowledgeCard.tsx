@@ -1,8 +1,17 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { FileText, File, ExternalLink, Image as ImageIcon } from 'lucide-react'
+import {
+    AlertTriangle,
+    CheckCircle2,
+    ExternalLink,
+    File,
+    FileText,
+    Image as ImageIcon,
+    ShieldCheck,
+} from 'lucide-react'
 import { buildApiUrl } from '@/config/api'
+import type { CitationAttribution } from './ChatMessages'
 
 interface Citation {
     id: string
@@ -16,12 +25,21 @@ interface Citation {
     chunk_index?: number
     line_start?: number
     line_end?: number
+    row_start?: number
+    row_end?: number
     start_char?: number
     end_char?: number
     document_id?: string
     chunk_id?: string
     source?: string
     score?: number
+    confidence?: number
+    grounding_score?: number
+    overlap_score?: number
+    retrieval_score?: number
+    critical_facts?: string[]
+    matched_facts?: string[]
+    missing_facts?: string[]
     url?: string
     type?: string
     asset_id?: string
@@ -43,24 +61,37 @@ interface Citation {
 
 interface KnowledgeCardProps {
     citations?: Citation[]
+    grounding?: {
+        grounded?: boolean
+        grounding_score?: number
+        citation_coverage?: number
+        avg_similarity?: number
+        revised?: boolean
+        warning_visible?: boolean
+    }
+    factAttribution?: CitationAttribution[]
     isLoading?: boolean
     onCitationClick?: (citation: Citation) => void
 }
 
 const ICON_MAP: Record<string, React.ReactNode> = {
-    pdf: <FileText size={16} className="text-orange-400 shrink-0" />,
-    document: <File size={16} className="text-orange-400 shrink-0" />,
-    article: <FileText size={16} className="text-orange-400 shrink-0" />,
-    asset: <ImageIcon size={16} className="text-cyan-500 shrink-0" />,
+    pdf: <FileText size={16} className="shrink-0 text-orange-500" />,
+    document: <File size={16} className="shrink-0 text-orange-500" />,
+    article: <FileText size={16} className="shrink-0 text-orange-500" />,
+    asset: <ImageIcon size={16} className="shrink-0 text-cyan-500" />,
 }
 
-const getCitationKey = (citation: Citation, index: number) => {
-    return [
-        citation.document_id || 'doc',
-        citation.asset_id || citation.chunk_id || 'chunk',
-        citation.id || citation.number || 'source',
-        index,
-    ].join('-')
+const getCitationKey = (citation: Citation, index: number) => [
+    citation.document_id || 'doc',
+    citation.asset_id || citation.chunk_id || 'chunk',
+    citation.id || citation.number || 'source',
+    index,
+].join('-')
+
+const formatPercent = (value?: number) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return null
+    const normalized = value <= 1 ? value * 100 : value
+    return `${Math.max(0, Math.min(100, Math.round(normalized)))}%`
 }
 
 const getAssetThumbnailEndpoint = (citation: Citation) => {
@@ -71,11 +102,11 @@ const getAssetThumbnailEndpoint = (citation: Citation) => {
 }
 
 const getAssetCaption = (citation: Citation) => {
-    return (citation.asset_caption || citation.asset?.caption || citation.description || 'Hình ảnh trong tài liệu')
-        .replace(/^\s*\d+\.\s*Loại ảnh\s*:\s*/i, '')
-        .replace(/\b\d+\.\s*Mô tả nội dung\s*THỰC TẾ\s*:\s*/i, '')
-        .replace(/\b\d+\.\s*Chú ý hướng chữ\s*:[^.?!]*(?:[.?!]|$)/gi, ' ')
-        .replace(/\b\d+\.\s*Tuyệt đối không bịa đặt[^.?!]*(?:[.?!]|$)/gi, ' ')
+    return (citation.asset_caption || citation.asset?.caption || citation.description || 'Hinh anh trong tai lieu')
+        .replace(/^\s*\d+\.\s*Loai anh\s*:\s*/i, '')
+        .replace(/\b\d+\.\s*Mo ta noi dung\s*THUC TE\s*:\s*/i, '')
+        .replace(/\b\d+\.\s*Chu y huong chu\s*:[^.?!]*(?:[.?!]|$)/gi, ' ')
+        .replace(/\b\d+\.\s*Tuyet doi khong bia dat[^.?!]*(?:[.?!]|$)/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim()
 }
@@ -88,8 +119,44 @@ const getAssetLocation = (citation: Citation) => {
     if (sheet) parts.push(`Sheet ${sheet}`)
     if (cell) parts.push(`cell ${cell}`)
     if (page) parts.push(`Trang ${page}`)
-    return parts.join(', ')
+    return parts.join(' · ')
 }
+
+const getCitationMeta = (citation: Citation) => {
+    const parts: string[] = []
+
+    if (citation.type === 'asset') {
+        const location = getAssetLocation(citation)
+        if (location) parts.push(location)
+    } else {
+        if (citation.page) parts.push(`Trang ${citation.page}`)
+        if (citation.line_start) {
+            parts.push(
+                citation.line_end && citation.line_end !== citation.line_start
+                    ? `dong ${citation.line_start}-${citation.line_end}`
+                    : `dong ${citation.line_start}`
+            )
+        }
+        if (citation.row_start) {
+            parts.push(
+                citation.row_end && citation.row_end !== citation.row_start
+                    ? `row ${citation.row_start}-${citation.row_end}`
+                    : `row ${citation.row_start}`
+            )
+        }
+        if (typeof citation.chunk_index === 'number') parts.push(`chunk ${citation.chunk_index}`)
+    }
+
+    return parts.join(' · ')
+}
+
+const getCitationExcerpt = (citation: Citation) => (
+    citation.answer_context ||
+    citation.excerpt ||
+    citation.description ||
+    citation.source ||
+    ''
+).trim()
 
 function AuthenticatedAssetImage({ citation, className = '' }: { citation: Citation; className?: string }) {
     const endpoint = getAssetThumbnailEndpoint(citation)
@@ -140,10 +207,12 @@ function AuthenticatedAssetImage({ citation, className = '' }: { citation: Citat
 
 export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
     citations = [],
+    grounding,
+    factAttribution = [],
     isLoading = false,
     onCitationClick,
 }) => {
-    if (!citations.length && !isLoading) return null
+    if (!citations.length && !isLoading && !grounding) return null
 
     const uniqueCitations = citations.filter((citation, index, list) => {
         const key = [
@@ -162,46 +231,149 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
         }) === index
     })
 
-    return (
-        <div className="mt-6 pt-4 border-t border-outline-variant/20">
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">
-                Nguồn trích dẫn ({uniqueCitations.length})
-            </p>
+    const groundingPercent = formatPercent(grounding?.grounding_score)
+    const coveragePercent = formatPercent(grounding?.citation_coverage)
+    const topClaims = factAttribution.slice(0, 4)
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+    return (
+        <div className="mt-6 border-t border-outline-variant/20 pt-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Nguon tham khao ({uniqueCitations.length})
+                    </p>
+                </div>
+
+                {grounding && (
+                    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${grounding.grounded
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
+                        : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
+                        }`}>
+                        {grounding.grounded ? <ShieldCheck size={14} /> : <AlertTriangle size={14} />}
+                        <span>{grounding.grounded ? 'Grounded' : 'Can kiem tra'}</span>
+                        {groundingPercent && <span>{groundingPercent}</span>}
+                    </div>
+                )}
+            </div>
+
+            {grounding && (
+                <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Grounding</p>
+                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{groundingPercent || 'N/A'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Citation coverage</p>
+                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{coveragePercent || 'N/A'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Revision</p>
+                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{grounding.revised ? 'Da sua' : 'Khong'}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Canh bao</p>
+                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{grounding.warning_visible ? 'Co' : 'Khong'}</p>
+                    </div>
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {isLoading ? (
                     <>
                         {[1, 2].map((i) => (
-                            <div key={i} className="h-16 bg-slate-200 dark:bg-slate-700 rounded-xl animate-pulse" />
+                            <div key={i} className="h-28 animate-pulse rounded-xl bg-slate-200 dark:bg-slate-700" />
                         ))}
                     </>
                 ) : (
-                    uniqueCitations.map((citation, index) => (
-                        <button
-                            key={getCitationKey(citation, index)}
-                            onClick={() => onCitationClick?.(citation)}
-                            className="flex items-center gap-3 p-3 bg-white/50 dark:bg-slate-800/50 rounded-xl border border-outline-variant/10 dark:border-slate-700/50 hover:border-primary/30 dark:hover:border-primary/30 hover:bg-primary/5 dark:hover:bg-primary/5 cursor-pointer transition-all group"
-                        >
-                            {citation.type === 'asset' ? (
-                                <AuthenticatedAssetImage citation={citation} className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 dark:border-slate-700" />
-                            ) : (
-                                ICON_MAP[citation.type || 'document'] || ICON_MAP.document
-                            )}
-                            <div className="overflow-hidden flex-1 text-left">
-                                <p className="text-xs font-bold text-on-surface dark:text-slate-100 truncate group-hover:text-primary transition-colors">
-                                    {citation.type === 'asset' ? getAssetCaption(citation) : citation.title}
-                                </p>
-                                <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                                    {citation.type === 'asset'
-                                        ? getAssetLocation(citation) || getAssetCaption(citation)
-                                        : citation.description || citation.page ? `${citation.page || 'Da liet ke'}` : 'Tai lieu dinh kem'}
-                                </p>
-                            </div>
-                            <ExternalLink size={14} className="text-slate-400 dark:text-slate-500 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
-                    ))
+                    uniqueCitations.map((citation, index) => {
+                        const confidence = formatPercent(citation.confidence)
+                        const citationGrounding = formatPercent(citation.grounding_score)
+                        const excerpt = getCitationExcerpt(citation)
+                        const meta = getCitationMeta(citation)
+                        const missingFacts = citation.missing_facts || []
+
+                        return (
+                            <button
+                                key={getCitationKey(citation, index)}
+                                onClick={() => onCitationClick?.(citation)}
+                                className="group flex min-h-36 cursor-pointer gap-3 rounded-xl border border-outline-variant/10 bg-white/60 p-3 text-left transition-all hover:border-primary/30 hover:bg-primary/5 dark:border-slate-700/50 dark:bg-slate-800/50 dark:hover:border-primary/30 dark:hover:bg-primary/5"
+                            >
+                                {citation.type === 'asset' ? (
+                                    <AuthenticatedAssetImage citation={citation} className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 dark:border-slate-700" />
+                                ) : (
+                                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 dark:bg-orange-950/30">
+                                        {ICON_MAP[citation.type || 'document'] || ICON_MAP.document}
+                                    </div>
+                                )}
+
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-start justify-between gap-2">
+                                        <p className="line-clamp-2 text-xs font-bold text-on-surface transition-colors group-hover:text-primary dark:text-slate-100">
+                                            [{citation.number || index + 1}] {citation.type === 'asset' ? getAssetCaption(citation) : citation.title}
+                                        </p>
+                                        <ExternalLink size={14} className="mt-0.5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 dark:text-slate-500" />
+                                    </div>
+
+                                    {meta && (
+                                        <p className="mt-1 truncate text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                                            {meta}
+                                        </p>
+                                    )}
+
+                                    <div className="mt-2 flex flex-wrap gap-1.5">
+                                        {confidence && (
+                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
+                                                Confidence {confidence}
+                                            </span>
+                                        )}
+                                        {citationGrounding && (
+                                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+                                                Grounding {citationGrounding}
+                                            </span>
+                                        )}
+                                        {missingFacts.length > 0 && (
+                                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                                                Thieu {missingFacts.length} fact
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {excerpt && (
+                                        <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-slate-600 dark:text-slate-300">
+                                            {excerpt}
+                                        </p>
+                                    )}
+                                </div>
+                            </button>
+                        )
+                    })
                 )}
             </div>
+
+            {topClaims.length > 0 && (
+                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Claim attribution
+                    </p>
+                    <div className="space-y-2">
+                        {topClaims.map((claim, index) => (
+                            <div key={`${claim.claim_index || index}-${claim.best_citation || 'none'}`} className="flex gap-2 text-xs">
+                                {claim.grounded ? (
+                                    <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-500" />
+                                ) : (
+                                    <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-500" />
+                                )}
+                                <div className="min-w-0 flex-1">
+                                    <p className="line-clamp-2 text-slate-700 dark:text-slate-200">{claim.claim}</p>
+                                    <p className="mt-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                                        Citation {claim.best_citation || 'N/A'} · {formatPercent(claim.grounding_score) || 'N/A'}
+                                    </p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

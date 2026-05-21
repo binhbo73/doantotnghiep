@@ -9,7 +9,7 @@ import type {
     ConversationAttachmentsDTO,
 } from '@/services/chatService'
 import { useToast } from './useToast'
-import { Message } from '@/components/features/chat/ChatMessages'
+import type { Message } from '@/components/features/chat/ChatMessages'
 import type { ChatSelectedResourceItem } from '@/components/features/chat/ChatInput'
 
 interface UseChatOptions {
@@ -43,21 +43,45 @@ const mapConversationAttachments = (
     })),
 })
 
-const normalizeCitations = (raw: MessageDTO['citations'] | any): Message['citations'] => {
+const normalizeCitationBundle = (raw: MessageDTO['citations'] | any): Pick<Message, 'citations' | 'grounding' | 'factAttribution'> => {
     const citations = Array.isArray(raw) ? raw : Array.isArray(raw?.citations) ? raw.citations : []
 
     if (!citations.length) {
-        return []
+        return { citations: [], grounding: undefined, factAttribution: [] }
     }
 
-    return citations.map((citation: any, index: number) => ({
-        ...citation,
-        id: String(citation.id || citation.number || `${citation.document_id || 'doc'}-${citation.chunk_id || index}`),
-        number: citation.number || citation.id || index + 1,
-        title: citation.title || citation.document_title || citation.document_name || 'Tai lieu nguon',
-        description: citation.description || citation.excerpt || '',
-        type: citation.type || 'document',
-    }))
+    let grounding: Message['grounding']
+    let factAttribution: Message['factAttribution'] = []
+    const realCitations: any[] = []
+
+    citations.forEach((citation: any) => {
+        if (citation?._grounding) {
+            grounding = citation._grounding
+            if (Array.isArray(citation._grounding?.claims)) {
+                factAttribution = citation._grounding.claims
+            }
+            return
+        }
+        if (citation?._fact_attribution) {
+            factAttribution = Array.isArray(citation._fact_attribution) ? citation._fact_attribution : []
+            return
+        }
+        realCitations.push(citation)
+    })
+
+    return {
+        citations: realCitations.map((citation: any, index: number) => ({
+            ...citation,
+            id: String(citation.id || citation.number || `${citation.document_id || 'doc'}-${citation.chunk_id || index}`),
+            number: citation.number || index + 1,
+            title: citation.title || citation.document_title || citation.document_name || 'Tai lieu nguon',
+            description: citation.description || citation.excerpt || citation.citation_excerpt || '',
+            excerpt: citation.excerpt || citation.citation_excerpt || citation.snippet || citation.description || '',
+            type: citation.type || 'document',
+        })),
+        grounding,
+        factAttribution,
+    }
 }
 
 const STREAM_RENDER_INTERVAL_MS = 80
@@ -110,13 +134,16 @@ export const useChat = (options: UseChatOptions = {}) => {
         try {
             setIsLoading(true)
             const result = await ChatService.getMessages(conversationId)
-            const formattedMessages: Message[] = result.data.map((msg: MessageDTO) => ({
-                id: msg.id,
-                role: msg.role,
-                content: msg.content,
-                citations: normalizeCitations(msg.citations),
-                timestamp: new Date(msg.created_at),
-            }))
+            const formattedMessages: Message[] = result.data.map((msg: MessageDTO) => {
+                const citationBundle = normalizeCitationBundle(msg.citations)
+                return {
+                    id: msg.id,
+                    role: msg.role,
+                    content: msg.content,
+                    ...citationBundle,
+                    timestamp: new Date(msg.created_at),
+                }
+            })
             setMessages(formattedMessages)
         } catch (error) {
             showError('Không thể tải tin nhắn')
@@ -170,7 +197,7 @@ export const useChat = (options: UseChatOptions = {}) => {
 
     // Send message (Streaming support)
     const sendMessage = useCallback(
-        async (content: string, attachments?: ConversationAttachmentPayload) => {
+        async (content: string, attachments?: ConversationAttachmentPayload, ragMode: 'fast' | 'deep' = 'fast') => {
             if (!content.trim()) return
 
             try {
@@ -269,14 +296,16 @@ export const useChat = (options: UseChatOptions = {}) => {
                     },
                     (citations) => {
                         flushStreamToUI(true)
+                        const citationBundle = normalizeCitationBundle(citations)
                         // Nhận citation data từ backend sau khi stream hoàn tất
                         setMessages((prev) =>
                             prev.map(msg => msg.id === botMsgId
-                                ? { ...msg, citations: citations }
+                                ? { ...msg, ...citationBundle }
                                 : msg
                             )
                         )
-                    }
+                    },
+                    ragMode,
                 )
                 flushStreamToUI(true)
 

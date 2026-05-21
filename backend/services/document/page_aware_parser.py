@@ -302,8 +302,8 @@ class PageAwareParserEnhancer:
                 source="office_pdf_preview",
                 metadata={"preview_pdf_path": preview_pdf},
             )
-                if page_aware:
-                    return self._annotate_toc_metadata(page_aware)
+            if page_aware:
+                return self._annotate_toc_metadata(page_aware)
         except Exception as e:
             logger.warning(f"Office PDF page-aware parsing failed for {file_path}: {e}")
         return None
@@ -650,6 +650,15 @@ class PageAwareParserEnhancer:
                 boundaries.append(PageBoundary(sheet_index, char_pos))
                 char_pos += len(sheet_header)
 
+                col_letters = [self._excel_column_letter(col_idx + 1) for col_idx in range(sheet.ncols)]
+                header_cells = ["Excel row"] + col_letters
+                separator_cells = ["---"] * len(header_cells)
+                header_text = "| " + " | ".join(header_cells) + " |\n"
+                separator_text = "| " + " | ".join(separator_cells) + " |\n"
+                text_parts.append(header_text)
+                text_parts.append(separator_text)
+                char_pos += len(header_text) + len(separator_text)
+
                 non_empty_rows = 0
                 non_empty_cells = 0
                 for row_idx in range(sheet.nrows):
@@ -704,6 +713,14 @@ class PageAwareParserEnhancer:
         except Exception as e:
             logger.error(f"Error in XLS page-aware parsing: {str(e)}")
             return None
+
+    def _excel_column_letter(self, index: int) -> str:
+        """Convert a 1-based Excel column index to a column letter."""
+        letters = []
+        while index > 0:
+            index, remainder = divmod(index - 1, 26)
+            letters.append(chr(65 + remainder))
+        return ''.join(reversed(letters)) or 'A'
 
     def _excel_used_bounds(self, ws):
         """Return used worksheet bounds including merged cells and image anchors."""

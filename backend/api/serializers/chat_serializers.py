@@ -298,6 +298,12 @@ class MessageCreateSerializer(serializers.Serializer):
         required=False,
         help_text="Optional: Specific folders to search for context"
     )
+    rag_mode = serializers.ChoiceField(
+        choices=['fast', 'deep'],
+        required=False,
+        default='fast',
+        help_text="RAG mode: fast disables expensive LLM retrieval steps; deep enables them and enforces grounded revision."
+    )
     
     def validate_content(self, value):
         """Validate message content"""
@@ -330,6 +336,7 @@ class MessageCreateSerializer(serializers.Serializer):
             filters['document_ids'] = validated_data['document_ids']
         if validated_data.get('folder_ids'):
             filters['folder_ids'] = validated_data['folder_ids']
+        filters['rag_mode'] = validated_data.get('rag_mode', 'fast')
         
         # Get AI response via ChatService
         chat_service = ChatService()
@@ -337,7 +344,8 @@ class MessageCreateSerializer(serializers.Serializer):
             user_id=account.id,
             query=content,
             conversation_id=conversation_id,
-            filters=filters if filters else None
+            filters=filters if filters else None,
+            rag_mode=validated_data.get('rag_mode', 'fast'),
         )
         
         # Return the bot message (AI response)

@@ -68,7 +68,12 @@ class QueryRewriter:
         self.enabled = getattr(settings, 'QUERY_REWRITE_ENABLED', True)
         self.llm_enabled = self.enabled and getattr(settings, 'QUERY_REWRITE_LLM_ENABLED', True)
         
-    def expand(self, query: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> List[str]:
+    def expand(
+        self,
+        query: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        force_llm: bool = False,
+    ) -> List[str]:
         """Expand a user query into multiple clearer versions.
         
         Args:
@@ -86,7 +91,7 @@ class QueryRewriter:
 
         variants = [query]
 
-        if self.llama and self.llm_enabled:
+        if self.llama and (self.llm_enabled or force_llm):
             # Keep the legacy LLM path available, but only when we do not
             # already have a better history-aware rewrite.
             q_words = query.split()
@@ -138,9 +143,14 @@ class QueryRewriter:
 
         return deduped[: self.max_expansions + 1]
 
-    def resolve(self, query: str, conversation_history: Optional[List[Dict[str, Any]]] = None) -> str:
+    def resolve(
+        self,
+        query: str,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        force_llm: bool = False,
+    ) -> str:
         """Return the single best search query for retrieval."""
-        variants = self.expand(query, conversation_history=conversation_history)
+        variants = self.expand(query, conversation_history=conversation_history, force_llm=force_llm)
         if not variants:
             return query
         if len(variants) == 1:
@@ -265,7 +275,7 @@ class QueryRewriter:
                 best_variant = variant
         return best_variant
 
-    def generate_hypothetical_answer(self, query: str, max_tokens: int = 128) -> str:
+    def generate_hypothetical_answer(self, query: str, max_tokens: int = 128, force_llm: bool = False) -> str:
         """HyDE: generate a short hypothetical answer, then embed it for dense search.
 
         Instead of searching with the raw query embedding (which may be far from
@@ -276,7 +286,9 @@ class QueryRewriter:
         Only used for analytical/comparative queries where the answer format
         is predictable (NOT for factual lookups).
         """
-        if not self.llama or not self.enabled or not getattr(settings, 'RAG_HYDE_ENABLED', True):
+        if not self.llama or not self.enabled:
+            return ''
+        if not force_llm and not getattr(settings, 'RAG_HYDE_ENABLED', True):
             return ''
 
         hyde_prompt = (
@@ -301,14 +313,16 @@ class QueryRewriter:
 
         return ''
 
-    def decompose_complex_query(self, query: str) -> List[str]:
+    def decompose_complex_query(self, query: str, force_llm: bool = False) -> List[str]:
         """Multi-hop: decompose a complex query into simpler sub-queries.
 
         For queries like "Compare A and B" or "What are causes AND effects of X",
         splitting into sub-queries and retrieving for each independently gives
         much better coverage than retrieving for the combined query.
         """
-        if not self.llama or not self.enabled or not getattr(settings, 'RAG_QUERY_DECOMPOSITION_ENABLED', True):
+        if not self.llama or not self.enabled:
+            return []
+        if not force_llm and not getattr(settings, 'RAG_QUERY_DECOMPOSITION_ENABLED', True):
             return []
 
         decompose_prompt = (

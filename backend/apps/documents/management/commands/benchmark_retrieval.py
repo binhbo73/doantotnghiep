@@ -20,11 +20,16 @@ class Command(BaseCommand):
             help="Path to JSON file with benchmark cases.",
         )
         parser.add_argument("--top-k", type=int, default=10)
+        parser.add_argument("--rag-mode", choices=["fast", "deep"], default="fast")
         parser.add_argument(
             "--output",
             default="",
             help="Optional path to write JSON summary.",
         )
+        parser.add_argument("--min-recall", type=float, default=None)
+        parser.add_argument("--min-citation-accuracy", type=float, default=None)
+        parser.add_argument("--max-hallucination-rate", type=float, default=None)
+        parser.add_argument("--max-latency-ms", type=float, default=None)
 
     def handle(self, *args, **options):
         question_path = Path(options["questions"])
@@ -59,6 +64,7 @@ class Command(BaseCommand):
                 ]
                 if cleaned_document_ids:
                     user_context["document_ids"] = cleaned_document_ids
+            user_context["rag_mode"] = options["rag_mode"]
 
             started = time.time()
             candidates = router.route(query=query, user_context=user_context, top_k=top_k)
@@ -117,6 +123,10 @@ class Command(BaseCommand):
         else:
             self.stdout.write(formatted)
 
+        failures = self._threshold_failures(summary, options)
+        if failures:
+            raise CommandError("Benchmark thresholds failed: " + "; ".join(failures))
+
     def _aggregate(self, results):
         if not results:
             return {}
@@ -132,3 +142,23 @@ class Command(BaseCommand):
             "average_hallucination_rate": round(sum(r.hallucination_rate for r in results) / total, 4),
             "average_latency_ms": round(sum(r.total_latency_ms for r in results) / total, 2),
         }
+
+    def _threshold_failures(self, summary, options):
+        if not summary:
+            return []
+
+        checks = [
+            ("average_recall", options.get("min_recall"), ">="),
+            ("average_citation_accuracy", options.get("min_citation_accuracy"), ">="),
+            ("average_hallucination_rate", options.get("max_hallucination_rate"), "<="),
+            ("average_latency_ms", options.get("max_latency_ms"), "<="),
+        ]
+        failures = []
+        for key, threshold, op in checks:
+            if threshold is None:
+                continue
+            value = float(summary.get(key, 0.0))
+            failed = value < threshold if op == ">=" else value > threshold
+            if failed:
+                failures.append(f"{key}={value} expected {op} {threshold}")
+        return failures

@@ -14,6 +14,8 @@ import os
 import logging
 import threading
 import time
+import hashlib
+import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from django.conf import settings
@@ -279,23 +281,193 @@ class ChunkingStage(PipelineStage):
             
             # Chunk and embed
             t_chunk_start = time.monotonic()
-            chunks = chunker.chunk_and_embed_enhanced(
-                text=text,
-                document_id=context.document_id,
-                embedding_client=embedding_client,
-                qdrant_client=qdrant_client,
-                metadata={
-                    'file_type': context.metadata.get('file_extension', ''),
-                    'page_count': page_count,
-                    'word_count': len(text.split()) if text else 0,
-                    'source_name': os.path.basename(context.file_path),
-                    'raptor_applied': should_apply_raptor_pre,
-                    'spreadsheet': context.metadata.get('spreadsheet'),
-                },
-                page_aware_text=page_aware_for_chunking,
-                generate_summaries=generate_summaries,
-                summary_mode='async'
-            )
+            
+            # Check if this is a spreadsheet file - use specialized Excel chunker v2
+            file_ext = context.metadata.get('file_extension', '').lower()
+            if self._is_spreadsheet(file_ext):
+                self.logger.info(f"🔀 [CHUNKING] Using Excel Chunker V2 (row+column aware) for {file_ext}")
+                try:
+                    from services.document.excel_chunker_v2 import ExcelChunkerV2
+                    excel_chunker = ExcelChunkerV2()
+                    
+                    # Excel Chunker V2: chunks the file directly, preserves row structure
+                    excel_chunks = excel_chunker.chunk_excel_file(
+                        file_path=context.file_path,
+                        document_id=context.document_id,
+                        metadata={
+                            'file_type': file_ext,
+                            'source_name': os.path.basename(context.file_path),
+                            'spreadsheet': context.metadata.get('spreadsheet'),
+                        }
+                    )
+                    
+                    # Now embed these chunks using standard embedding client + Qdrant
+                    chunks = []
+                    for idx, excel_chunk in enumerate(excel_chunks):
+                        chunk_text = excel_chunk.get('text', '')
+                        
+                        # Generate embedding
+                        embedding = chunker.base_chunker._generate_embedding(
+                            chunk_text,
+                            embedding_client
+                        )
+                        if not embedding:
+                            self.logger.warning(f"⚠️ No embedding for chunk {idx}")
+                            continue
+                        
+                        # Add embedding vector to chunk dict
+                        chunk_dict = {
+                            'text': chunk_text,
+                            'page_number': excel_chunk.get('page_number', 1),
+                            'chunk_index': idx,
+                            'metadata': {
+                                **excel_chunk.get('metadata', {}),
+                                'embedding_model': embedding_client.model,
+                                'token_count': excel_chunker._estimate_token_count(chunk_text),
+                            },
+                            'node_type': excel_chunk.get('node_type', 'detail'),
+                            'embedding': embedding,
+                        }
+                        chunks.append(chunk_dict)
+
+                    # Persist Excel chunks into PostgreSQL + Qdrant (idempotent)
+                    try:
+                        from django.apps import apps
+                        DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+                        Document = apps.get_model('documents', 'Document')
+                        DocumentEmbedding = apps.get_model('documents', 'DocumentEmbedding')
+
+                        doc_obj = Document.objects.get(pk=context.document_id)
+
+                        persisted = []
+                        prev_chunk_obj = None
+                        db_chunk_index = 0
+
+                        for c in chunks:
+                            try:
+                                c_text = c.get('text', '')
+                                c_meta = c.get('metadata') or {}
+                                page_number = c.get('page_number', 1)
+                                # idempotency via content hash
+                                content_hash = hashlib.md5(c_text.encode()).hexdigest()
+                                persisted_meta = {
+                                    **c_meta,
+                                    'content_hash': content_hash,
+                                    'source': 'excel_chunker_v2',
+                                }
+
+                                chunk_obj, created = DocumentChunk.objects.get_or_create(
+                                    document_id=context.document_id,
+                                    page_number=page_number,
+                                    chunk_index=c.get('chunk_index', db_chunk_index),
+                                    node_type='detail',
+                                    metadata__content_hash=content_hash,
+                                    defaults={
+                                        'content': c_text,
+                                        'token_count': persisted_meta.get('token_count', excel_chunker._estimate_token_count(c_text)),
+                                        'parent_node': None,
+                                        'prev_chunk': prev_chunk_obj,
+                                        'metadata': persisted_meta,
+                                    }
+                                )
+
+                                vector_id = None
+                                if created:
+                                    # Store in Qdrant
+                                    embedding_vec = c.get('embedding')
+                                    if embedding_vec:
+                                        qdrant_payload = {
+                                            'document_id': str(context.document_id),
+                                            'chunk_id': str(chunk_obj.id),
+                                            'chunk_index': c.get('chunk_index', db_chunk_index),
+                                            'text': c_text[:500],
+                                            'text_preview': c_text[:200],
+                                            'node_type': 'detail',
+                                            'page_number': page_number,
+                                            'token_count': persisted_meta.get('token_count', 0),
+                                            'sheet_name': persisted_meta.get('sheet_name'),
+                                            'row_number': persisted_meta.get('row_number') or persisted_meta.get('row_start') or persisted_meta.get('row_idx'),
+                                            'access_scope': getattr(doc_obj, 'access_scope', 'company'),
+                                        }
+                                        try:
+                                            vector_id = qdrant_client.add_embedding(
+                                                embedding=embedding_vec,
+                                                chunk_id=str(chunk_obj.id),
+                                                payload=qdrant_payload
+                                            )
+                                            chunk_obj.vector_id = vector_id
+                                            chunk_obj.save(update_fields=['vector_id'])
+
+                                            # Save embedding row
+                                            embedding_json = json.dumps(embedding_vec.tolist() if hasattr(embedding_vec, 'tolist') else embedding_vec)
+                                            DocumentEmbedding.objects.create(
+                                                chunk=chunk_obj,
+                                                qdrant_vector_id=vector_id,
+                                                embedding_vector=embedding_json,
+                                                embedding_dimension=len(embedding_vec) if hasattr(embedding_vec, '__len__') else 0,
+                                                embedding_model=getattr(embedding_client, 'model', 'bge-m3'),
+                                            )
+                                        except Exception as e:
+                                            logger.warning(f"Failed to store embedding for chunk {chunk_obj.id}: {e}")
+                                else:
+                                    vector_id = chunk_obj.vector_id
+
+                                persisted.append({
+                                    'chunk_id': str(chunk_obj.id),
+                                    'vector_id': vector_id,
+                                    'page_number': page_number,
+                                    'chunk_index': chunk_obj.chunk_index,
+                                    'text': c_text,
+                                    'metadata': chunk_obj.metadata or persisted_meta,
+                                })
+
+                                if prev_chunk_obj and created:
+                                    prev_chunk_obj.next_chunk = chunk_obj
+                                    prev_chunk_obj.save(update_fields=['next_chunk'])
+
+                                prev_chunk_obj = chunk_obj
+                                db_chunk_index += 1
+                            except Exception as e:
+                                logger.error(f"Error persisting excel chunk: {e}", exc_info=True)
+                                continue
+
+                        # Replace in-memory chunks with persisted info for downstream stages
+                        chunks = persisted
+                    except Exception as e:
+                        logger.warning(f"Excel chunk persistence skipped/failed: {e}")
+                    
+                    self.logger.info(
+                        f"✅ Excel Chunker V2 completed: {len(chunks)} row-aware chunks "
+                        f"(each row = 1 chunk with full context)"
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        f"⚠️ Excel Chunker V2 failed: {e}. Falling back to standard chunker..."
+                    )
+                    chunks = None
+            else:
+                chunks = None
+            
+            # Fallback to standard chunker if Excel chunker not used or failed
+            if chunks is None:
+                chunks = chunker.chunk_and_embed_enhanced(
+                    text=text,
+                    document_id=context.document_id,
+                    embedding_client=embedding_client,
+                    qdrant_client=qdrant_client,
+                    metadata={
+                        'file_type': context.metadata.get('file_extension', ''),
+                        'page_count': page_count,
+                        'word_count': len(text.split()) if text else 0,
+                        'source_name': os.path.basename(context.file_path),
+                        'raptor_applied': should_apply_raptor_pre,
+                        'spreadsheet': context.metadata.get('spreadsheet'),
+                    },
+                    page_aware_text=page_aware_for_chunking,
+                    generate_summaries=generate_summaries,
+                    summary_mode='async'
+                )
+            
             chunk_ms = (time.monotonic() - t_chunk_start) * 1000
             
             if not chunks:

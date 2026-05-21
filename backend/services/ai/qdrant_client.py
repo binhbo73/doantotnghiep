@@ -67,9 +67,21 @@ class QdrantClient:
             if not vector_id:
                 vector_id = str(uuid.uuid4())
 
-            point = {"id": vector_id, "vector": embedding, "payload": payload or {}}
+            # sanitize payload: convert non-JSON-serializable types like UUID to str
+            def _sanitize(obj):
+                if isinstance(obj, uuid.UUID):
+                    return str(obj)
+                if isinstance(obj, dict):
+                    return {k: _sanitize(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [_sanitize(v) for v in obj]
+                return obj
+
+            safe_payload = _sanitize(payload or {})
             if chunk_id:
-                point["payload"]["chunk_id"] = chunk_id
+                safe_payload["chunk_id"] = str(chunk_id)
+
+            point = {"id": vector_id, "vector": embedding, "payload": safe_payload}
 
             response = self._request_with_retry(
                 "PUT", f"{self.url}/collections/{self.collection}/points",

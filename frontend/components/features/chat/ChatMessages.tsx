@@ -25,12 +25,21 @@ export interface Message {
         chunk_index?: number
         line_start?: number
         line_end?: number
+        row_start?: number
+        row_end?: number
         start_char?: number
         end_char?: number
         document_id?: string
         chunk_id?: string
         source?: string
         score?: number
+        confidence?: number
+        grounding_score?: number
+        overlap_score?: number
+        retrieval_score?: number
+        critical_facts?: string[]
+        matched_facts?: string[]
+        missing_facts?: string[]
         url?: string
         type?: string
         document_title?: string
@@ -58,11 +67,38 @@ export interface Message {
             context_text?: string | null
         }
     }[]
+    grounding?: {
+        grounded?: boolean
+        grounding_score?: number
+        citation_coverage?: number
+        avg_similarity?: number
+        revised?: boolean
+        warning_visible?: boolean
+        ungrounded_claims?: unknown[]
+        exact_unsupported_claims?: unknown[]
+        claims?: CitationAttribution[]
+    }
+    factAttribution?: CitationAttribution[]
     timestamp?: Date
     isLoading?: boolean
 }
 
 type Citation = NonNullable<Message['citations']>[number]
+
+export interface CitationAttribution {
+    claim_index?: number
+    claim?: string
+    citation_numbers?: Array<number | string>
+    best_citation?: number | string | null
+    document_id?: string
+    chunk_id?: string
+    page?: string | number | null
+    grounded?: boolean
+    grounding_score?: number
+    confidence?: number
+    matched_facts?: string[]
+    missing_facts?: string[]
+}
 
 type MessageContentBlock =
     | { type: 'text'; content: string }
@@ -998,6 +1034,8 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                             ...citation,
                                             answer_context: getUsableAnswerContext(message.content, citation, citationIndex),
                                         }))}
+                                        grounding={message.grounding}
+                                        factAttribution={message.factAttribution || message.grounding?.claims || []}
                                         isLoading={message.isLoading}
                                         onCitationClick={handleOpenCitation}
                                     />

@@ -181,10 +181,15 @@ RAG_CONTEXT_MAX_CHUNKS_LIST = int(os.environ.get("RAG_CONTEXT_MAX_CHUNKS_LIST", 
 RAG_CONTEXT_NEIGHBOR_BEFORE_LIST = int(os.environ.get("RAG_CONTEXT_NEIGHBOR_BEFORE_LIST", "1"))
 RAG_CONTEXT_NEIGHBOR_AFTER_LIST = int(os.environ.get("RAG_CONTEXT_NEIGHBOR_AFTER_LIST", "4"))
 QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]
-QUERY_REWRITE_LLM_ENABLED = os.environ.get("QUERY_REWRITE_LLM_ENABLED", "true").lower() in ["true", "1", "yes"]
-RAG_HYDE_ENABLED = os.environ.get("RAG_HYDE_ENABLED", "true").lower() in ["true", "1", "yes"]
-RAG_QUERY_DECOMPOSITION_ENABLED = os.environ.get("RAG_QUERY_DECOMPOSITION_ENABLED", "true").lower() in ["true", "1", "yes"]
-RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED = os.environ.get("RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED", "true").lower() in ["true", "1", "yes"]
+QUERY_REWRITE_LLM_ENABLED = os.environ.get("QUERY_REWRITE_LLM_ENABLED", "false").lower() in ["true", "1", "yes"]
+RAG_HYDE_ENABLED = os.environ.get("RAG_HYDE_ENABLED", "false").lower() in ["true", "1", "yes"]
+RAG_QUERY_DECOMPOSITION_ENABLED = os.environ.get("RAG_QUERY_DECOMPOSITION_ENABLED", "false").lower() in ["true", "1", "yes"]
+RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED = os.environ.get("RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED", "false").lower() in ["true", "1", "yes"]
+RAG_GROUNDING_REVISION_ENABLED = os.environ.get("RAG_GROUNDING_REVISION_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_GROUNDING_REVISION_MAX_TOKENS = int(os.environ.get("RAG_GROUNDING_REVISION_MAX_TOKENS", "768"))
+RAG_GROUNDING_VISIBLE_WARNING_ENABLED = os.environ.get("RAG_GROUNDING_VISIBLE_WARNING_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_STREAM_VERIFY_BEFORE_EMIT = os.environ.get("RAG_STREAM_VERIFY_BEFORE_EMIT", "false").lower() in ["true", "1", "yes"]
+RAG_DEEP_MODE_ENABLE_LLM_STEPS = os.environ.get("RAG_DEEP_MODE_ENABLE_LLM_STEPS", "true").lower() in ["true", "1", "yes"]
 RAG_PROMPT_RESERVED_TOKENS = int(os.environ.get("RAG_PROMPT_RESERVED_TOKENS", "800"))
 RAG_CONTEXT_CHARS_PER_TOKEN = float(os.environ.get("RAG_CONTEXT_CHARS_PER_TOKEN", "3.2"))
 
@@ -348,6 +353,8 @@ RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD = os.environ.get("RAG_QUEUE_SECTION_SUMMAR
 RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD = os.environ.get("RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 RAG_RAPTOR_BUILD_WORKERS = int(os.environ.get("RAG_RAPTOR_BUILD_WORKERS", "1"))
 RAG_VECTORIZE_PAGE_SECTIONS = os.environ.get("RAG_VECTORIZE_PAGE_SECTIONS", "false").lower() in ["true", "1", "yes"]
+RAG_CONTEXTUAL_EMBEDDING_PREFIX_ENABLED = os.environ.get("RAG_CONTEXTUAL_EMBEDDING_PREFIX_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_CONTEXTUAL_EMBEDDING_PREFIX_CHARS = int(os.environ.get("RAG_CONTEXTUAL_EMBEDDING_PREFIX_CHARS", "360"))
 RAG_RAPTOR_TASK_TIME_LIMIT = int(os.environ.get("RAG_RAPTOR_TASK_TIME_LIMIT", "1800"))
 RAG_RAPTOR_TASK_SOFT_TIME_LIMIT = int(os.environ.get("RAG_RAPTOR_TASK_SOFT_TIME_LIMIT", "1500"))
 RAG_SPREADSHEET_RAPTOR_ENABLED = os.environ.get("RAG_SPREADSHEET_RAPTOR_ENABLED", "true").lower() in ["true", "1", "yes"]
@@ -383,5 +390,4 @@ VL_MODEL_TIMEOUT = int(os.environ.get("VL_MODEL_TIMEOUT", "120"))
 VL_MODEL_MAX_TOKENS = int(os.environ.get("VL_MODEL_MAX_TOKENS", "256"))
 VL_MODEL_TEMPERATURE = float(os.environ.get("VL_MODEL_TEMPERATURE", "0.3"))
 
-# Query Rewriter (P2#10)
-QUERY_REWRITE_ENABLED = os.environ.get("QUERY_REWRITE_ENABLED", "true").lower() in ["true", "1", "yes"]
+# Query rewrite settings are defined with the main RAG settings above.

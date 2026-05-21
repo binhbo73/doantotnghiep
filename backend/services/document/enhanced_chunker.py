@@ -266,8 +266,12 @@ class EnhancedDocumentChunker:
                     prev_chunk_obj = page_container
                     db_chunk_index += 1
 
-                # P1#5: Batch embed all chunk texts for this page
-                page_chunk_texts = [c['text'] for c in page_chunks]
+                # P1#5: Batch embed all chunk texts for this page. Optionally add a
+                # compact contextual prefix for embeddings only; DB/citations keep raw text.
+                page_chunk_texts = [
+                    self._build_contextual_embedding_text(c['text'], c, metadata)
+                    for c in page_chunks
+                ]
                 page_embeddings = self.base_chunker.batch_generate_embeddings(
                     page_chunk_texts, embedding_client
                 )
@@ -417,6 +421,42 @@ class EnhancedDocumentChunker:
         except Exception as e:
             logger.error(f"Error in enhanced chunk_and_embed: {str(e)}", exc_info=True)
             raise DocumentProcessingError(f"Enhanced chunking failed: {str(e)}")
+
+    def _build_contextual_embedding_text(
+        self,
+        chunk_text: str,
+        chunk_dict: Dict[str, Any],
+        document_metadata: Dict[str, Any],
+    ) -> str:
+        """Add stable document/page context to the embedding input only."""
+        if not getattr(settings, 'RAG_CONTEXTUAL_EMBEDDING_PREFIX_ENABLED', True):
+            return chunk_text
+
+        chunk_metadata = chunk_dict.get('metadata') or {}
+        parts = []
+        source_name = (document_metadata or {}).get('source_name')
+        if source_name:
+            parts.append(f"File: {source_name}")
+        page = chunk_dict.get('page_number') or chunk_metadata.get('page_number')
+        if page:
+            parts.append(f"Page: {page}")
+        sheet_name = chunk_metadata.get('sheet_name')
+        if sheet_name:
+            parts.append(f"Sheet: {sheet_name}")
+        row_start = chunk_metadata.get('row_start')
+        row_end = chunk_metadata.get('row_end')
+        if row_start:
+            row_text = f"Rows: {row_start}"
+            if row_end and row_end != row_start:
+                row_text += f"-{row_end}"
+            parts.append(row_text)
+
+        if not parts:
+            return chunk_text
+
+        max_prefix_chars = int(getattr(settings, 'RAG_CONTEXTUAL_EMBEDDING_PREFIX_CHARS', 360))
+        prefix = " | ".join(parts)[:max_prefix_chars]
+        return f"{prefix}\n\n{chunk_text}"
     
     def _enrich_chunks_with_pages(
         self,

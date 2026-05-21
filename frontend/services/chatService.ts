@@ -57,6 +57,13 @@ export interface CitationDTO {
     chunk_id?: string
     source?: string
     score?: number
+    confidence?: number
+    grounding_score?: number
+    overlap_score?: number
+    retrieval_score?: number
+    critical_facts?: string[]
+    matched_facts?: string[]
+    missing_facts?: string[]
     url?: string
     type?: string
     asset_id?: string
@@ -259,7 +266,8 @@ export class ChatService {
         documentIds?: string[],
         folderIds?: string[],
         onStatus?: (status: string) => void,
-        onCitations?: (citations: any[]) => void
+        onCitations?: (citations: any[]) => void,
+        ragMode: 'fast' | 'deep' = 'fast'
     ): Promise<void> {
         try {
             const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
@@ -283,6 +291,8 @@ export class ChatService {
                     // Backend sẽ ưu tiên danh sách này; nếu rỗng thì đọc từ ConversationAttachedDocument.
                     ...(documentIds?.length ? { document_ids: documentIds } : {}),
                     ...(folderIds?.length ? { folder_ids: folderIds } : {}),
+                    // RAG mode: 'fast' or 'deep' — allows backend to enable heavier grounding steps
+                    rag_mode: ragMode,
                 })
             })
 

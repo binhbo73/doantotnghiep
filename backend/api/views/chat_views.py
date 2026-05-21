@@ -941,6 +941,9 @@ class ChatStreamView(View):
         # Nếu rỗng, ChatService sẽ fallback đọc từ ConversationAttachedDocument trong DB.
         document_ids = body.get('document_ids') or []
         folder_ids = body.get('folder_ids') or []
+        rag_mode = str(body.get('rag_mode') or body.get('retrieval_mode') or 'fast').lower()
+        if rag_mode not in {'fast', 'deep'}:
+            rag_mode = 'fast'
         # Đảm bảo là list[str]
         if not isinstance(document_ids, list):
             document_ids = []
@@ -989,6 +992,7 @@ class ChatStreamView(View):
                             conversation_id=conversation_id,
                             document_ids=document_ids,
                             folder_ids=folder_ids,
+                            rag_mode=rag_mode,
                         ):
                             # put_nowait sẽ raise nếu queue đầy → dùng run_coroutine_threadsafe
                             future = _asyncio.run_coroutine_threadsafe(

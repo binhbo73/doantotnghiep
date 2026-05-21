@@ -27,6 +27,11 @@ class QueryIntent(str, Enum):
     PROCEDURAL = "procedural"
     DEFINITIONAL = "definitional"
     IMAGE = "image"
+    # Excel/Spreadsheet intents (new)
+    SPREADSHEET_CELL = "spreadsheet_cell"
+    SPREADSHEET_ROW = "spreadsheet_row"
+    SPREADSHEET_COLUMN = "spreadsheet_column"
+    SPREADSHEET_LOOKUP = "spreadsheet_lookup"
 
 
 @dataclass
@@ -136,6 +141,51 @@ INTENT_CONFIG: Dict[QueryIntent, RetrievalConfig] = {
         use_raptor=False,
         prioritize_assets=True,
     ),
+    # Spreadsheet intents - specialized config for cell-level retrieval
+    QueryIntent.SPREADSHEET_CELL: RetrievalConfig(
+        top_k=1,
+        sparse_k=5,
+        neighbor_before=0,
+        neighbor_after=0,
+        max_context_chunks=1,
+        snippet_chars=200,
+        mmr_lambda=1.0,
+        dense_weight=0.0,
+        use_raptor=False,
+    ),
+    QueryIntent.SPREADSHEET_ROW: RetrievalConfig(
+        top_k=1,
+        sparse_k=5,
+        neighbor_before=0,
+        neighbor_after=0,
+        max_context_chunks=1,
+        snippet_chars=1000,
+        mmr_lambda=1.0,
+        dense_weight=0.0,
+        use_raptor=False,
+    ),
+    QueryIntent.SPREADSHEET_COLUMN: RetrievalConfig(
+        top_k=100,
+        sparse_k=100,
+        neighbor_before=0,
+        neighbor_after=0,
+        max_context_chunks=100,
+        snippet_chars=2000,
+        mmr_lambda=1.0,
+        dense_weight=0.0,
+        use_raptor=False,
+    ),
+    QueryIntent.SPREADSHEET_LOOKUP: RetrievalConfig(
+        top_k=1,
+        sparse_k=10,
+        neighbor_before=0,
+        neighbor_after=0,
+        max_context_chunks=1,
+        snippet_chars=1500,
+        mmr_lambda=0.9,
+        dense_weight=0.1,
+        use_raptor=False,
+    ),
 }
 
 
@@ -150,6 +200,10 @@ class QueryIntentClassifier:
         QueryIntent.LIST: 45,
         QueryIntent.ANALYTICAL: 40,
         QueryIntent.DEFINITIONAL: 35,
+        QueryIntent.SPREADSHEET_LOOKUP: 75,
+        QueryIntent.SPREADSHEET_CELL: 72,
+        QueryIntent.SPREADSHEET_ROW: 71,
+        QueryIntent.SPREADSHEET_COLUMN: 70,
     }
 
     PATTERNS: Dict[QueryIntent, List[Tuple[str, int]]] = {
@@ -164,18 +218,20 @@ class QueryIntentClassifier:
             (r"\b(giua\s+.+\s+va\s+.+|.+\s+voi\s+.+|hon|kem|vs)\b", 1),
         ],
         QueryIntent.PROCEDURAL: [
+            (r"^\s*(?:cau|cau hoi)\s+\d+\s*[:.]?\s*(?:cach|lam the nao|huong dan|quy trinh|cac buoc)\b", 4),
             (r"\b(cach|lam the nao|huong dan|thuc hien nhu the nao)\b", 2),
             (r"\b(quy trinh|cac buoc|tung buoc|thu tuc|workflow)\b", 3),
             (r"\b(bat dau|thuc hien|trien khai|cai dat|thiet lap|cau hinh)\b", 1),
         ],
         QueryIntent.LIST: [
-            (r"\b(liet ke|ke ra|neu ra|trinh bay|tong hop|danh sach)\b", 5),
+            (r"\b(liet ke|ke ra|neu ra|tong hop|danh sach)\b", 5),
+            (r"\btrinh bay\b", 2),
             (r"\b(tat ca|toan bo|day du|chi tiet)\b", 2),
             (r"\b(bao gom|gom nhung gi|co nhung gi|nhung muc nao|cac loai|cac muc)\b", 3),
-            (r"^\s*\d+\s*[/.)-]\s*", 2),
+            (r"^\s*(?!cau\b|cau hoi\b)\d+\s*[/.)-]\s*", 2),
         ],
         QueryIntent.TABLE: [
-            (r"\b(bang|table|hang cot|cot|dong|row|column|grid|spreadsheet)\b", 3),
+            (r"\b(bang|table|hang cot|cot|dong|hang|row|column|grid|spreadsheet)\b", 3),
             (r"\b(xem|trich|lay|in)\s+bang\b", 3),
             (r"\b(bang\s+thong tin|bang\s+du lieu|bang\s+so lieu|bang\s+thu thuat ngu)\b", 4),
             (r"\b(tu dien|glossary|terminology|khai niem|dien giai)\b", 4),
@@ -184,6 +240,7 @@ class QueryIntentClassifier:
             (r"\b(bang\s+\d+)\b", 2),
         ],
         QueryIntent.ANALYTICAL: [
+            (r"^\s*(?:cau|cau hoi)\s+\d+\s*[:.]?\s*(?:tai sao|vi sao|phan tich|danh gia|giai thich|nhan xet)\b", 4),
             (r"\b(tai sao|vi sao|ly do|nguyen nhan)\b", 3),
             (r"\b(phan tich|danh gia|giai thich|nhan xet|binh luan)\b", 3),
             (r"\b(nguyen ly|co che|anh huong|he qua|tac dong)\b", 2),
@@ -191,6 +248,30 @@ class QueryIntentClassifier:
         QueryIntent.DEFINITIONAL: [
             (r"\b(la gi|dinh nghia|khai niem)\b", 3),
             (r"\b(duoc hieu|hieu nhu the nao|nghia la gi)\b", 2),
+        ],
+        QueryIntent.SPREADSHEET_CELL: [
+            # Accept both upper and lower-case column letters (A-Z or a-z)
+            (r"\b(?:o|ô|cell)\s*([A-Za-z]{1,3}\d{1,5})\b", 4),
+            (r"([A-Za-z]{1,3}\d{1,5})\s+(?:la gi|chua gi|gia tri)", 4),
+            (r"(?:gia tri|content|noi dung)\s+(?:o|cell)\s*([A-Za-z]{1,3}\d{1,5})", 3),
+        ],
+        QueryIntent.SPREADSHEET_ROW: [
+            (r"\b(?:cac\s+)?(?:dong|hang|row)(?:\s+excel)?\s*(\d+)\s*(?:den|toi|-)\s*(\d+)\b", 8),
+            (r"\b(?:dong|hang|row)(?:\s+excel)?\s*(\d+)\b", 6),
+            (r"(\d+)\s+(?:dong|hang|row)(?:\s+excel)?", 4),
+            (r"(?:dong|hang|row)(?:\s+excel)?\s*(\d+)\s+(?:la gi|co gi|bang|noi dung)", 3),
+        ],
+        QueryIntent.SPREADSHEET_COLUMN: [
+            # Accept both upper and lower-case column letters
+            (r"\b(?:cot|column)\s*([A-Za-z]{1,3})\b", 4),
+            (r"([A-Za-z]{1,3})\s+(?:cot|column)", 4),
+            (r"(?:danh sach|list)\s+(?:cot|column)\s*([A-Za-z]{1,3})", 3),
+        ],
+        QueryIntent.SPREADSHEET_LOOKUP: [
+            (r"(?:bang|table|thong tin)\s+(?:cua|cho)\s+(.+?)(?:\s+la|$)", 5),
+            (r"(?:tim|tim kiem|search|lookup)\s+(.+?)(?:\s+trong|bao nhieu|$)", 5),
+            (r"(?:chi tiet|xem|show)\s+(?:cua|cho|tung)?\s*(.+)", 3),
+            (r"([A-Za-z0-9_]+)\s+(?:co|bao nhieu|gia|luong|bao)", 2),
         ],
     }
 

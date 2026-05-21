@@ -195,12 +195,6 @@ class DocumentChunker:
                 raise DocumentProcessingError("Empty text cannot be chunked")
             
             merged_metadata = metadata or {}
-            page_aware_metadata = getattr(page_aware_text, 'metadata', {}) or {}
-            if page_aware_metadata:
-                merged_metadata = {
-                    **merged_metadata,
-                    'page_aware_metadata': page_aware_metadata,
-                }
             file_type = (merged_metadata.get('file_type') or '').lower()
             self._apply_chunk_profile(file_type)
 
@@ -269,8 +263,7 @@ class DocumentChunker:
         """
         try:
             if not page_aware_text:
-                logger.warning("No page-aware text provided, falling back to regular chunking")
-                return self.chunk_text(page_aware_text.text if hasattr(page_aware_text, 'text') else '', metadata)
+                raise DocumentProcessingError("page_aware_text is required for page-aware chunking")
             
             text = page_aware_text.text
             boundaries = page_aware_text.boundaries

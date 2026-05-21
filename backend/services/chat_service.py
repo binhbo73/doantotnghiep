@@ -394,6 +394,292 @@ Cách làm việc:
             logging.getLogger(__name__).warning(f"[GROUNDING] {len(ungrounded)}/{len(claims)} ungrounded avg={avg_sim:.3f}")
         return {'grounded': grounded, 'ungrounded_claims': ungrounded, 'avg_similarity': round(avg_sim, 3)}
 
+    def _verify_answer_grounding_v2(self, answer_text, candidates, threshold=0.45):
+        """Verify citation coverage, exact facts and semantic support."""
+        import math
+
+        empty_result = {
+            'grounded': True,
+            'grounding_score': 1.0,
+            'ungrounded_claims': [],
+            'avg_similarity': 1.0,
+            'citation_coverage': 1.0,
+            'exact_unsupported_claims': [],
+        }
+        if not answer_text or not candidates:
+            return empty_result
+
+        claims = self._extract_answer_claims(answer_text)
+        if not claims:
+            return empty_result
+
+        chunk_texts = [c.get('snippet') or c.get('citation_excerpt') or '' for c in candidates[:10]]
+        chunk_texts = [t for t in chunk_texts if t]
+        if not chunk_texts:
+            return empty_result
+
+        claim_attributions = self._build_fact_attribution(answer_text, candidates)
+        cited_claims = [item for item in claim_attributions if item.get('citation_numbers')]
+        citation_coverage = len(cited_claims) / max(1, len(claims))
+
+        candidates_by_citation = {
+            int(c.get('citation_id')): c
+            for c in candidates
+            if str(c.get('citation_id') or '').isdigit()
+        }
+        exact_unsupported = []
+        for claim in claims:
+            clean_claim = self._remove_citation_markup(claim)
+            critical_facts = self._extract_critical_facts(clean_claim)
+            if not critical_facts:
+                continue
+            cited_numbers = self._extract_referenced_citation_numbers(claim)
+            evidence_candidates = [
+                candidates_by_citation[num]
+                for num in cited_numbers
+                if num in candidates_by_citation
+            ] or candidates[:10]
+            supported = any(
+                self._critical_facts_supported(
+                    c.get('citation_excerpt') or c.get('snippet') or '',
+                    clean_claim,
+                )
+                for c in evidence_candidates
+            )
+            if not supported:
+                exact_unsupported.append({
+                    'claim': clean_claim[:200],
+                    'missing_facts': critical_facts[:12],
+                })
+
+        try:
+            claim_embs = [self.embedding.create_embedding(cl) for cl in claims]
+            chunk_embs = [self.embedding.create_embedding(ct) for ct in chunk_texts]
+        except Exception as e:
+            logger.warning(f"[GROUNDING] Embedding failed: {e}")
+            grounded = not exact_unsupported and citation_coverage >= 0.65
+            return {
+                'grounded': grounded,
+                'grounding_score': round(citation_coverage if grounded else min(citation_coverage, 0.49), 3),
+                'ungrounded_claims': exact_unsupported,
+                'avg_similarity': 1.0,
+                'citation_coverage': round(citation_coverage, 3),
+                'exact_unsupported_claims': exact_unsupported,
+                'claims': claim_attributions,
+            }
+
+        sims = []
+        ungrounded = []
+        for i, ce in enumerate(claim_embs):
+            if not ce:
+                continue
+            max_sim = 0.0
+            for che in chunk_embs:
+                if not che:
+                    continue
+                dot = sum(a * b for a, b in zip(ce, che))
+                na = math.sqrt(sum(a * a for a in ce))
+                nb = math.sqrt(sum(b * b for b in che))
+                sim = dot / (na * nb) if na and nb else 0.0
+                max_sim = max(max_sim, sim)
+            sims.append(max_sim)
+            if max_sim < threshold:
+                ungrounded.append({'claim': claims[i][:200], 'similarity': round(max_sim, 3)})
+
+        avg_sim = sum(sims) / len(sims) if sims else 1.0
+        coverage_ok = citation_coverage >= 0.65
+        grounded = len(ungrounded) == 0 and not exact_unsupported and coverage_ok
+        grounding_score = min(avg_sim, citation_coverage if coverage_ok else citation_coverage * 0.8)
+        if not grounded:
+            logger.warning(
+                f"[GROUNDING] semantic={len(ungrounded)}/{len(claims)} "
+                f"exact={len(exact_unsupported)} citation_coverage={citation_coverage:.3f} avg={avg_sim:.3f}"
+            )
+        return {
+            'grounded': grounded,
+            'grounding_score': round(grounding_score, 3),
+            'ungrounded_claims': ungrounded + exact_unsupported,
+            'avg_similarity': round(avg_sim, 3),
+            'citation_coverage': round(citation_coverage, 3),
+            'exact_unsupported_claims': exact_unsupported,
+            'claims': claim_attributions,
+        }
+
+    def _extract_answer_claims(self, answer_text: str) -> List[str]:
+        """Split an answer into compact claim units for attribution checks."""
+        cleaned = self._strip_trailing_source_lines(answer_text or '')
+        claims = []
+        for block in re.split(r'\n+', cleaned):
+            block = block.strip()
+            if not block:
+                continue
+            if re.match(r'^\s*(?:[-+*]|\d+\.)\s+', block):
+                claims.append(block)
+                continue
+            claims.extend(
+                part.strip()
+                for part in re.split(r'(?<=[.!?])\s+', block)
+                if len(part.strip()) > 20
+            )
+        return claims
+
+    def _build_fact_attribution(self, answer_text: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Map each answer claim to the best supporting citation candidate."""
+        claims = self._extract_answer_claims(answer_text)
+        if not claims:
+            return []
+
+        by_citation = {
+            int(c.get('citation_id')): c
+            for c in candidates
+            if str(c.get('citation_id') or '').isdigit()
+        }
+        attributions = []
+        for index, claim in enumerate(claims, start=1):
+            clean_claim = self._remove_citation_markup(claim)
+            citation_numbers = sorted(self._extract_referenced_citation_numbers(claim))
+            candidate_pool = [
+                by_citation[number]
+                for number in citation_numbers
+                if number in by_citation
+            ] or candidates[:10]
+
+            best_candidate = None
+            best_score = -1.0
+            best_quality: Dict[str, Any] = {}
+            for candidate in candidate_pool:
+                quality = self._citation_quality_metrics(candidate, clean_claim, answer_text)
+                score = quality['grounding_score'] + quality['overlap_score'] + (0.25 if not quality['missing_facts'] else 0)
+                if score > best_score:
+                    best_score = score
+                    best_candidate = candidate
+                    best_quality = quality
+
+            grounded = bool(
+                best_candidate
+                and best_quality
+                and best_quality.get('grounding_score', 0) >= 0.45
+                and not best_quality.get('missing_facts')
+            )
+            attributions.append({
+                'claim_index': index,
+                'claim': clean_claim[:500],
+                'citation_numbers': citation_numbers,
+                'best_citation': best_candidate.get('citation_id') if best_candidate else None,
+                'document_id': str(best_candidate.get('document_id')) if best_candidate and best_candidate.get('document_id') else '',
+                'chunk_id': str(best_candidate.get('chunk_id')) if best_candidate and best_candidate.get('chunk_id') else '',
+                'page': best_candidate.get('page') if best_candidate else None,
+                'grounded': grounded,
+                'grounding_score': best_quality.get('grounding_score', 0.0),
+                'confidence': best_quality.get('confidence', 0.0),
+                'matched_facts': best_quality.get('matched_facts', []),
+                'missing_facts': best_quality.get('missing_facts', []),
+            })
+
+        return attributions
+
+    def _revise_answer_for_grounding(
+        self,
+        query: str,
+        answer_text: str,
+        context_str: str,
+        grounding: Dict[str, Any],
+    ) -> str:
+        """Ask the model to rewrite an ungrounded answer using only provided evidence."""
+        if not context_str or not getattr(settings, 'RAG_GROUNDING_REVISION_ENABLED', True):
+            return answer_text
+
+        issues = grounding.get('ungrounded_claims') or grounding.get('exact_unsupported_claims') or []
+        issue_lines = []
+        for issue in issues[:8]:
+            claim = issue.get('claim', '') if isinstance(issue, dict) else str(issue)
+            missing = issue.get('missing_facts', []) if isinstance(issue, dict) else []
+            suffix = f" | missing facts: {', '.join(map(str, missing[:8]))}" if missing else ''
+            issue_lines.append(f"- {claim[:240]}{suffix}")
+
+        revision_prompt = (
+            "CAU HOI CAN TRA LOI:\n"
+            f"{query}\n\n"
+            "CAU TRA LOI BAN DAU CO DAU HIEU THIEU CAN CU HOAC TRICH DAN KHONG DU:\n"
+            f"{answer_text}\n\n"
+            "CAC VAN DE CAN SUA:\n"
+            + ("\n".join(issue_lines) if issue_lines else "- Citation coverage/grounding thap")
+            + "\n\n"
+            f"{context_str}\n\n"
+            "Hay viet lai cau tra loi bang tieng Viet co dau, ngan gon va dung tai lieu. "
+            "Chi giu cac thong tin co trong NGUON, moi y quan trong phai co citation [n]. "
+            "Neu tai lieu khong du thong tin, noi ro phan nao khong thay trong tai lieu. "
+            "Khong them kien thuc ben ngoai."
+        )
+
+        try:
+            revised = self.llama.chat_complete(
+                messages=[{'role': 'user', 'content': revision_prompt}],
+                system_prompt=self.RAG_SYSTEM_PROMPT,
+                max_tokens=getattr(settings, 'RAG_GROUNDING_REVISION_MAX_TOKENS', 768),
+                temperature=0.1,
+            )
+            revised = (revised or '').strip()
+            return revised if revised else answer_text
+        except Exception as e:
+            logger.warning(f"[GROUNDING] Answer revision failed: {e}")
+            return answer_text
+
+    def _append_grounding_warning(self, answer_text: str, grounding: Dict[str, Any]) -> str:
+        """Make weak grounding visible to the end user, not only metadata."""
+        if not getattr(settings, 'RAG_GROUNDING_VISIBLE_WARNING_ENABLED', True):
+            grounding['warning_visible'] = False
+            return answer_text
+        if grounding.get('grounded', True):
+            grounding['warning_visible'] = False
+            return answer_text
+        if 'chưa đủ bằng chứng trực tiếp' in (answer_text or '').lower():
+            grounding['warning_visible'] = True
+            return answer_text
+
+        grounding['warning_visible'] = True
+        warning = (
+            "\n\nLưu ý: Một số ý trong câu trả lời chưa đủ bằng chứng trực tiếp "
+            "trong tài liệu. Vui lòng kiểm tra phần nguồn/citation; các claim thiếu "
+            "căn cứ đã được đánh dấu trong metadata."
+        )
+        return f"{(answer_text or '').rstrip()}{warning}"
+
+    def _finalize_rag_answer(
+        self,
+        query: str,
+        answer_text: str,
+        context_str: str,
+        candidates: List[Dict[str, Any]],
+        allow_revision: bool = True,
+    ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
+        """Build citations and revise the answer once when grounding fails."""
+        if not candidates:
+            return answer_text, [], {
+                'grounded': True,
+                'grounding_score': 1.0,
+                'citation_coverage': 1.0,
+                'claims': [],
+            }
+
+        grounding = self._verify_answer_grounding_v2(answer_text, candidates)
+        final_answer = answer_text
+        revised = False
+        if allow_revision and not grounding.get('grounded', True):
+            revised_answer = self._revise_answer_for_grounding(query, answer_text, context_str, grounding)
+            if revised_answer and revised_answer != answer_text:
+                revised = True
+                final_answer = revised_answer
+                grounding = self._verify_answer_grounding_v2(final_answer, candidates)
+
+        citations = self._build_citation_payload(candidates, final_answer, query)
+        grounding['revised'] = revised
+        final_answer = self._append_grounding_warning(final_answer, grounding)
+        citations.append({'_grounding': grounding})
+        citations.append({'_fact_attribution': grounding.get('claims', [])})
+        self._feedback_log_grounding(query, grounding)
+        return final_answer, citations, grounding
+
     def _is_list_style_query(self, query: str) -> bool:
         """Detect questions that need comprehensive extraction, not a short fact."""
         q = self._normalize_query_text(query)
@@ -710,6 +996,9 @@ Cách làm việc:
             r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
             r'\b[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}\b',
             r'https?://[^\s\])]+',
+            r'\b\d+(?:[.,]\d+)?\s*(?:%|vnd|usd|eur|kg|g|km|m|cm|mm|gb|mb|kb|ngay|thang|nam|gio|phut|lan|diem|trieu|ty)(?=\s|$|[.,;:)\]])',
+            r'\b(?:19|20)\d{2}\b',
+            r'\b\d+(?:[.,]\d+)?\b',
         ]
         for pattern in patterns:
             facts.extend(match.group(0).strip() for match in re.finditer(pattern, text))
@@ -731,6 +1020,64 @@ Cách làm việc:
 
         evidence_norm = self._normalize_query_text(evidence_text or '')
         return all(fact in evidence_norm for fact in critical_facts)
+
+    def _critical_fact_coverage(self, evidence_text: str, answer_context: str) -> Dict[str, Any]:
+        """Measure exact support for numbers, dates, URLs and similar facts."""
+        facts = self._extract_critical_facts(answer_context)
+        if not facts:
+            return {
+                'score': 1.0,
+                'facts': [],
+                'matched_facts': [],
+                'missing_facts': [],
+            }
+
+        evidence_norm = self._normalize_query_text(evidence_text or '')
+        matched = [fact for fact in facts if fact in evidence_norm]
+        missing = [fact for fact in facts if fact not in evidence_norm]
+        score = len(matched) / max(1, len(facts))
+        return {
+            'score': round(score, 3),
+            'facts': facts,
+            'matched_facts': matched,
+            'missing_facts': missing,
+        }
+
+    def _citation_quality_metrics(
+        self,
+        candidate: Dict[str, Any],
+        answer_context: str,
+        answer_text: str,
+    ) -> Dict[str, Any]:
+        """Score how strongly a citation supports the exact answer sentence."""
+        evidence = candidate.get('citation_excerpt') or candidate.get('snippet') or ''
+        reference = answer_context or self._remove_citation_markup(answer_text or '')
+        evidence_terms = {
+            term for term in re.split(r'\W+', self._normalize_query_text(evidence))
+            if len(term) >= 4
+        }
+        reference_terms = {
+            term for term in re.split(r'\W+', self._normalize_query_text(reference))
+            if len(term) >= 4
+        }
+        overlap_count = len(evidence_terms & reference_terms)
+        overlap_score = overlap_count / max(1, min(len(evidence_terms), len(reference_terms)))
+
+        raw_score = float(candidate.get('score', 0.0) or 0.0)
+        retrieval_score = max(0.0, min(1.0, raw_score if raw_score <= 1.0 else raw_score / (raw_score + 1.0)))
+        fact_coverage = self._critical_fact_coverage(evidence, answer_context)
+        grounding_score = (0.55 * overlap_score) + (0.45 * float(fact_coverage['score']))
+        confidence = (0.45 * retrieval_score) + (0.40 * grounding_score) + (0.15 if answer_context else 0.0)
+
+        return {
+            'confidence': round(max(0.0, min(1.0, confidence)), 3),
+            'grounding_score': round(max(0.0, min(1.0, grounding_score)), 3),
+            'overlap_score': round(max(0.0, min(1.0, overlap_score)), 3),
+            'retrieval_score': round(retrieval_score, 3),
+            'matched_facts': fact_coverage['matched_facts'],
+            'missing_facts': fact_coverage['missing_facts'],
+            'critical_facts': fact_coverage['facts'],
+        }
 
     def _build_source_label(
         self,
@@ -993,6 +1340,10 @@ Cách làm việc:
                     'document_title': doc_name_map.get(str(doc_id)),
                     'document_file_type': doc_file_type_map.get(str(doc_id)) or candidate.get('document_file_type'),
                     'score': round(float(candidate.get('score', 0) or 0), 3),
+                    'confidence': round(float(candidate.get('score', 0) or 0), 3),
+                    'grounding_score': round(float(candidate.get('score', 0) or 0), 3),
+                    'matched_facts': [],
+                    'missing_facts': [],
                     'asset': {
                         'id': asset_id,
                         'image_url': '/api/v1/assets/' + asset_id + '/image',
@@ -1120,6 +1471,7 @@ Cách làm việc:
                 line_end=line_end,
                 citation_id=citation_id,
             )
+            quality = self._citation_quality_metrics(candidate, answer_context, answer_text)
 
             citations.append({
                 'id': f"{document_id}:{chunk_id}",
@@ -1140,6 +1492,13 @@ Cách làm việc:
                 'type': candidate.get('document_type') or 'document',
                 'source': candidate.get('source', ''),
                 'score': round(float(candidate.get('score', 0) or 0), 3),
+                'confidence': quality['confidence'],
+                'grounding_score': quality['grounding_score'],
+                'overlap_score': quality['overlap_score'],
+                'retrieval_score': quality['retrieval_score'],
+                'critical_facts': quality['critical_facts'],
+                'matched_facts': quality['matched_facts'],
+                'missing_facts': quality['missing_facts'],
                 'url': f"/documents/{document_id}/download",
             })
 
@@ -1276,6 +1635,7 @@ Cách làm việc:
         conversation_history: List[Dict[str, Any]] = None,
         top_k: int = 4,  # Fix E: Giam tu 5 -> 4 de nhanh hon, it noise hon
         snippet_chars: int = 900,
+        rag_mode: str = 'fast',
     ) -> Tuple[str, List[Dict]]:
         """
         Thực hiện Hybrid RAG search (BM25 + Vector) → rerank → build context string.
@@ -1299,7 +1659,7 @@ Cách làm việc:
             router = self._get_router()
 
             # Truyền document_ids vào user_context để HybridRetriever / RAPTOR biết giới hạn
-            user_context = {'document_ids': resolved_doc_ids}
+            user_context = {'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'}
 
             # QueryRouter: quyết định dùng RAPTOR hay Hybrid, rồi rerank
             candidates = router.route(
@@ -1315,6 +1675,11 @@ Cách làm việc:
                 return '', []
 
             candidates = self._filter_front_matter_candidates(query, candidates)
+            is_spreadsheet_retrieval = any(
+                c.get('source') == 'spreadsheet'
+                or (c.get('metadata') or {}).get('spreadsheet_intent')
+                for c in candidates
+            )
 
             # Lấy thông tin tên tài liệu để gắn citation (batch query, tránh N+1)
             # Retrieval payloads only carry short previews. Fetch the selected
@@ -1323,19 +1688,21 @@ Cách làm việc:
             # Separate assets from chunks before neighbor expansion
             asset_candidates_ctx = [c for c in candidates if c.get('source') == 'asset']
             chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
-            chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
+            if not is_spreadsheet_retrieval:
+                chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
             candidates = self._deduplicate_candidates_by_content(chunk_candidates_ctx + asset_candidates_ctx)
             # Context stitching: merge sequential chunks into continuous blocks
-            candidates = self._stitch_sequential_chunks(candidates)
+            if not is_spreadsheet_retrieval:
+                candidates = self._stitch_sequential_chunks(candidates)
             # Self-RAG: relevance check, re-retrieve if too few relevant
-            relevance = self._self_rag_relevance_check(query, candidates)
-            if not relevance['passed'] and len(resolved_doc_ids) > 0:
+            relevance = {'passed': True} if is_spreadsheet_retrieval else self._self_rag_relevance_check(query, candidates)
+            if not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
                 logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
                 try:
                     router = self._get_router()
                     re_candidates = router.route(
                         query=query,
-                        user_context={'document_ids': resolved_doc_ids},
+                        user_context={'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'},
                         top_k=max(8, top_k * 2),
                         conversation_history=conversation_history,
                     )
@@ -1511,7 +1878,8 @@ Cách làm việc:
         user_id: int, 
         query: str, 
         conversation_id: int = None,
-        filters: Dict = None
+        filters: Dict = None,
+        rag_mode: str = 'fast',
     ) -> Tuple[str, Any]:
         """
         Thực hiện hỏi đáp trực tiếp (Direct Q&A) với hỗ trợ tài liệu nếu có.
@@ -1538,9 +1906,10 @@ Cách làm việc:
             resolved_ids = self._resolve_document_ids(
                 user_id=user_id,
                 conversation_id=conversation.id,
-                document_ids=[],
-                folder_ids=[],
+                document_ids=(filters or {}).get('document_ids') or [],
+                folder_ids=(filters or {}).get('folder_ids') or [],
             )
+            rag_mode = (filters or {}).get('rag_mode') or rag_mode or 'fast'
 
             # 4. Lấy lịch sử
             messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
@@ -1553,6 +1922,7 @@ Cách làm việc:
                 conversation_history=messages_for_llm,
                 top_k=self._get_rag_top_k(query, default_top_k=3),
                 snippet_chars=self._get_context_snippet_chars(query),
+                rag_mode=rag_mode,
             )
 
             # 5. Đính kèm tài liệu vào câu hỏi nếu có
@@ -1576,10 +1946,17 @@ Cách làm việc:
             )
 
             # 7. Lưu tin nhắn Bot
+            bot_response_text, citations, _grounding = self._finalize_rag_answer(
+                query=query,
+                answer_text=bot_response_text,
+                context_str=context_str,
+                candidates=rag_candidates,
+            )
+
             bot_message = self.message_repo.create_bot_message(
                 conversation_id=conversation.id,
                 content=bot_response_text,
-                metadata=self._build_citation_payload(rag_candidates, bot_response_text, query)
+                metadata=citations
             )
 
             return bot_response_text, bot_message
@@ -1595,6 +1972,7 @@ Cách làm việc:
         conversation_id: int = None,
         document_ids: List[str] = None,
         folder_ids: List[str] = None,
+        rag_mode: str = 'fast',
     ) -> Generator[str, None, None]:
         """
         Chat STREAM với Model — hỗ trợ RAG khi có tài liệu đính kèm.
@@ -1680,6 +2058,7 @@ Cách làm việc:
                     conversation_history=messages_for_llm,
                     top_k=self._get_rag_top_k(query, default_top_k=4),
                     snippet_chars=self._get_context_snippet_chars(query),
+                    rag_mode=rag_mode,
                 )
                 t5 = time.monotonic()
                 logger.debug(
@@ -1719,6 +2098,10 @@ Cách làm việc:
             full_response = ''
             first_chunk = True
             citations = []
+            verify_before_emit = use_rag and (
+                str(rag_mode or '').lower() == 'deep'
+                or getattr(settings, 'RAG_STREAM_VERIFY_BEFORE_EMIT', False)
+            )
             try:
                 for chunk in self.llama.chat_complete_stream(
                     messages=messages_with_context,
@@ -1733,18 +2116,23 @@ Cách làm việc:
                         )
                         first_chunk = False
                     full_response += chunk
-                    yield chunk
+                    if not verify_before_emit:
+                        yield chunk
 
 
                 # Sau khi stream text hoan tat, gui citation data qua SSE
                 # de frontend hien thi popup nguon tham khao ngay trong phien chat.
                 if full_response and rag_candidates:
                     try:
-                        citations = self._build_citation_payload(rag_candidates, full_response, query)
-                        # Answer grounding check + feedback logging
-                        grounding = self._verify_answer_grounding(full_response, rag_candidates)
-                        citations.append({'_grounding': grounding})
-                        self._feedback_log_grounding(query, grounding)
+                        full_response, citations, grounding = self._finalize_rag_answer(
+                            query=query,
+                            answer_text=full_response,
+                            context_str=context_str,
+                            candidates=rag_candidates,
+                            allow_revision=verify_before_emit,
+                        )
+                        if verify_before_emit:
+                            yield full_response
                         yield {'citations': citations}
                     except Exception as cite_err:
                         logger.error(f"[ask_stream] Citation build failed: {cite_err}", exc_info=True)
@@ -1759,6 +2147,8 @@ Cách làm việc:
                                 'source': c.get('source', ''),
                             })
                         yield {'citations': fallback}
+                elif full_response and verify_before_emit:
+                    yield full_response
 
             finally:
                 # ── BƯỚC 7: Lưu kết quả vào DB (LUÔN chạy kể cả khi client ngắt kết nối) ──

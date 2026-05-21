@@ -10,6 +10,7 @@ from .query_rewriter import QueryRewriter
 from .reranker import Reranker
 from .raptor_tree import RaptorTreeBuilder
 from .query_intent import QueryIntentClassifier, QueryIntent, RetrievalConfig
+from .spreadsheet_retriever import SpreadsheetRetriever
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class QueryRouter:
         self.raptor = RaptorTreeBuilder()
         self.rewriter = QueryRewriter(llama_client)
         self.intent_classifier = QueryIntentClassifier(embedding_client=embedding_client)
+        self.spreadsheet = SpreadsheetRetriever()
 
     def route(
         self,
@@ -58,6 +60,33 @@ class QueryRouter:
         intent = self.intent_classifier.classify(query)
         intent_config = self.intent_classifier.get_retrieval_config(intent)
 
+        # Lấy danh sách document IDs để filter (ưu tiên 'document_ids' list)
+        document_ids: List[str] = []
+        if user_context:
+            if user_context.get('document_ids'):
+                document_ids = [str(d) for d in user_context['document_ids'] if d]
+            elif user_context.get('document_id'):
+                document_ids = [str(user_context['document_id'])]
+
+        spreadsheet_intents = {
+            QueryIntent.SPREADSHEET_CELL,
+            QueryIntent.SPREADSHEET_ROW,
+            QueryIntent.SPREADSHEET_COLUMN,
+            QueryIntent.SPREADSHEET_LOOKUP,
+        }
+        if intent in spreadsheet_intents:
+            spreadsheet_candidates = self.spreadsheet.retrieve(
+                query=query,
+                document_ids=document_ids,
+                top_k=max(1, top_k),
+            )
+            if spreadsheet_candidates:
+                logger.info(
+                    f"[ROUTER_PROFILE] strategy=spreadsheet intent={intent.value} query='{query[:40]}...' "
+                    f"docs={len(document_ids)} results={len(spreadsheet_candidates)}"
+                )
+                return spreadsheet_candidates
+
         # Use intent-driven top_k (unless overridden by caller with non-default)
         effective_top_k = top_k if top_k != 5 else intent_config.top_k
         effective_sparse_k = intent_config.sparse_k
@@ -67,20 +96,20 @@ class QueryRouter:
         word_count = len(q_words)
         query_lower = query.lower()
 
-        # Lấy danh sách document IDs để filter (ưu tiên 'document_ids' list)
-        document_ids: List[str] = []
-        if user_context:
-            if user_context.get('document_ids'):
-                document_ids = [str(d) for d in user_context['document_ids'] if d]
-            elif user_context.get('document_id'):
-                document_ids = [str(user_context['document_id'])]
+        rag_mode = (user_context or {}).get('rag_mode') or (user_context or {}).get('retrieval_mode') or 'fast'
+        deep_mode = str(rag_mode).lower() == 'deep' or bool((user_context or {}).get('deep_mode'))
+        allow_deep_llm = deep_mode and getattr(settings, 'RAG_DEEP_MODE_ENABLE_LLM_STEPS', True)
 
         # Fix: Query expansion disabled for speed - LLM expansion costs 70s on CPU
         # The QueryRewriter is available but only used for simple expansions
         # List/analytical intents benefit from query expansion
         expand_query = intent in (QueryIntent.LIST, QueryIntent.ANALYTICAL, QueryIntent.COMPARATIVE)
         query_variants = (
-            self.rewriter.expand(query, conversation_history=conversation_history)
+            self.rewriter.expand(
+                query,
+                conversation_history=conversation_history,
+                force_llm=allow_deep_llm,
+            )
             if expand_query else [query]
         )
         retrieval_variants = [variant for variant in query_variants if variant]
@@ -140,7 +169,7 @@ class QueryRouter:
         # ── HyDE: hypothetical answer embedding for analytical/comparative ──
         hyde_text = ''
         if intent in (QueryIntent.ANALYTICAL, QueryIntent.COMPARATIVE):
-            hyde_text = self.rewriter.generate_hypothetical_answer(query)
+            hyde_text = self.rewriter.generate_hypothetical_answer(query, force_llm=allow_deep_llm)
             if hyde_text:
                 logger.debug(f"[HYDE] Using hypothetical answer embedding for dense search")
 
@@ -158,7 +187,7 @@ class QueryRouter:
         # ── Multi-hop: decompose complex queries ──────────────────────────
         sub_queries = []
         if intent in (QueryIntent.ANALYTICAL, QueryIntent.COMPARATIVE, QueryIntent.LIST, QueryIntent.TABLE):
-            sub_queries = self.rewriter.decompose_complex_query(query)
+            sub_queries = self.rewriter.decompose_complex_query(query, force_llm=allow_deep_llm)
             if sub_queries:
                 logger.debug(f"[MULTI_HOP] Decomposed into {len(sub_queries)} sub-queries")
 
