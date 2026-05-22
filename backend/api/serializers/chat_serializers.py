@@ -304,6 +304,11 @@ class MessageCreateSerializer(serializers.Serializer):
         default='fast',
         help_text="RAG mode: fast disables expensive LLM retrieval steps; deep enables them and enforces grounded revision."
     )
+    current_page = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        help_text="Optional: current document page when the user asks about this/current page."
+    )
     
     def validate_content(self, value):
         """Validate message content"""
@@ -337,6 +342,8 @@ class MessageCreateSerializer(serializers.Serializer):
         if validated_data.get('folder_ids'):
             filters['folder_ids'] = validated_data['folder_ids']
         filters['rag_mode'] = validated_data.get('rag_mode', 'fast')
+        if validated_data.get('current_page'):
+            filters['current_page'] = validated_data['current_page']
         
         # Get AI response via ChatService
         chat_service = ChatService()

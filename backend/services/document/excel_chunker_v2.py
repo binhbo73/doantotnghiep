@@ -10,6 +10,7 @@ or "A10" deterministic instead of depending on semantic vector search.
 import logging
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
@@ -134,6 +135,18 @@ class ExcelChunkerV2:
             len(all_rows),
         )
 
+        table_chunk = self._build_preserved_table_chunk(
+            all_rows=all_rows,
+            sheet_name=sheet_name,
+            sheet_idx=sheet_idx,
+            column_names=column_names,
+            max_col=max_col,
+            metadata=metadata,
+            has_merged_cells=len(worksheet.merged_cells.ranges) > 0,
+        )
+        if table_chunk:
+            chunks.append(table_chunk)
+
         for data_row_idx, row_obj in enumerate(all_rows, start=0):
             row_idx = row_obj["index"]
             row_data = row_obj["data"]
@@ -174,12 +187,71 @@ class ExcelChunkerV2:
                     "text": chunk_text,
                     "page_number": sheet_idx + 1,
                     "metadata": chunk_metadata,
-                    "chunk_index": data_row_idx,
+                    "chunk_index": data_row_idx + (1 if table_chunk else 0),
                     "node_type": "detail",
                 }
             )
 
         return chunks
+
+    def _build_preserved_table_chunk(
+        self,
+        all_rows: List[Dict[str, Any]],
+        sheet_name: str,
+        sheet_idx: int,
+        column_names: Dict[int, Dict[str, str]],
+        max_col: int,
+        metadata: Dict[str, Any] = None,
+        has_merged_cells: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Create a whole-table chunk for small/medium spreadsheets."""
+        col_letters = [
+            column_names.get(col_idx, {}).get("letter", get_column_letter(col_idx + 1))
+            for col_idx in range(max_col)
+        ]
+        lines = [f"# Sheet: {sheet_name}", ""]
+        lines.append("| " + " | ".join(["Excel row"] + col_letters) + " |")
+        lines.append("| " + " | ".join(["---"] * (max_col + 1)) + " |")
+        for row_obj in all_rows:
+            row_data = list(row_obj["data"])
+            while len(row_data) < max_col:
+                row_data.append("")
+            row_values = [self._markdown_cell_value(value) for value in row_data[:max_col]]
+            lines.append("| " + " | ".join([str(row_obj["index"])] + row_values) + " |")
+
+        table_text = "\n".join(lines).strip()
+        max_tokens = int(getattr(settings, "RAG_TABLE_CHUNK_MAX_TOKENS", 1600))
+        if self._estimate_token_count(table_text) > max_tokens:
+            return None
+
+        chunk_metadata = metadata.copy() if metadata else {}
+        chunk_metadata.update({
+            "sheet_name": sheet_name,
+            "sheet_idx": sheet_idx,
+            "row_start": all_rows[0]["index"],
+            "row_end": all_rows[-1]["index"],
+            "row_count": len(all_rows),
+            "column_count": max_col,
+            "column_names": [
+                col_names.get("name", f"Col_{i}")
+                for i, col_names in column_names.items()
+            ],
+            "column_letters": col_letters,
+            "content_format": "spreadsheet_markdown",
+            "chunking_strategy": self.strategy_name,
+            "table_preserved": True,
+            "table_split": False,
+            "table_scope": "worksheet",
+            "is_header_inclusive": True,
+            "has_merged_cells": has_merged_cells,
+        })
+        return {
+            "text": table_text,
+            "page_number": sheet_idx + 1,
+            "metadata": chunk_metadata,
+            "chunk_index": 0,
+            "node_type": "detail",
+        }
 
     def _merged_row_value(
         self,

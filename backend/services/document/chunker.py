@@ -75,6 +75,11 @@ class DocumentChunker:
             'CHUNK_TOKEN_OVERLAP',
             getattr(settings, 'CHUNK_OVERLAP', 64)
         )
+        self.table_chunk_max_tokens = int(getattr(
+            settings,
+            'RAG_TABLE_CHUNK_MAX_TOKENS',
+            max(1600, self.chunk_size * 4),
+        ))
 
         if self.chunk_size <= 0:
             raise DocumentProcessingError("chunk_size must be > 0")
@@ -353,6 +358,387 @@ class DocumentChunker:
         except Exception as e:
             logger.error(f"Error in hierarchical chunking: {str(e)}", exc_info=True)
             raise DocumentProcessingError(f"Failed to chunk by pages: {str(e)}")
+
+    def chunk_structured_document(
+        self,
+        structured_document,
+        metadata: Dict[str, Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Chunk a structured document by blocks first, then token windows.
+
+        This preserves tables, images, and equations as atomic evidence where
+        possible, and carries MinerU-like metadata into DocumentChunk.metadata.
+        """
+        try:
+            if not structured_document:
+                raise DocumentProcessingError("structured_document is required")
+
+            merged_metadata = metadata or {}
+            file_type = (merged_metadata.get('file_type') or '').lower()
+            self._apply_chunk_profile(file_type)
+
+            blocks = [
+                block for block in structured_document.blocks(include_discarded=False)
+                if self._structured_block_text(block)
+            ]
+            if not blocks:
+                return self.chunk_text(getattr(structured_document, 'text', '') or '', merged_metadata)
+
+            chunks: List[Dict[str, Any]] = []
+            sequence = 0
+            text_buffer: List[str] = []
+            buffer_blocks: List[Any] = []
+            buffer_page = None
+            buffer_heading_path: List[str] = []
+
+            def flush_text_buffer():
+                nonlocal sequence, text_buffer, buffer_blocks, buffer_page, buffer_heading_path
+                text = "\n\n".join(part for part in text_buffer if part).strip()
+                if not text:
+                    text_buffer = []
+                    buffer_blocks = []
+                    return
+
+                block_metadata = self._merge_structured_block_metadata(buffer_blocks)
+                base_meta = {
+                    **merged_metadata,
+                    **block_metadata,
+                    'block_type': block_metadata.get('block_type') or 'paragraph',
+                    'block_types': block_metadata.get('block_types') or ['paragraph'],
+                    'heading_path': buffer_heading_path or block_metadata.get('heading_path') or [],
+                    'parse_backend': getattr(structured_document, 'parse_backend', 'local_page_aware'),
+                    'structured_chunk': True,
+                }
+
+                for sub_chunk in self._split_structured_text_if_needed(
+                    text=text,
+                    metadata=base_meta,
+                    page_number=buffer_page or block_metadata.get('page_number') or 1,
+                    sequence_start=sequence,
+                ):
+                    chunks.append(sub_chunk)
+                    sequence += 1
+
+                text_buffer = []
+                buffer_blocks = []
+                buffer_page = None
+                buffer_heading_path = []
+
+            for block in blocks:
+                block_type = self._get_block_attr(block, 'type') or 'paragraph'
+                block_text = self._structured_block_text(block)
+                if not block_text:
+                    continue
+
+                page_number = int(self._get_block_attr(block, 'page_idx', 0) or 0) + 1
+                heading_path = list(self._get_block_attr(block, 'heading_path', []) or [])
+
+                if block_type in {'table', 'image', 'chart'}:
+                    flush_text_buffer()
+                    atomic_chunks = self._chunk_atomic_structured_block(
+                        block=block,
+                        text=block_text,
+                        metadata=merged_metadata,
+                        sequence_start=sequence,
+                        parse_backend=getattr(structured_document, 'parse_backend', 'local_page_aware'),
+                    )
+                    chunks.extend(atomic_chunks)
+                    sequence += len(atomic_chunks)
+                    continue
+
+                if block_type == 'equation':
+                    # Equations are semantically tied to nearby prose. Keep
+                    # them in the text buffer unless the buffer is already full.
+                    if text_buffer and self._estimate_token_count("\n\n".join(text_buffer + [block_text])) > self.chunk_size:
+                        flush_text_buffer()
+                    text_buffer.append(block_text)
+                    buffer_blocks.append(block)
+                    buffer_page = buffer_page or page_number
+                    buffer_heading_path = heading_path or buffer_heading_path
+                    continue
+
+                if block_type == 'title':
+                    if text_buffer:
+                        flush_text_buffer()
+                    text_buffer.append(block_text)
+                    buffer_blocks.append(block)
+                    buffer_page = page_number
+                    buffer_heading_path = heading_path
+                    continue
+
+                if buffer_page is not None and page_number != buffer_page:
+                    flush_text_buffer()
+
+                projected = "\n\n".join(text_buffer + [block_text])
+                if text_buffer and self._estimate_token_count(projected) > self.chunk_size:
+                    flush_text_buffer()
+
+                text_buffer.append(block_text)
+                buffer_blocks.append(block)
+                buffer_page = buffer_page or page_number
+                buffer_heading_path = heading_path or buffer_heading_path
+
+            flush_text_buffer()
+
+            logger.info(
+                f"Structured chunking produced {len(chunks)} chunks "
+                f"from {len(blocks)} blocks (strategy={self.strategy_name})"
+            )
+            return chunks
+        except Exception as e:
+            logger.error(f"Error in structured chunking: {e}", exc_info=True)
+            raise DocumentProcessingError(f"Failed to chunk structured document: {e}")
+
+    def _get_block_attr(self, block, name: str, default=None):
+        if isinstance(block, dict):
+            return block.get(name, default)
+        return getattr(block, name, default)
+
+    def _structured_block_text(self, block) -> str:
+        if hasattr(block, 'content_text'):
+            return block.content_text()
+        if isinstance(block, dict):
+            return (
+                block.get('html')
+                or block.get('latex')
+                or block.get('caption')
+                or block.get('text')
+                or ''
+            ).strip()
+        return str(block or '').strip()
+
+    def _merge_structured_block_metadata(self, blocks: List[Any]) -> Dict[str, Any]:
+        if not blocks:
+            return {}
+
+        block_types = []
+        bboxes = []
+        reading_orders = []
+        heading_path = []
+        page_numbers = []
+        line_starts = []
+        line_ends = []
+
+        for block in blocks:
+            block_type = self._get_block_attr(block, 'type')
+            if block_type and block_type not in block_types:
+                block_types.append(block_type)
+            bbox = self._get_block_attr(block, 'bbox')
+            if bbox:
+                bboxes.append(bbox)
+            reading_order = self._get_block_attr(block, 'reading_order')
+            if reading_order is not None:
+                reading_orders.append(reading_order)
+            block_heading_path = self._get_block_attr(block, 'heading_path') or []
+            if block_heading_path:
+                heading_path = list(block_heading_path)
+            page_numbers.append(int(self._get_block_attr(block, 'page_idx', 0) or 0) + 1)
+            metadata = self._get_block_attr(block, 'metadata', {}) or {}
+            if metadata.get('line_start'):
+                line_starts.append(metadata.get('line_start'))
+            if metadata.get('line_end'):
+                line_ends.append(metadata.get('line_end'))
+
+        return {
+            'block_type': block_types[0] if len(block_types) == 1 else 'mixed',
+            'block_types': block_types,
+            'bbox': bboxes[0] if len(bboxes) == 1 else None,
+            'bboxes': bboxes,
+            'reading_order_start': min(reading_orders) if reading_orders else None,
+            'reading_order_end': max(reading_orders) if reading_orders else None,
+            'heading_path': heading_path,
+            'page_number': min(page_numbers) if page_numbers else 1,
+            'page_range': [min(page_numbers), max(page_numbers)] if page_numbers else [1, 1],
+            'line_start': min(line_starts) if line_starts else None,
+            'line_end': max(line_ends) if line_ends else None,
+        }
+
+    def _split_structured_text_if_needed(
+        self,
+        text: str,
+        metadata: Dict[str, Any],
+        page_number: int,
+        sequence_start: int,
+    ) -> List[Dict[str, Any]]:
+        token_count = self._estimate_token_count(text)
+        if token_count <= self.chunk_size:
+            return [{
+                'text': text,
+                'start_char': 0,
+                'end_char': len(text),
+                'token_start': 0,
+                'token_end': token_count,
+                'token_count': token_count,
+                'page_number': page_number,
+                'metadata': {
+                    **metadata,
+                    'page_number': page_number,
+                },
+                'sequence': sequence_start,
+            }]
+
+        sub_chunks = self.chunk_text(text, metadata)
+        for offset, chunk in enumerate(sub_chunks):
+            chunk['page_number'] = page_number
+            chunk['sequence'] = sequence_start + offset
+            chunk['metadata'] = {
+                **(chunk.get('metadata') or {}),
+                **metadata,
+                'page_number': page_number,
+                'structured_split': True,
+            }
+        return sub_chunks
+
+    def _chunk_atomic_structured_block(
+        self,
+        block,
+        text: str,
+        metadata: Dict[str, Any],
+        sequence_start: int,
+        parse_backend: str,
+    ) -> List[Dict[str, Any]]:
+        block_type = self._get_block_attr(block, 'type') or 'paragraph'
+        page_number = int(self._get_block_attr(block, 'page_idx', 0) or 0) + 1
+        block_meta = self._merge_structured_block_metadata([block])
+        block_specific = self._get_block_attr(block, 'metadata', {}) or {}
+        base_metadata = {
+            **metadata,
+            **block_meta,
+            **block_specific,
+            'block_type': block_type,
+            'block_types': [block_type],
+            'heading_path': self._get_block_attr(block, 'heading_path', []) or [],
+            'parse_backend': parse_backend,
+            'structured_chunk': True,
+            'atomic_block': True,
+            'table_id': self._get_block_attr(block, 'table_id'),
+            'image_id': self._get_block_attr(block, 'image_id'),
+        }
+
+        if block_type == 'table':
+            return self._chunk_structured_table_block(
+                text=text,
+                metadata=base_metadata,
+                page_number=page_number,
+                sequence_start=sequence_start,
+            )
+
+        token_count = self._estimate_token_count(text)
+        if token_count <= self.chunk_size:
+            return [{
+                'text': text,
+                'start_char': 0,
+                'end_char': len(text),
+                'token_start': 0,
+                'token_end': token_count,
+                'token_count': token_count,
+                'page_number': page_number,
+                'metadata': {
+                    **base_metadata,
+                    'page_number': page_number,
+                },
+                'sequence': sequence_start,
+            }]
+
+        chunks = self._split_structured_text_if_needed(text, base_metadata, page_number, sequence_start)
+        for chunk in chunks:
+            chunk['metadata']['atomic_block_split'] = True
+        return chunks
+
+    def _chunk_structured_table_block(
+        self,
+        text: str,
+        metadata: Dict[str, Any],
+        page_number: int,
+        sequence_start: int,
+    ) -> List[Dict[str, Any]]:
+        token_count = self._estimate_token_count(text)
+        if token_count <= self.table_chunk_max_tokens:
+            return [{
+                'text': text,
+                'start_char': 0,
+                'end_char': len(text),
+                'token_start': 0,
+                'token_end': token_count,
+                'token_count': token_count,
+                'page_number': page_number,
+                'metadata': {
+                    **metadata,
+                    'page_number': page_number,
+                    'content_format': metadata.get('content_format') or 'table_markdown',
+                    'table_split': False,
+                    'table_preserved': True,
+                },
+                'sequence': sequence_start,
+            }]
+
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return []
+
+        # Markdown tables keep the first two lines as repeated header when possible.
+        header = lines[:2] if len(lines) >= 2 and all(line.strip().startswith('|') for line in lines[:2]) else lines[:1]
+        data_lines = lines[len(header):] or lines
+        chunks = []
+        current_rows = []
+        header_text = "\n".join(header).strip()
+        sequence = sequence_start
+        row_start = 1
+
+        for row_idx, row in enumerate(data_lines, start=1):
+            candidate_rows = current_rows + [row]
+            candidate_text = "\n".join([header_text] + candidate_rows).strip()
+            if current_rows and self._estimate_token_count(candidate_text) > self.chunk_size:
+                chunk_text = "\n".join([header_text] + current_rows).strip()
+                chunks.append({
+                    'text': chunk_text,
+                    'start_char': 0,
+                    'end_char': len(chunk_text),
+                    'token_start': 0,
+                    'token_end': self._estimate_token_count(chunk_text),
+                    'token_count': self._estimate_token_count(chunk_text),
+                    'page_number': page_number,
+                    'metadata': {
+                        **metadata,
+                        'page_number': page_number,
+                        'content_format': metadata.get('content_format') or 'table_markdown',
+                        'table_split': True,
+                        'table_preserved': False,
+                        'row_start': row_start,
+                        'row_end': row_idx - 1,
+                    },
+                    'sequence': sequence,
+                })
+                sequence += 1
+                row_start = row_idx
+                current_rows = [row]
+            else:
+                current_rows = candidate_rows
+
+        if current_rows:
+            chunk_text = "\n".join([header_text] + current_rows).strip()
+            chunks.append({
+                'text': chunk_text,
+                'start_char': 0,
+                'end_char': len(chunk_text),
+                'token_start': 0,
+                'token_end': self._estimate_token_count(chunk_text),
+                'token_count': self._estimate_token_count(chunk_text),
+                'page_number': page_number,
+                'metadata': {
+                    **metadata,
+                    'page_number': page_number,
+                    'content_format': metadata.get('content_format') or 'table_markdown',
+                    'table_split': True,
+                    'table_preserved': False,
+                    'row_start': row_start,
+                    'row_end': row_start + len(current_rows) - 1,
+                },
+                'sequence': sequence,
+            })
+
+        return chunks
     
     def _chunk_page(
         self,

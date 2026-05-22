@@ -225,6 +225,8 @@ class QueryIntentClassifier:
         ],
         QueryIntent.LIST: [
             (r"\b(liet ke|ke ra|neu ra|tong hop|danh sach)\b", 5),
+            (r"\b(tom tat|tong quan|khai quat|noi dung chinh|y chinh|chu de chinh)\b", 5),
+            (r"\b(file|tai lieu|van ban)\s+(nay\s+)?(noi ve gi|viet ve gi|trinh bay gi|co noi dung gi)\b", 5),
             (r"\btrinh bay\b", 2),
             (r"\b(tat ca|toan bo|day du|chi tiet)\b", 2),
             (r"\b(bao gom|gom nhung gi|co nhung gi|nhung muc nao|cac loai|cac muc)\b", 3),
@@ -307,6 +309,33 @@ class QueryIntentClassifier:
                 scored.append((intent, score, self.INTENT_PRIORITY[intent]))
 
         if scored:
+            image_score = next((score for intent, score, _ in scored if intent == QueryIntent.IMAGE), 0)
+            list_score = next((score for intent, score, _ in scored if intent == QueryIntent.LIST), 0)
+            spreadsheet_markers = re.search(
+                r"\b(excel|spreadsheet|sheet|bang tinh|worksheet|cell|row|column|cot\s+[a-z]{1,3}|dong\s+\d+|hang\s+\d+|o\s*[a-z]{1,3}\d{1,5})\b",
+                normalized,
+                re.IGNORECASE,
+            )
+            if image_score > 0 and not spreadsheet_markers:
+                scored = [
+                    item for item in scored
+                    if item[0] not in {
+                        QueryIntent.SPREADSHEET_CELL,
+                        QueryIntent.SPREADSHEET_ROW,
+                        QueryIntent.SPREADSHEET_COLUMN,
+                        QueryIntent.SPREADSHEET_LOOKUP,
+                    }
+                ]
+            if list_score > 0 and not spreadsheet_markers:
+                scored = [
+                    item for item in scored
+                    if item[0] not in {
+                        QueryIntent.SPREADSHEET_CELL,
+                        QueryIntent.SPREADSHEET_ROW,
+                        QueryIntent.SPREADSHEET_COLUMN,
+                        QueryIntent.SPREADSHEET_LOOKUP,
+                    }
+                ]
             scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
             best_intent, best_score, _priority = scored[0]
             if best_score >= 2:

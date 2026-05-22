@@ -33,6 +33,7 @@ class AssetPipelineStage(PipelineStage):
     Cấu hình (settings.py):
         ASSET_PIPELINE_ENABLED = True
         ASSET_OCR_ENABLED = True
+        ASSET_OCR_ENGINE = 'tesseract'
         ASSET_OCR_LANGUAGES = 'vie+eng'
         ASSET_VL_CAPTION_ENABLED = True
         ASSET_EMBED_CAPTIONS = True
@@ -46,12 +47,15 @@ class AssetPipelineStage(PipelineStage):
     def __init__(self, name: str = None):
         super().__init__(name=name or self.STAGE_NAME)
         self.ocr_enabled = getattr(settings, 'ASSET_OCR_ENABLED', True)
+        self.ocr_engine = getattr(settings, 'ASSET_OCR_ENGINE', 'tesseract')
         self.ocr_languages = getattr(settings, 'ASSET_OCR_LANGUAGES', 'vie+eng')
+        self.paddleocr_lang = getattr(settings, 'ASSET_PADDLEOCR_LANG', 'vi')
         self.vl_caption_enabled = getattr(settings, 'ASSET_VL_CAPTION_ENABLED', True)
         self.embed_captions = getattr(settings, 'ASSET_EMBED_CAPTIONS', True)
         self.max_images = getattr(settings, 'ASSET_MAX_IMAGES_PER_DOC', 50)
         self.min_image_bytes = getattr(settings, 'ASSET_MIN_IMAGE_SIZE_BYTES', 1024)
         self.max_image_width = getattr(settings, 'ASSET_IMAGE_MAX_WIDTH', 2000)
+        self._paddle_ocr = None
 
     def execute(self, context: PipelineContext) -> PipelineContext:
         """Thực thi asset extraction + OCR + VL caption."""
@@ -478,6 +482,176 @@ class AssetPipelineStage(PipelineStage):
             return []
 
     def _run_ocr(self, image_data: bytes) -> tuple:
+        """Run the configured OCR engine and return (text, confidence)."""
+        engine = (self.ocr_engine or 'tesseract').lower()
+        if engine == 'tesseract':
+            return self._run_tesseract_ocr(image_data)
+        return self._run_paddleocr(image_data)
+
+    def _get_paddleocr_client(self):
+        """Lazy-load PaddleOCR once per asset pipeline run."""
+        if self._paddle_ocr is not None:
+            return self._paddle_ocr
+
+        from paddleocr import PaddleOCR
+
+        lang = (self.paddleocr_lang or '').strip() or self._map_paddleocr_lang(self.ocr_languages)
+        try:
+            self._paddle_ocr = PaddleOCR(
+                lang=lang,
+                use_textline_orientation=True,
+            )
+        except TypeError:
+            self._paddle_ocr = PaddleOCR(
+                lang=lang,
+                use_angle_cls=True,
+            )
+        return self._paddle_ocr
+
+    @staticmethod
+    def _map_paddleocr_lang(languages: str) -> str:
+        normalized = (languages or '').lower()
+        if 'vie' in normalized or 'vi' in normalized:
+            return 'vi'
+        if 'eng' in normalized or 'en' in normalized:
+            return 'en'
+        return 'vi'
+
+    def _run_paddleocr(self, image_data: bytes) -> tuple:
+        """Run PaddleOCR and keep visual rows for table-like images."""
+        try:
+            import numpy as np
+            from PIL import Image
+
+            img = Image.open(io.BytesIO(image_data)).convert('RGB')
+            image_array = np.array(img)
+            ocr = self._get_paddleocr_client()
+
+            try:
+                raw_result = ocr.ocr(image_array, cls=True)
+            except TypeError:
+                raw_result = ocr.ocr(image_array)
+            except AttributeError:
+                raw_result = ocr.predict(image_array)
+
+            entries = self._parse_paddleocr_result(raw_result)
+            if not entries:
+                return '', 0.0
+
+            ocr_text = self._format_ocr_entries_as_reading_order(entries)
+            avg_conf = sum(item['confidence'] for item in entries) / len(entries)
+            return ocr_text.strip(), round(avg_conf * 100, 1)
+
+        except ImportError:
+            self.logger.warning("paddleocr/paddlepaddle not installed. OCR skipped.")
+            return '', 0.0
+        except Exception as e:
+            self.logger.warning(f"PaddleOCR failed: {e}")
+            return '', 0.0
+
+    def _parse_paddleocr_result(self, raw_result) -> List[Dict[str, Any]]:
+        """Normalize PaddleOCR 2.x/3.x outputs to positioned text boxes."""
+        entries: List[Dict[str, Any]] = []
+
+        def add_entry(box, text, confidence):
+            text = str(text or '').strip()
+            if not text:
+                return
+            points = []
+            try:
+                if hasattr(box, 'tolist'):
+                    box = box.tolist()
+                if (
+                    isinstance(box, (list, tuple))
+                    and len(box) == 4
+                    and all(isinstance(value, (int, float)) for value in box)
+                ):
+                    x1, y1, x2, y2 = [float(value) for value in box]
+                    box = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+                for point in box or []:
+                    points.append((float(point[0]), float(point[1])))
+            except Exception:
+                points = []
+            if not points:
+                points = [(0.0, 0.0)]
+            xs = [p[0] for p in points]
+            ys = [p[1] for p in points]
+            entries.append({
+                'text': text,
+                'confidence': float(confidence or 0.0),
+                'x': min(xs),
+                'y': min(ys),
+                'height': max(1.0, max(ys) - min(ys)),
+            })
+
+        def parse_old_item(item):
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                return
+            box = item[0]
+            payload = item[1]
+            if isinstance(payload, (list, tuple)) and payload:
+                text = payload[0]
+                confidence = payload[1] if len(payload) > 1 else 0.0
+                add_entry(box, text, confidence)
+
+        if isinstance(raw_result, list):
+            for page in raw_result:
+                if hasattr(page, 'to_dict'):
+                    page = page.to_dict()
+                elif hasattr(page, 'json'):
+                    try:
+                        page = page.json
+                    except Exception:
+                        pass
+                if isinstance(page, dict):
+                    self._parse_paddleocr_dict(page, add_entry)
+                elif isinstance(page, list):
+                    if page and isinstance(page[0], (list, tuple)) and len(page[0]) >= 2 and isinstance(page[0][1], (list, tuple)):
+                        for item in page:
+                            parse_old_item(item)
+                    else:
+                        parse_old_item(page)
+        elif isinstance(raw_result, dict):
+            self._parse_paddleocr_dict(raw_result, add_entry)
+        elif hasattr(raw_result, 'to_dict'):
+            self._parse_paddleocr_dict(raw_result.to_dict(), add_entry)
+
+        return entries
+
+    def _parse_paddleocr_dict(self, result: Dict[str, Any], add_entry) -> None:
+        """Parse common PaddleOCR 3.x dict result fields."""
+        texts = result.get('rec_texts') or result.get('texts') or []
+        scores = result.get('rec_scores') or result.get('scores') or []
+        boxes = result.get('rec_boxes') or result.get('dt_polys') or result.get('boxes') or []
+        for idx, text in enumerate(texts):
+            box = boxes[idx] if idx < len(boxes) else None
+            confidence = scores[idx] if idx < len(scores) else 0.0
+            add_entry(box, text, confidence)
+
+    def _format_ocr_entries_as_reading_order(self, entries: List[Dict[str, Any]]) -> str:
+        """Group OCR boxes into rows so tables remain readable/searchable."""
+        ordered = sorted(entries, key=lambda item: (item['y'], item['x']))
+        rows: List[List[Dict[str, Any]]] = []
+        for item in ordered:
+            matched_row = None
+            for row in rows:
+                row_y = sum(cell['y'] for cell in row) / len(row)
+                row_height = max(cell['height'] for cell in row)
+                if abs(item['y'] - row_y) <= max(8.0, row_height * 0.7):
+                    matched_row = row
+                    break
+            if matched_row is None:
+                rows.append([item])
+            else:
+                matched_row.append(item)
+
+        formatted_rows = []
+        for row in rows:
+            cells = sorted(row, key=lambda item: item['x'])
+            formatted_rows.append(' | '.join(cell['text'] for cell in cells if cell['text']))
+        return '\n'.join(line for line in formatted_rows if line)
+
+    def _run_tesseract_ocr(self, image_data: bytes) -> tuple:
         """Chạy Tesseract OCR, trả về (text, confidence)."""
         try:
             import pytesseract
@@ -561,6 +735,26 @@ class AssetPipelineStage(PipelineStage):
     # EMBED
     # ═══════════════════════════════════════════════════════════════
 
+    def _build_asset_embedding_text(self, asset) -> str:
+        """Build searchable text for an asset embedding."""
+        parts = []
+        if asset.caption:
+            parts.append(f"Mo ta anh: {asset.caption}")
+        if asset.ocr_text:
+            parts.append(f"OCR trong anh: {asset.ocr_text[:1500]}")
+        if asset.context_text:
+            parts.append(f"Ngu canh gan anh: {asset.context_text[:2000]}")
+        try:
+            if asset.chunk_id and asset.chunk and asset.chunk.content:
+                parts.append(f"Noi dung doan lien ket: {asset.chunk.content[:2500]}")
+        except Exception:
+            pass
+        if asset.page_number:
+            parts.append(f"Trang: {asset.page_number}")
+        if asset.paragraph_index is not None:
+            parts.append(f"Paragraph: {asset.paragraph_index}")
+        return "\n".join(p for p in parts if p).strip() or (asset.caption or "")
+
     def _embed_asset_caption(self, asset) -> None:
         """Embed caption asset vào Qdrant collection document_assets."""
         try:
@@ -570,7 +764,8 @@ class AssetPipelineStage(PipelineStage):
             embedding_client = EmbeddingClient()
             qdrant_client = QdrantClient()
 
-            caption_embedding = embedding_client.create_embedding(asset.caption)
+            embedding_text = self._build_asset_embedding_text(asset)
+            caption_embedding = embedding_client.create_embedding(embedding_text)
             if not caption_embedding:
                 return
 

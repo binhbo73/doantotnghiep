@@ -237,6 +237,7 @@ export function UploadDocumentModal({
         })
 
         setIsUploading(true)
+        setProgress(0)
         setError(null)
 
         try {
@@ -257,7 +258,7 @@ export function UploadDocumentModal({
                 description: description || undefined,
             })
 
-            await uploadService.uploadFile(file, {
+            const uploadedDocument = await uploadService.uploadFile(file, {
                 folderId: folderId || undefined,
                 departmentId: effectiveDepartmentId,
                 accessScope,
@@ -265,9 +266,15 @@ export function UploadDocumentModal({
                 tags: tagsArray,
                 onProgress: (prog) => {
                     console.log(`📈 Upload progress: ${prog.percentage}%`)
-                    setProgress(prog.percentage)
+                    setProgress(Math.min(60, Math.round(prog.percentage * 0.6)))
                 }
             })
+
+            if (uploadedDocument?.id) {
+                setProgress(100)
+            } else {
+                setProgress(100)
+            }
 
             console.log('✅ Upload successful!')
             if (onSuccess) onSuccess()
@@ -303,6 +310,24 @@ export function UploadDocumentModal({
                     {error && (
                         <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm border border-red-100">
                             {error}
+                        </div>
+                    )}
+
+                    {isUploading && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-sm font-bold text-slate-800">Đang tải file lên</p>
+                                    <p className="text-xs text-slate-500 mt-1">Modal sẽ đóng ngay sau khi upload hoàn tất.</p>
+                                </div>
+                                <span className="text-xs font-bold text-slate-600">{progress}%</span>
+                            </div>
+                            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-[#9d4300] transition-all duration-300"
+                                    style={{ width: `${progress}%` }}
+                                />
+                            </div>
                         </div>
                     )}
 

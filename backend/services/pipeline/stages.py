@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class ValidationStage(PipelineStage):
     """Validate uploaded file."""
     
-    ALLOWED_EXTENSIONS = {'.pdf', '.doc', '.docx', '.txt', '.md', '.xlsx', '.xls', '.csv'}
+    ALLOWED_EXTENSIONS = {'.pdf', '.doc', '.docx', '.pptx', '.txt', '.md', '.xlsx', '.xls', '.csv'}
     MAX_FILE_SIZE_MB = 100
     
     def execute(self, context: PipelineContext) -> PipelineContext:
@@ -115,6 +115,8 @@ class ParsingStage(PipelineStage):
                 page_aware_text = parser.enhance_docx(file_path)
             elif file_ext == '.doc':
                 page_aware_text = parser.enhance_office_pdf(file_path)
+            elif file_ext == '.pptx':
+                page_aware_text = parser.enhance_pptx(file_path)
             elif file_ext in {'.xlsx', '.xls'}:
                 page_aware_text = parser.enhance_excel(file_path)
             elif file_ext == '.csv':
@@ -130,6 +132,34 @@ class ParsingStage(PipelineStage):
             context.metadata['page_count'] = getattr(page_aware_text, 'total_pages', 1)
             context.metadata['text_length'] = len(page_aware_text.text)
             context.metadata['parsed_at'] = datetime.now().isoformat()
+
+            try:
+                from services.document.structured_parser import LocalStructuredParser
+
+                structured_doc = LocalStructuredParser().build(
+                    page_aware_text=page_aware_text,
+                    source_name=os.path.basename(context.file_path),
+                    parse_backend='local_page_aware',
+                    file_type=file_ext,
+                )
+                structured_summary = structured_doc.summary()
+                artifact_path = self._write_structured_parse_artifact(
+                    context.document_id,
+                    structured_doc,
+                )
+                if artifact_path:
+                    structured_summary['artifact_path'] = artifact_path
+                context.metadata['structured_document'] = structured_doc
+                context.metadata['structured_parse'] = structured_summary
+                self.logger.info(
+                    f"[STRUCTURED_PARSE] document={context.document_id} "
+                    f"pages={structured_summary.get('page_count')} "
+                    f"blocks={structured_summary.get('block_count')} "
+                    f"discarded={structured_summary.get('discarded_block_count')} "
+                    f"types={structured_summary.get('block_type_counts')}"
+                )
+            except Exception as structured_err:
+                self.logger.warning(f"Structured parse build failed, falling back to text-only chunks: {structured_err}")
             spreadsheet_metadata = getattr(page_aware_text, 'metadata', {}) or {}
             if spreadsheet_metadata:
                 context.metadata['spreadsheet'] = spreadsheet_metadata
@@ -158,6 +188,28 @@ class ParsingStage(PipelineStage):
             raise
         except Exception as e:
             raise StageExecutionError(f"Parsing failed: {str(e)}") from e
+
+    def _write_structured_parse_artifact(self, document_id: str, structured_doc) -> Optional[str]:
+        """Persist full structured parse JSON for debugging/re-chunking."""
+        try:
+            artifact_root = os.path.join(
+                getattr(settings, 'MEDIA_ROOT', 'media'),
+                'parse_artifacts',
+                str(document_id),
+            )
+            os.makedirs(artifact_root, exist_ok=True)
+            output_path = os.path.join(artifact_root, 'structured_document.json')
+            with open(output_path, 'w', encoding='utf-8') as artifact_file:
+                json.dump(structured_doc.to_dict(), artifact_file, ensure_ascii=False)
+
+            try:
+                media_root = os.path.abspath(getattr(settings, 'MEDIA_ROOT', 'media'))
+                return os.path.relpath(output_path, media_root).replace('\\', '/')
+            except Exception:
+                return output_path
+        except Exception as e:
+            self.logger.warning(f"Could not write structured parse artifact: {e}")
+            return None
 
 
 class ChunkingStage(PipelineStage):
@@ -282,6 +334,22 @@ class ChunkingStage(PipelineStage):
             # Chunk and embed
             t_chunk_start = time.monotonic()
             
+            # Log structured document status
+            if context.metadata.get('structured_document'):
+                structured_summary = context.metadata.get('structured_parse', {})
+                self.logger.info(
+                    f"✅ [STRUCTURED_DOC_READY] Document {context.document_id}\n"
+                    f"   📦 Pages: {structured_summary.get('page_count', 'N/A')}\n"
+                    f"   🧩 Total blocks: {structured_summary.get('block_count', 0)}\n"
+                    f"   🗑️  Discarded: {structured_summary.get('discarded_block_count', 0)}\n"
+                    f"   📊 Block types: {structured_summary.get('block_type_counts', {})}"
+                )
+            else:
+                self.logger.warning(
+                    f"⚠️ [NO_STRUCTURED_DOC] Document {context.document_id} - "
+                    f"will use page-aware/text chunking without Mineru metadata"
+                )
+
             # Check if this is a spreadsheet file - use specialized Excel chunker v2
             file_ext = context.metadata.get('file_extension', '').lower()
             if self._is_spreadsheet(file_ext):
@@ -462,8 +530,10 @@ class ChunkingStage(PipelineStage):
                         'source_name': os.path.basename(context.file_path),
                         'raptor_applied': should_apply_raptor_pre,
                         'spreadsheet': context.metadata.get('spreadsheet'),
+                        'structured_parse': context.metadata.get('structured_parse'),
                     },
                     page_aware_text=page_aware_for_chunking,
+                    structured_document=context.metadata.get('structured_document'),
                     generate_summaries=generate_summaries,
                     summary_mode='async'
                 )
@@ -600,6 +670,11 @@ class PersistenceStage(PipelineStage):
             )
             raptor_nodes = builder.build_tree(str(document_id))
             node_count = len(raptor_nodes or [])
+            Document = apps.get_model('documents', 'Document')
+            Document.objects.filter(id=document_id).update(
+                has_hierarchical_chunks=bool(node_count),
+                updated_at=timezone.now(),
+            )
             self._update_document_indexing_metadata(
                 document_id,
                 indexing_status='raptor_ready' if node_count else 'base_ready',

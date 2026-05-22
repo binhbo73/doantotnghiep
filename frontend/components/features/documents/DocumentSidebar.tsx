@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { getFileIcon, formatFileSize } from './DocumentRow'
 import EffectivePermissionBadge from '@/components/common/EffectivePermissionBadge'
@@ -9,6 +9,23 @@ import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { toast } from 'sonner'
 import { useRBAC } from '@/hooks/useRBAC'
+import { getDocumentStatus } from '@/services/document'
+
+type SidebarDocumentStatus = {
+    document_status?: string
+    current_stage_label?: string
+    progress_percent?: number
+    ready_for_chat?: boolean
+    processing_steps?: Array<{
+        key: string
+        label: string
+        status: 'not_started' | 'in_progress' | 'completed' | 'failed' | string
+    }>
+    metadata?: {
+        processing_error?: string
+    }
+    document_error?: string
+}
 
 interface DocumentSidebarProps {
     document: FolderDocumentResponse | null
@@ -34,7 +51,51 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [previewUrl, setPreviewUrl] = useState<string>('')
     const [previewFileType, setPreviewFileType] = useState<string>('')
+    const [documentStatus, setDocumentStatus] = useState<SidebarDocumentStatus | null>(null)
+    const [statusLoading, setStatusLoading] = useState(false)
+    const [statusError, setStatusError] = useState<string | null>(null)
     const { canRead, canWrite, canDelete } = useRBAC()
+
+    useEffect(() => {
+        if (!document) {
+            setDocumentStatus(null)
+            setStatusLoading(false)
+            setStatusError(null)
+            return
+        }
+
+        let isActive = true
+
+        const loadStatus = async () => {
+            setStatusLoading(true)
+            setStatusError(null)
+
+            try {
+                const response = await getDocumentStatus(document.id)
+                const payload = response.data || response
+
+                if (!isActive) return
+
+                setDocumentStatus(payload)
+            } catch (error) {
+                if (!isActive) return
+
+                console.error('Failed to load document status:', error)
+                setDocumentStatus(null)
+                setStatusError('Không thể tải trạng thái xử lý')
+            } finally {
+                if (isActive) {
+                    setStatusLoading(false)
+                }
+            }
+        }
+
+        void loadStatus()
+
+        return () => {
+            isActive = false
+        }
+    }, [document?.id])
 
     if (!document) {
         return (
@@ -55,6 +116,20 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     const canReadDocument = canRead(document.my_permission)
     const canWriteDocument = canWrite(document.my_permission)
     const canDeleteDocument = canDelete(document.my_permission)
+    const statusLabel = documentStatus?.current_stage_label || 'Tài liệu đã sẵn sàng'
+    const statusProgress = typeof documentStatus?.progress_percent === 'number'
+        ? documentStatus.progress_percent
+        : document.status === 'completed'
+            ? 100
+            : document.status === 'processing'
+                ? 65
+                : 0
+    const isReadyForChat = documentStatus?.ready_for_chat === true || document.status === 'completed'
+    const statusMessage = documentStatus?.document_status === 'failed'
+        ? documentStatus.metadata?.processing_error || documentStatus.document_error || 'Xử lý tài liệu thất bại'
+        : isReadyForChat
+            ? 'Tài liệu sẵn sàng cho tìm kiếm và chat.'
+            : 'Trạng thái được tải khi bạn chọn tài liệu trong sidebar.'
 
     if (!canReadDocument) {
         return (
@@ -197,10 +272,47 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                 {/* AI Processing Section */}
                 <div className="space-y-2">
                     <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">AI Processing</h4>
-                    <div className="p-3 bg-gradient-to-r from-violet-50 to-indigo-50 rounded-xl border border-violet-100">
-                        <p className="text-[11px] text-violet-700 leading-relaxed">
-                            Tài liệu đang sẵn sàng cho các tác vụ tìm kiếm và khai thác tri thức trong hệ thống.
-                        </p>
+                    <div className="p-3 bg-gradient-to-r from-violet-50 to-indigo-50 rounded-xl border border-violet-100 space-y-3">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <p className="text-[11px] font-semibold text-violet-800 truncate">
+                                    {statusLoading ? 'Đang tải trạng thái...' : statusLabel}
+                                </p>
+                                <p className="text-[11px] text-violet-700 leading-relaxed mt-1">
+                                    {statusError || statusMessage}
+                                </p>
+                            </div>
+                            <span className="text-[11px] font-bold text-violet-700">{statusProgress}%</span>
+                        </div>
+
+                        <div className="h-2 rounded-full bg-violet-100 overflow-hidden">
+                            <div
+                                className={`h-full transition-all duration-300 ${isReadyForChat ? 'bg-emerald-500' : 'bg-[#9d4300]'}`}
+                                style={{ width: `${statusLoading ? 15 : statusProgress}%` }}
+                            />
+                        </div>
+
+                        {Array.isArray(documentStatus?.processing_steps) && documentStatus.processing_steps.length > 0 && (
+                            <div className="grid grid-cols-1 gap-1.5">
+                                {documentStatus.processing_steps.map((step) => (
+                                    <div key={step.key} className="flex items-center gap-2 text-[11px] text-violet-700">
+                                        <span
+                                            className={`h-2 w-2 rounded-full ${step.status === 'completed'
+                                                    ? 'bg-emerald-500'
+                                                    : step.status === 'in_progress'
+                                                        ? 'bg-[#9d4300]'
+                                                        : step.status === 'failed'
+                                                            ? 'bg-red-500'
+                                                            : 'bg-violet-200'
+                                                }`}
+                                        />
+                                        <span className={step.status === 'in_progress' ? 'font-semibold text-violet-900' : ''}>
+                                            {step.label}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
 

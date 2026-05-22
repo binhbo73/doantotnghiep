@@ -175,6 +175,24 @@ class QueryRouter:
 
         # ── Page hints: detect "trang X" or "cuối file" ──────────────────
         page_hints = self.rewriter.extract_page_hints(query)
+        normalized_query = self.rewriter._normalize_text(query)
+        current_page = None
+        if user_context and re.search(r'\b(?:trang\s*(?:nay|hien tai)|page\s*(?:nay|hien tai)|current page|this page)\b', normalized_query):
+            current_page = (
+                user_context.get('current_page')
+                or user_context.get('currentPage')
+                or user_context.get('page_number')
+                or user_context.get('page')
+            )
+        if current_page and not page_hints.get('page_numbers'):
+            try:
+                current_page_num = int(current_page)
+                if current_page_num > 0:
+                    page_hints['page_numbers'] = [current_page_num]
+                    page_hints['page_range'] = [current_page_num, current_page_num]
+                    page_hints['has_page_ref'] = True
+            except (TypeError, ValueError):
+                logger.debug(f"[PAGE_HINT] Invalid current_page in user_context: {current_page!r}")
         if page_hints['has_page_ref']:
             logger.debug(f"[PAGE_HINT] Found page refs: {page_hints}")
             # Boost top_k to reach deep pages
@@ -195,13 +213,14 @@ class QueryRouter:
         # Use hybrid directly and keep RAPTOR for broader, longer questions.
         # Intent-aware: skip RAPTOR for factual/definitional even if long
         skip_raptor_intents = {QueryIntent.FACTUAL, QueryIntent.DEFINITIONAL, QueryIntent.IMAGE, QueryIntent.TABLE}
+        broad_raptor_intent = bool(intent_config.use_raptor and intent not in skip_raptor_intents)
         has_structured_token = bool(
             re.search(r'\b\d{1,4}([/-]\d{1,2}){1,2}\b', query_lower)
             or re.search(r'\b\d+([.,]\d+)?\b', query_lower)
             or re.search(r'\S+@\S+\.\S+', query_lower)
             or re.search(r'https?://|www\.', query_lower)
         )
-        if word_count <= 12 or has_structured_token or intent in skip_raptor_intents:
+        if (word_count <= 12 or has_structured_token or intent in skip_raptor_intents) and not broad_raptor_intent:
             t_strategy_start = time.monotonic()
             candidate_lists = [
                 self.hybrid.retrieve(
@@ -282,7 +301,12 @@ class QueryRouter:
             if use_raptor and doc_id:
                 logger.info(f"🚀 Routing query to RAPTOR strategy for document {doc_id}")
                 t_strategy_start = time.monotonic()
-                candidates = self._retrieve_via_raptor(retrieval_query, doc_id, top_k=effective_top_k)
+                candidates = self._retrieve_via_raptor(
+                    retrieval_query,
+                    doc_id,
+                    top_k=effective_top_k,
+                    page_hints=page_hints,
+                )
                 logger.info(
                     f"[ROUTER_PROFILE] strategy=raptor query='{query[:40]}...' doc_id={doc_id} "
                     f"time={(time.monotonic() - t_strategy_start) * 1000:.1f}ms"
@@ -339,10 +363,9 @@ class QueryRouter:
         # enough evidence text to score the real chunk, not just the preview.
         candidates = self._hydrate_candidate_snippets(candidates)
 
-        # Step 2.5.5: Intent-aware candidate filtering (e.g., exclude TOC for TABLE queries)
+        # Step 2.5.5: exclude TOC/front-matter unless the user explicitly asks for it.
         candidates_before_filter = len(candidates)
-        # TEMPORARILY DISABLED for debugging - will re-enable after testing
-        # candidates = self._filter_candidates_by_intent(candidates, intent, query)
+        candidates = self._filter_candidates_by_intent(candidates, intent, query)
         if len(candidates) < candidates_before_filter:
             logger.debug(f"[FILTER] Intent-aware filtering: {candidates_before_filter} → {len(candidates)} candidates")
 
@@ -511,72 +534,112 @@ class QueryRouter:
         intent: QueryIntent, 
         query: str
     ) -> List[Dict[str, Any]]:
-        """Filter candidates based on query intent.
+        """Filter front-matter unless the user explicitly asks for TOC/list pages.
         
-        For TABLE intent:
+        Applies to all intents:
         - Exclude chunks marked as TOC (is_toc=True)
         - Exclude chunks containing TOC keywords (mục lục, page, contents, etc.)
-        - This ensures we retrieve actual table data, not table-of-contents
+        - This ensures we retrieve actual document content, not table-of-contents
         
-        For other intents: no filtering
+        Explicit TOC queries bypass this filter.
         """
-        if intent != QueryIntent.TABLE or not candidates:
+        if not candidates:
             return candidates
-        
-        toc_keywords = (
-            'muc luc', 'mục lục', 'table of contents', 'contents', 
-            'index', 'chapter', 'section', 'contents page', 'trang'
+
+        query_norm = self.rewriter._normalize_text(query or '')
+        asks_toc = any(
+            marker in query_norm
+            for marker in ('muc luc', 'table of contents', 'contents page', 'bang muc luc')
         )
-        
+        if asks_toc:
+            return candidates
+
         filtered = []
-        excluded_toc = 0
-        excluded_keywords = 0
-        
+        excluded = 0
         for candidate in candidates:
-            # Check is_toc flag in metadata
-            metadata = candidate.get('metadata') or {}
-            if metadata.get('is_toc'):
-                excluded_toc += 1
+            if candidate.get('source') != 'asset' and self._is_front_matter_candidate(candidate):
+                excluded += 1
                 continue
-            
-            # Check for TOC keywords in snippet/content
-            snippet = (candidate.get('snippet') or '').lower()
-            has_toc_keyword = any(kw in snippet for kw in toc_keywords)
-            
-            if has_toc_keyword:
-                excluded_keywords += 1
-                continue
-            
             filtered.append(candidate)
-        
-        if excluded_toc > 0 or excluded_keywords > 0:
-            logger.debug(
-                f"[TABLE_FILTER] Excluded TOC chunks: {excluded_toc} (marked), "
-                f"{excluded_keywords} (keyword-based). Remaining: {len(filtered)}/{len(candidates)}"
-            )
-        
-        # If we filtered out too many, return at least top candidates to avoid empty result
-        if not filtered and excluded_toc + excluded_keywords > 0:
-            logger.warning(
-                f"[TABLE_FILTER] All candidates were TOC. Returning original top candidates."
-            )
-            return candidates[:max(3, len(candidates) // 2)]
-        
+
+        if excluded:
+            logger.debug(f"[FRONT_MATTER_FILTER] Excluded {excluded}/{len(candidates)} TOC/front-matter candidates")
         return filtered
 
-    def _retrieve_via_raptor(self, query: str, document_id: str, top_k: int = 5) -> List[Dict]:
-        """Retrieve using RAPTOR tree: search summary nodes FIRST, then descend to children.
+    def _is_front_matter_candidate(self, candidate: Dict[str, Any]) -> bool:
+        metadata = candidate.get('metadata') or {}
+        if metadata.get('is_toc') or metadata.get('layout_role') == 'toc':
+            return True
+
+        text = candidate.get('snippet') or candidate.get('citation_excerpt') or candidate.get('content') or ''
+        text_norm = self.rewriter._normalize_text(text)
+        if any(
+            marker in text_norm
+            for marker in ('muc luc', 'danh sach bang', 'danh sach hinh anh', 'table of contents', 'contents page')
+        ):
+            return True
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if any(re.search(r'\.\.\.\s*\d+$', line) for line in lines[:20]):
+            return True
+        if len(lines) < 2:
+            return False
+
+        toc_like = 0
+        for line in lines[:20]:
+            if re.search(r'\.\.\.\s*\d+$', line) or re.search(r'^(?:\d+(?:\.\d+)*|bảng\s+\d+|hình\s+\d+)\b.+\s\d+$', line, flags=re.IGNORECASE):
+                toc_like += 1
+        return toc_like >= 2 and (toc_like / max(1, min(len(lines), 20))) >= 0.35
+
+    def _page_summary_candidates(
+        self,
+        DocumentChunk,
+        document_id: str,
+        page_hints: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Return page summary nodes for explicit page/page-range summary requests."""
+        page_numbers = page_hints.get('page_numbers') or []
+        if not page_numbers:
+            return []
+
+        qs = DocumentChunk.objects.filter(
+            document_id=document_id,
+            node_type='summary',
+            metadata__summary_kind='page_summary',
+            page_number__in=page_numbers,
+            is_deleted=False,
+        ).order_by('page_number')
+
+        result = []
+        for node in qs:
+            result.append({
+                'node': node,
+                'score': 1.0,
+                'vector_id': node.vector_id,
+            })
+        return result
+
+    def _retrieve_via_raptor(
+        self,
+        query: str,
+        document_id: str,
+        top_k: int = 5,
+        page_hints: Dict[str, Any] = None,
+    ) -> List[Dict]:
+        """Retrieve using RAPTOR tree: search summary nodes, then rank descendants.
         
         Strategy:
         1. Query summary nodes (node_type='summary') for document
         2. Rank summaries by relevance to query
-        3. For top K/2 summaries, retrieve their child chunks
-        4. Return merged results with boosted scores from parent summaries
+        3. Gather detail descendants from top summaries
+        4. Re-rank descendants by detail embedding similarity, blended with parent score
+        5. Return merged RAPTOR + hybrid results for coverage
         """
         t_raptor_start = time.monotonic()
         try:
             from django.apps import apps
             DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            page_hints = page_hints or {}
             
             # Step 1: Get all summary nodes for this document
             summary_chunks = DocumentChunk.objects.filter(
@@ -595,6 +658,12 @@ class QueryRouter:
             except Exception as e:
                 logger.warning(f"Failed to embed query for RAPTOR: {e}")
                 return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id])
+
+            page_summary_candidates = self._page_summary_candidates(
+                DocumentChunk=DocumentChunk,
+                document_id=document_id,
+                page_hints=page_hints,
+            )
             
             # Step 3: Search Qdrant for summary nodes
             summary_results = self.hybrid.qdrant.search_similar(
@@ -607,7 +676,7 @@ class QueryRouter:
             )
             
             # Filter to only summary nodes in this document
-            top_summaries = []
+            top_summaries = page_summary_candidates[:]
             for vector_id, score, payload in summary_results:
                 chunk_id = payload.get('chunk_id')
                 if not chunk_id:
@@ -619,6 +688,8 @@ class QueryRouter:
                         node_type='summary',
                         is_deleted=False
                     )
+                    if any(str(item['node'].id) == str(summary_node.id) for item in top_summaries):
+                        continue
                     top_summaries.append({
                         'node': summary_node,
                         'score': float(score) if score else 0.5,
@@ -633,14 +704,49 @@ class QueryRouter:
             
             logger.debug(f"RAPTOR: Found {len(top_summaries)} summary nodes for document {document_id}")
             
-            # Step 4: For each summary, retrieve its children or descendants
-            final_candidates = []
+            # Step 4: Gather descendants from top summaries, then rank details
+            # against the query. The older logic returned the first children in
+            # page order, which can miss the best chunk inside a large cluster.
+            detail_candidates = {}
+            summary_candidates = []
+            descendant_limit = max(
+                top_k * 8,
+                int(getattr(settings, 'RAG_RAPTOR_DESCENDANT_LIMIT', 80)),
+            )
+
+            def cosine_similarity(a, b):
+                if hasattr(a, 'tolist'):
+                    a = a.tolist()
+                if hasattr(b, 'tolist'):
+                    b = b.tolist()
+                if not a or not b:
+                    return 0.0
+                n = min(len(a), len(b))
+                dot = 0.0
+                norm_a = 0.0
+                norm_b = 0.0
+                for i in range(n):
+                    av = float(a[i])
+                    bv = float(b[i])
+                    dot += av * bv
+                    norm_a += av * av
+                    norm_b += bv * bv
+                if norm_a <= 0.0 or norm_b <= 0.0:
+                    return 0.0
+                return dot / ((norm_a ** 0.5) * (norm_b ** 0.5))
 
             def collect_detail_descendants(root_node, limit: int) -> List[Any]:
-                """Walk RAPTOR summary nodes until detail chunks are reached."""
+                """Walk RAPTOR summary nodes until detail chunks are reached.
+
+                Multi-cluster RAPTOR stores secondary memberships in each
+                summary node's metadata['child_node_ids']. The database still
+                has a single parent_node FK for fast canonical traversal, so
+                retrieval must read both sources.
+                """
                 detail_nodes = []
                 frontier = [root_node]
                 seen = set()
+                seen_children = set()
 
                 while frontier and len(detail_nodes) < limit:
                     node = frontier.pop(0)
@@ -648,13 +754,45 @@ class QueryRouter:
                         continue
                     seen.add(str(node.id))
 
-                    children = list(
+                    children_by_id = {}
+                    fk_children = list(
                         DocumentChunk.objects.filter(
                             parent_node_id=node.id,
                             is_deleted=False,
                         ).order_by('page_number', 'chunk_index')[: max(limit * 3, limit)]
                     )
+                    for child in fk_children:
+                        children_by_id[str(child.id)] = child
+
+                    metadata = getattr(node, 'metadata', None) or {}
+                    metadata_child_ids = [
+                        str(child_id)
+                        for child_id in (metadata.get('child_node_ids') or [])
+                        if child_id
+                    ]
+                    missing_child_ids = [
+                        child_id
+                        for child_id in metadata_child_ids
+                        if child_id not in children_by_id and child_id not in seen_children
+                    ]
+                    if missing_child_ids:
+                        metadata_children = DocumentChunk.objects.filter(
+                            id__in=missing_child_ids,
+                            is_deleted=False,
+                        ).order_by('page_number', 'chunk_index')
+                        for child in metadata_children:
+                            children_by_id[str(child.id)] = child
+
+                    children = sorted(children_by_id.values(), key=lambda item: (
+                        getattr(item, 'page_number', 10**9) or 10**9,
+                        getattr(item, 'chunk_index', 0) or 0,
+                    ))
+
                     for child in children:
+                        child_id = str(child.id)
+                        if child_id in seen_children:
+                            continue
+                        seen_children.add(child_id)
                         if getattr(child, 'node_type', '') == 'detail':
                             detail_nodes.append(child)
                             if len(detail_nodes) >= limit:
@@ -669,32 +807,55 @@ class QueryRouter:
                 summary_score = summary_info['score']
                 node_type = getattr(summary_node, 'node_type', 'summary')
 
-                detail_children = collect_detail_descendants(summary_node, top_k)
+                summary_candidates.append({
+                    'chunk_id': str(summary_node.id),
+                    'document_id': str(document_id),
+                    'score': summary_score * 0.9,
+                    'source': f'raptor_{node_type}',
+                    'snippet': (summary_node.content or '')[:300],
+                    'page': summary_node.page_number,
+                    'node_type': node_type,
+                })
+
+                detail_children = collect_detail_descendants(summary_node, descendant_limit)
                 if detail_children:
                     for child in detail_children:
-                        child_score = summary_score * 0.85
-                        final_candidates.append({
-                            'chunk_id': str(child.id),
+                        chunk_id = str(child.id)
+                        embedding = self.raptor._load_node_embedding(child)
+                        detail_score = cosine_similarity(query_embedding, embedding) if embedding else 0.0
+                        # Blend local detail relevance with the matched summary
+                        # score, so the tree still guides retrieval without
+                        # blindly returning page-order descendants.
+                        child_score = (0.7 * detail_score) + (0.3 * summary_score)
+                        existing = detail_candidates.get(chunk_id)
+                        if existing and float(existing.get('score', 0.0) or 0.0) >= child_score:
+                            continue
+                        detail_candidates[chunk_id] = {
+                            'chunk_id': chunk_id,
                             'document_id': str(document_id),
                             'score': child_score,
                             'source': f'raptor_{node_type}_detail',
                             'snippet': (child.content or '')[:300],
                             'page': child.page_number,
-                            'parent_summary_id': str(summary_node.id)
-                        })
-                else:
-                    final_candidates.append({
-                        'chunk_id': str(summary_node.id),
-                        'document_id': str(document_id),
-                        'score': summary_score * 0.9,
-                        'source': f'raptor_{node_type}',
-                        'snippet': (summary_node.content or '')[:300],
-                        'page': summary_node.page_number
-                    })
+                            'parent_summary_id': str(summary_node.id),
+                            'parent_summary_score': summary_score,
+                            'detail_score': detail_score,
+                        }
             
-            # Sort by score and return top K
-            final_candidates = sorted(final_candidates, key=lambda x: float(x.get('score', 0) or 0), reverse=True)
-            result = final_candidates[:top_k]
+            detail_ranked = sorted(
+                detail_candidates.values(),
+                key=lambda x: float(x.get('score', 0) or 0),
+                reverse=True,
+            )
+            summary_ranked = sorted(
+                summary_candidates,
+                key=lambda x: float(x.get('score', 0) or 0),
+                reverse=True,
+            )
+            result = detail_ranked[:top_k]
+            for summary_candidate in summary_ranked[: max(1, top_k // 3)]:
+                if summary_candidate['chunk_id'] not in {c['chunk_id'] for c in result}:
+                    result.append(summary_candidate)
             
             # Merge RAPTOR results with hybrid results for better coverage
             hybrid_candidates = self.hybrid.retrieve(

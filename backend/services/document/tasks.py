@@ -208,6 +208,13 @@ def process_document_assets_for_document(document_id: str, task_id: str = None) 
     }
 
 if shared_task:
+    @shared_task(bind=True, name='services.document.tasks.warmup_embedding_model_task')
+    def warmup_embedding_model_task(self):
+        from services.ai.embedding_client import warmup_embedding_model
+
+        ok = warmup_embedding_model(source='celery')
+        return {'status': 'ready' if ok else 'skipped'}
+
     @shared_task(
         bind=True,
         time_limit=getattr(settings, 'CELERY_TASK_TIME_LIMIT', 1800),
@@ -365,6 +372,11 @@ if shared_task:
             )
             nodes = builder.build_tree(str(document_id))
             node_count = len(nodes or [])
+            Document = apps.get_model('documents', 'Document')
+            Document.objects.filter(id=document_id).update(
+                has_hierarchical_chunks=bool(node_count),
+                updated_at=timezone.now(),
+            )
             _update_document_indexing_metadata(
                 document_id,
                 indexing_status='raptor_ready' if node_count else 'base_ready',

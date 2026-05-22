@@ -267,7 +267,8 @@ export class ChatService {
         folderIds?: string[],
         onStatus?: (status: string) => void,
         onCitations?: (citations: any[]) => void,
-        ragMode: 'fast' | 'deep' = 'fast'
+        ragMode: 'fast' | 'deep' = 'fast',
+        currentPage?: number
     ): Promise<void> {
         try {
             const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
@@ -293,6 +294,7 @@ export class ChatService {
                     ...(folderIds?.length ? { folder_ids: folderIds } : {}),
                     // RAG mode: 'fast' or 'deep' — allows backend to enable heavier grounding steps
                     rag_mode: ragMode,
+                    ...(currentPage ? { current_page: currentPage } : {}),
                 })
             })
 
@@ -319,13 +321,19 @@ export class ChatService {
                     if (line.startsWith('data: ')) {
                         const payload = line.slice(6).trim()
                         if (!payload) continue
+                        let data: any
                         try {
-                            const data = JSON.parse(payload)
+                            data = JSON.parse(payload)
                             if (data.status && onStatus) onStatus(data.status)
                             if (data.text) onChunk(data.text)
                             if (data.citations && onCitations) onCitations(data.citations)
-                            if (data.error) throw new Error(data.error)
+                            if (data.error) {
+                                throw new Error(data.error)
+                            }
                         } catch (e) {
+                            if (e instanceof Error && data?.error) {
+                                throw e
+                            }
                             console.error('Error parsing stream line:', e)
                         }
                     }
@@ -338,13 +346,19 @@ export class ChatService {
                 if (!line.startsWith('data: ')) continue
                 const payload = line.slice(6).trim()
                 if (!payload) continue
+                let data: any
                 try {
-                    const data = JSON.parse(payload)
+                    data = JSON.parse(payload)
                     if (data.status && onStatus) onStatus(data.status)
                     if (data.text) onChunk(data.text)
                     if (data.citations && onCitations) onCitations(data.citations)
-                    if (data.error) throw new Error(data.error)
+                    if (data.error) {
+                        throw new Error(data.error)
+                    }
                 } catch (e) {
+                    if (e instanceof Error && data?.error) {
+                        throw e
+                    }
                     console.error('Error parsing stream line:', e)
                 }
             }

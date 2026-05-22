@@ -243,7 +243,31 @@ class DocumentChunk(BaseModel):
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Additional metadata (position, heading, etc.)"
+        help_text="""
+        Additional metadata with following keys (if available from Mineru/structured parsing):
+        - block_type: str ('paragraph'|'table'|'image'|'equation'|'list'|'code'|'title'|'ocr_text')
+        - block_types: List[str] (mixed types if chunk contains multiple blocks)
+        - bbox: List[float] [x0, y0, x1, y1] (bounding box from Mineru)
+        - bboxes: List[List[float]] (multiple bounding boxes if mixed)
+        - heading_path: List[str] (document hierarchy: ['Chapter 1', 'Section 1.2', ...])
+        - hierarchy_level: int (nesting depth in document structure)
+        - reading_order_start: int (order in page from Mineru)
+        - reading_order_end: int
+        - parse_backend: str ('local_page_aware', 'mineru', 'docling', etc.)
+        - structured_chunk: bool (True if from structured parser)
+        - line_start: int (line number in original document)
+        - line_end: int
+        - page_range: List[int] [min_page, max_page]
+        - structured_split: bool (True if further split from structured block)
+        - start_char: int (character position in original text)
+        - end_char: int
+        - token_start: int (token position in word spans)
+        - token_end: int
+        - content_hash: str (MD5 hash of content for idempotency)
+        - source: str (source of chunk: 'parser'|'excel_chunker_v2'|'raptor_summary', etc.)
+        - raptor_level: int (depth in RAPTOR tree, if applicable)
+        - raptor_cluster_id: str (cluster ID in RAPTOR, if applicable)
+        """
     )
     search_vector = SearchVectorField(null=True, blank=True, verbose_name="FTS Search Vector")
 

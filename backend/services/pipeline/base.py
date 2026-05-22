@@ -180,6 +180,15 @@ class PipelineOrchestrator:
     
     Executes stages in sequence with rollback on failure.
     """
+
+    STAGE_LABELS = {
+        "validation": "Đang kiểm tra file",
+        "parsing": "Đang parse nội dung",
+        "chunking": "Đang chia chunk",
+        "asset_extraction": "Đang xử lý ảnh/OCR",
+        "summarization": "Đang tạo tóm tắt",
+        "persistence": "Đang lưu chunk và embedding",
+    }
     
     def __init__(self, stages: List[PipelineStage]):
         """Initialize orchestrator.
@@ -189,6 +198,71 @@ class PipelineOrchestrator:
         """
         self.stages = stages
         self.logger = logging.getLogger("pipeline.orchestrator")
+
+    def _stage_steps(self, current_stage: Optional[str], current_status: str) -> List[Dict[str, str]]:
+        steps = []
+        current_index = -1
+        for index, stage in enumerate(self.stages):
+            if stage.name == current_stage:
+                current_index = index
+                break
+
+        for index, stage in enumerate(self.stages):
+            status = StageStatus.NOT_STARTED.value
+            if current_index >= 0:
+                if index < current_index:
+                    status = StageStatus.COMPLETED.value
+                elif index == current_index:
+                    status = current_status
+
+            steps.append({
+                "key": stage.name,
+                "label": self.STAGE_LABELS.get(stage.name, stage.name),
+                "status": status,
+            })
+        return steps
+
+    def _publish_status(
+        self,
+        context: PipelineContext,
+        stage_name: Optional[str],
+        stage_status: str,
+        progress_percent: int,
+        error: Optional[str] = None,
+    ) -> None:
+        """Persist lightweight processing progress for polling UIs."""
+        if not context.document_id:
+            return
+
+        try:
+            from django.apps import apps
+            from django.utils import timezone
+
+            Document = apps.get_model('documents', 'Document')
+            doc = Document.objects.filter(id=context.document_id).first()
+            if not doc:
+                return
+
+            metadata = doc.metadata or {}
+            metadata.update({
+                "processing_current_stage": stage_name,
+                "processing_current_stage_label": self.STAGE_LABELS.get(stage_name, stage_name or ""),
+                "processing_stage_status": stage_status,
+                "processing_progress_percent": max(0, min(100, int(progress_percent))),
+                "processing_steps": self._stage_steps(stage_name, stage_status),
+                "processing_updated_at": timezone.now().isoformat(),
+            })
+            if context.stage_timings:
+                metadata["pipeline_stage_timings_ms"] = context.stage_timings
+            if error:
+                metadata["processing_error"] = str(error)[:1000]
+
+            doc.metadata = metadata
+            if doc.status not in ("completed", "failed"):
+                doc.status = "processing"
+            doc.save(update_fields=["status", "metadata", "updated_at"])
+        except Exception:
+            self.logger.debug("Failed to publish pipeline status", exc_info=True)
 
     def execute(self, context: PipelineContext) -> bool:
         """Execute pipeline.
@@ -200,12 +274,20 @@ class PipelineOrchestrator:
             True if successful, False if failed
         """
         executed_stages = []
+        current_stage_name = None
         
         try:
-            for stage in self.stages:
+            total_stages = max(1, len(self.stages))
+            for index, stage in enumerate(self.stages):
                 # Check if stage can be skipped
                 if stage.can_skip(context):
                     self.logger.info(f"Skipping stage: {stage.name}")
+                    self._publish_status(
+                        context,
+                        stage.name,
+                        StageStatus.COMPLETED.value,
+                        int(((index + 1) / total_stages) * 100),
+                    )
                     continue
                 
                 # Validate input
@@ -216,8 +298,15 @@ class PipelineOrchestrator:
                 
                 # Execute stage
                 self.logger.info(f"Executing stage: {stage.name}")
+                current_stage_name = stage.name
                 import time
                 start = time.time()
+                self._publish_status(
+                    context,
+                    stage.name,
+                    StageStatus.IN_PROGRESS.value,
+                    int((index / total_stages) * 100),
+                )
                 
                 context = stage.execute(context)
                 
@@ -225,6 +314,12 @@ class PipelineOrchestrator:
                 context.add_timing(stage.name, duration_ms)
                 context.stages_executed.append(stage.name)
                 executed_stages.append(stage)
+                self._publish_status(
+                    context,
+                    stage.name,
+                    StageStatus.COMPLETED.value,
+                    int(((index + 1) / total_stages) * 100),
+                )
                 
                 self.logger.info(
                     f"Stage {stage.name} completed in {duration_ms:.2f}ms"
@@ -240,11 +335,24 @@ class PipelineOrchestrator:
                 f"Pipeline completed successfully. "
                 f"Total time: {context.total_time_ms():.2f}ms"
             )
+            self._publish_status(
+                context,
+                "completed",
+                StageStatus.COMPLETED.value,
+                100,
+            )
             return True
         
         except Exception as e:
             self.logger.error(f"Pipeline failed: {str(e)}", exc_info=True)
             context.add_error("orchestrator", str(e))
+            self._publish_status(
+                context,
+                current_stage_name or "orchestrator",
+                StageStatus.FAILED.value,
+                int((len(executed_stages) / max(1, len(self.stages))) * 100),
+                error=str(e),
+            )
             
             # Rollback in reverse order
             self.logger.info(f"Rolling back {len(executed_stages)} stages")

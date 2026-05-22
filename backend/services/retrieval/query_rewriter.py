@@ -227,7 +227,8 @@ class QueryRewriter:
 
     def _normalize_text(self, text: str) -> str:
         normalized = unicodedata.normalize('NFD', (text or '').lower())
-        return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        return normalized.replace('đ', 'd').replace('Đ', 'D')
 
     def _extract_focus_terms(self, text: str, max_terms: int = 8) -> List[str]:
         normalized = self._normalize_text(text)
@@ -372,6 +373,7 @@ class QueryRewriter:
         """
         result: Dict[str, Any] = {
             'page_numbers': [],
+            'page_range': None,
             'position': None,
             'has_page_ref': False,
         }
@@ -390,6 +392,32 @@ class QueryRewriter:
                 if num not in result['page_numbers']:
                     result['page_numbers'].append(num)
                     result['has_page_ref'] = True
+
+        # Extract page ranges: "trang 2-5", "trang 2 den 5"
+        range_patterns = [
+            r'\btrang\s*(\d+)\s*(?:-|den|toi|đến|tới)\s*(\d+)\b',
+            r'\bpage\s*(\d+)\s*(?:-|to)\s*(\d+)\b',
+        ]
+        for pattern in range_patterns:
+            match = re.search(pattern, normalized)
+            if match:
+                start, end = sorted((int(match.group(1)), int(match.group(2))))
+                result['page_range'] = [start, end]
+                result['page_numbers'] = list(range(start, end + 1))
+                result['has_page_ref'] = True
+                break
+
+        # "5 trang dau" / "first 5 pages"
+        first_pages_match = re.search(
+            r'\b(?:tom tat\s*)?(?:noi dung\s*)?(\d+)\s*trang\s*(?:dau|đầu|dau tien|đầu tiên)\b',
+            normalized,
+        ) or re.search(r'\bfirst\s*(\d+)\s*pages?\b', normalized)
+        if first_pages_match:
+            count = max(1, int(first_pages_match.group(1)))
+            result['position'] = 'start'
+            result['page_range'] = [1, count]
+            result['page_numbers'] = list(range(1, count + 1))
+            result['has_page_ref'] = True
 
         # Detect position hints
         if any(m in normalized for m in ('cuoi file', 'cuoi tai lieu', 'cuoi cung',

@@ -56,6 +56,8 @@ class EmbeddingClient:
 
     _flag_model_cache = {}
     _flag_model_lock = threading.Lock()
+    _warmup_lock = threading.Lock()
+    _warmup_done = set()
 
     def __init__(
         self,
@@ -305,3 +307,62 @@ class EmbeddingClient:
                     time.sleep(2 ** attempt)
                     continue
         raise LLMServiceError(f'Embedding request failed: {last_error}')
+
+
+def warmup_embedding_model(source: str = 'startup') -> bool:
+    """Preload the configured embedding model in the current process.
+
+    FlagEmbedding loads weights lazily on first client construction. Calling
+    this during service startup moves that cost out of the first user upload or
+    chat request. The warmup is process-local because backend and Celery worker
+    processes do not share Python memory.
+    """
+    if not bool(getattr(settings, 'EMBEDDING_PRELOAD_ENABLED', True)):
+        logger.info("[EMBEDDING_WARMUP] skipped source=%s reason=disabled", source)
+        return False
+
+    backend = _normalize_backend(getattr(settings, 'EMBEDDING_BACKEND', None))
+    model = getattr(settings, 'EMBEDDING_MODEL', None) or ''
+    if backend != 'flag' and 'bge-m3' not in model.lower():
+        logger.info(
+            "[EMBEDDING_WARMUP] skipped source=%s backend=%s model=%s",
+            source,
+            backend,
+            model,
+        )
+        return False
+
+    device = _normalize_device(getattr(settings, 'EMBEDDING_DEVICE', None))
+    warmup_key = (model, backend or 'flag', device or 'auto')
+
+    with EmbeddingClient._warmup_lock:
+        if warmup_key in EmbeddingClient._warmup_done:
+            logger.info(
+                "[EMBEDDING_WARMUP] already_warm source=%s model=%s device=%s",
+                source,
+                model,
+                device or 'auto',
+            )
+            return True
+
+        t_start = time.monotonic()
+        try:
+            client = EmbeddingClient()
+            if bool(getattr(settings, 'EMBEDDING_PRELOAD_TEST_EMBED', True)):
+                text = getattr(settings, 'EMBEDDING_PRELOAD_TEXT', 'warmup embedding model')
+                client.create_embedding(text)
+
+            EmbeddingClient._warmup_done.add(warmup_key)
+            logger.info(
+                "[EMBEDDING_WARMUP] ready source=%s model=%s device=%s time=%.1fms",
+                source,
+                client.model,
+                client.device or 'auto',
+                (time.monotonic() - t_start) * 1000,
+            )
+            return True
+        except Exception as e:
+            logger.exception("[EMBEDDING_WARMUP] failed source=%s error=%s", source, e)
+            if bool(getattr(settings, 'EMBEDDING_PRELOAD_FAIL_FAST', False)):
+                raise
+            return False

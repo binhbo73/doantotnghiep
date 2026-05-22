@@ -43,7 +43,7 @@ class HybridRetriever:
         doc_hash = hashlib.md5(
             ','.join(sorted(document_ids or [])).encode()
         ).hexdigest()[:12]
-        cache_key = f"hybrid_retrieval:v5:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:{doc_hash}"
+        cache_key = f"hybrid_retrieval:v6:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:{doc_hash}"
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -72,6 +72,69 @@ class HybridRetriever:
             or 'dinh kem' in query_norm
             or ('hinh' in query_tokens and 'mo' not in query_tokens and bool(query_tokens & image_action_tokens))
         )
+        asset_stop_tokens = {
+            'toi', 'minh', 'muon', 'can', 'xem', 'show', 'hien', 'thi', 'tim',
+            'cho', 'toi', 've', 'cua', 'trong', 'tai', 'lieu', 'anh', 'hinh',
+            'image', 'photo', 'asset', 'minh', 'chung', 'dinh', 'kem', 'mo',
+            'la', 'gi', 'nao', 'nay', 'do',
+        }
+        asset_query_terms = [
+            token for token in re.findall(r'\w+', query_norm)
+            if len(token) > 1 and token not in asset_stop_tokens
+        ]
+        asset_query_phrase = ' '.join(asset_query_terms)
+
+        def normalize_asset_text(value: str) -> str:
+            value = (value or '').lower().replace('-', ' ')
+            value = ''.join(
+                c for c in unicodedata.normalize('NFD', value)
+                if unicodedata.category(c) != 'Mn'
+            )
+            return re.sub(r'\s+', ' ', re.sub(r'[^\w\s]+', ' ', value)).strip()
+
+        def score_asset_text(asset_obj) -> float:
+            """Score exact query terms against caption, OCR, nearby context, and linked chunk."""
+            if not asset_query_terms:
+                return 0.0
+
+            chunk_content = ''
+            try:
+                if asset_obj.chunk_id and asset_obj.chunk:
+                    chunk_content = asset_obj.chunk.content or ''
+            except Exception:
+                chunk_content = ''
+
+            caption_text = normalize_asset_text(getattr(asset_obj, 'caption', '') or '')
+            ocr_text = normalize_asset_text(getattr(asset_obj, 'ocr_text', '') or '')
+            context_text = normalize_asset_text(getattr(asset_obj, 'context_text', '') or '')
+            chunk_text = normalize_asset_text(chunk_content)
+            all_text = ' '.join([caption_text, ocr_text, context_text, chunk_text])
+            if not all_text:
+                return 0.0
+
+            term_hits = sum(1 for term in asset_query_terms if term in all_text)
+            score = 0.25 * (term_hits / max(1, len(asset_query_terms)))
+
+            if len(asset_query_terms) > 1 and asset_query_phrase and asset_query_phrase in all_text:
+                score += 0.25
+            if asset_query_phrase:
+                figure_title = rf'(?:^|\s)hinh\s*(?:\d+\s*)?mo hinh\s+{re.escape(asset_query_phrase)}'
+                if re.search(figure_title, all_text):
+                    score += 0.60
+                elif (
+                    f"mo hinh {asset_query_phrase}" in all_text
+                    and f"cac mo hinh {asset_query_phrase}" not in all_text
+                ):
+                    score += 0.20
+
+            # Terms found in the linked chunk/caption are stronger than terms
+            # found only in a broad system-context paragraph.
+            focused_text = ' '.join([caption_text, ocr_text, chunk_text])
+            focused_hits = sum(1 for term in asset_query_terms if term in focused_text)
+            score += 0.15 * (focused_hits / max(1, len(asset_query_terms)))
+            if asset_query_phrase and chunk_text[:120].startswith(asset_query_phrase):
+                score += 0.35
+            return min(1.0, score)
 
         import concurrent.futures
         import threading
@@ -203,9 +266,54 @@ class HybridRetriever:
                     embedding=emb, limit=asset_limit, score_threshold=effective_threshold,
                     document_ids=document_ids,
                 )
+
+                if is_image_query and document_ids:
+                    try:
+                        DocumentAsset = apps.get_model('documents', 'DocumentAsset')
+                        scored_assets = []
+                        kw_assets = DocumentAsset.objects.select_related('chunk').filter(
+                            document_id__in=document_ids,
+                            is_deleted=False,
+                        )[: max(asset_limit * 3, 30)]
+                        for ka in kw_assets:
+                            text_score = score_asset_text(ka)
+                            if text_score > 0:
+                                scored_assets.append((text_score, ka))
+                        scored_assets.sort(key=lambda item: item[0], reverse=True)
+
+                        existing_ids = {
+                            str(a.get('asset_id')) for a in asset_results if a.get('asset_id')
+                        }
+                        for text_score, ka in scored_assets[:asset_limit]:
+                            if str(ka.id) not in existing_ids:
+                                asset_results.append({
+                                    'asset_id': str(ka.id),
+                                    'document_id': str(ka.document_id),
+                                    'score': min(1.2, 0.35 + text_score),
+                                    '_text_score': text_score,
+                                    'caption': ka.caption,
+                                    'image_path': ka.image_path,
+                                    'page_number': ka.page_number,
+                                    'sheet_name': ka.sheet_name,
+                                    'anchor_cell': ka.anchor_cell,
+                                })
+                            else:
+                                for result in asset_results:
+                                    if str(result.get('asset_id')) == str(ka.id):
+                                        result['_text_score'] = max(
+                                            float(result.get('_text_score') or 0.0),
+                                            text_score,
+                                        )
+                                        result['score'] = max(
+                                            float(result.get('score') or 0.0),
+                                            min(1.2, 0.35 + text_score),
+                                        )
+                                        break
+                    except Exception as e:
+                        logger.warning(f"Asset text fallback failed: {e}")
                 
                 # HEALING: Keyword fallback for assets if vector search returns too few
-                if is_image_query and document_ids and len(asset_results or []) < 2:
+                if False and is_image_query and document_ids:
                     try:
                         DocumentAsset = apps.get_model('documents', 'DocumentAsset')
                         # Search for assets with common image keywords in caption
@@ -292,7 +400,11 @@ class HybridRetriever:
             
             # Map existing assets for quick lookup
             existing_assets = {
-                str(a.id): a for a in DocumentAsset.objects.filter(id__in=asset_ids_from_q, is_deleted=False)
+                str(a.id): a
+                for a in DocumentAsset.objects.select_related('chunk').filter(
+                    id__in=asset_ids_from_q,
+                    is_deleted=False,
+                )
             }
 
             for asset in asset_candidates:
@@ -319,7 +431,8 @@ class HybridRetriever:
                     logger.warning(f"[HYBRID_RETR] Skipping non-existent asset {asset_id}")
                     continue
 
-                # Boost asset score if it's an explicit image query
+                # Boost asset score if it's an explicit image query, but let
+                # exact figure-title matches outrank broad architecture images.
                 raw_score = float(asset.get('score', 0.5))
                 # Identify if query specifically asks for images
                 import unicodedata
@@ -328,8 +441,22 @@ class HybridRetriever:
                 
                 boosted_score = raw_score
                 if is_img_q:
-                    # Give a massive boost to ensure assets are ALWAYS in the top context
-                    boosted_score = min(0.98, raw_score + 0.6)
+                    text_score = max(
+                        float(asset.get('_text_score') or 0.0),
+                        score_asset_text(target_asset),
+                    )
+                    boosted_score = max(raw_score + 0.25, 0.45 + text_score)
+                    boosted_score = min(1.25, boosted_score)
+                    if text_score >= 0.95:
+                        boosted_score = 1.25
+                    elif text_score >= 0.70:
+                        boosted_score = min(boosted_score, 1.18)
+                    elif text_score >= 0.45:
+                        boosted_score = min(boosted_score, 1.05)
+                    else:
+                        boosted_score = min(boosted_score, 0.90)
+                else:
+                    text_score = 0.0
 
                 sorted_candidates.append({
                     'chunk_id': '',
@@ -346,6 +473,9 @@ class HybridRetriever:
                     'asset_paragraph_index': target_asset.paragraph_index,
                     'asset_position_in_document': target_asset.position_in_document or {},
                     'asset_context_text': target_asset.context_text or '',
+                    'asset_ocr_text': target_asset.ocr_text or '',
+                    'asset_linked_chunk_text': (target_asset.chunk.content or '') if target_asset.chunk_id and target_asset.chunk else '',
+                    '_asset_text_score': text_score,
                 })
 
         # Re-sort
@@ -361,7 +491,8 @@ class HybridRetriever:
         )
 
         # Separate assets and non-assets
-        asset_results = [c for c in sorted_candidates if c.get('source') == 'asset']
+        max_asset_results = int(getattr(settings, 'RAG_MAX_ASSET_RESULTS', 4))
+        asset_results = [c for c in sorted_candidates if c.get('source') == 'asset'][:max_asset_results]
         non_asset_results = [c for c in sorted_candidates if c.get('source') != 'asset']
         
         # Take top (top_k - len(assets)) non-assets + all assets

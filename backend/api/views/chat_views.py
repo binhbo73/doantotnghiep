@@ -944,6 +944,11 @@ class ChatStreamView(View):
         rag_mode = str(body.get('rag_mode') or body.get('retrieval_mode') or 'fast').lower()
         if rag_mode not in {'fast', 'deep'}:
             rag_mode = 'fast'
+        current_page = body.get('current_page') or body.get('currentPage')
+        try:
+            current_page = int(current_page) if current_page else None
+        except (TypeError, ValueError):
+            current_page = None
         # Đảm bảo là list[str]
         if not isinstance(document_ids, list):
             document_ids = []
@@ -993,6 +998,7 @@ class ChatStreamView(View):
                             document_ids=document_ids,
                             folder_ids=folder_ids,
                             rag_mode=rag_mode,
+                            current_page=current_page,
                         ):
                             # put_nowait sẽ raise nếu queue đầy → dùng run_coroutine_threadsafe
                             future = _asyncio.run_coroutine_threadsafe(

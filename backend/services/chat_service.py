@@ -73,6 +73,7 @@ Cách làm việc:
    - Quy trình/các bước: giữ đúng thứ tự bước trong tài liệu.
     - Số liệu/bảng biểu: chép đúng số, đơn vị, điều kiện, mốc thời gian.
     - Bảng dữ liệu / hàng cột: nếu tài liệu có bảng (dạng |cột1|cột2| hoặc bảng HTML/Excel/DOCX), PHẢI trả lời bằng bảng markdown giữ NGUYÊN cấu trúc |cột|cột|, không chuyển thành bullet hay paragraph. Giữ tên cột và số liệu đúng như tài liệu. Nếu bảng dài, trả lời toàn bộ bảng, không cắt xén.
+    - Nếu bảng trong nguồn bị parse thành text phẳng, các dòng bắt đầu bằng số thứ tự như "1 Email ...", "2 Mật khẩu ..." là CÁC HÀNG DỮ LIỆU. Không được dùng số bảng (ví dụ Bảng 10, Bảng 34) làm STT của hàng. Không được tạo bảng chỉ có header trống khi nguồn có dòng dữ liệu.
     - Thuật ngữ / định nghĩa: chỉ khi người dùng hỏi ý nghĩa của một khái niệm thì mới trả lời theo kiểu giải thích ngắn, không lẫn với role bảng.
    - Hỏi xem ảnh/hình/minh chứng: trả lời ngắn gọn "Có ảnh phù hợp" kèm vị trí ảnh và trích dẫn; không lặp lại mô tả caption dài nếu không cần.
 2. Khi câu hỏi yêu cầu đầy đủ, giữ cấu trúc tài liệu: mục chính -> ý con -> chi tiết.
@@ -131,7 +132,502 @@ Cách làm việc:
             ch for ch in normalized
             if unicodedata.category(ch) != 'Mn'
         )
-        return re.sub(r'\s+', ' ', without_marks.lower()).strip()
+        without_marks = without_marks.replace('đ', 'd').replace('Đ', 'd')
+        without_punctuation = re.sub(r'[^\w\s]+', ' ', without_marks.lower())
+        return re.sub(r'\s+', ' ', without_punctuation).strip()
+
+    def _extract_requested_heading(self, query: str) -> str:
+        """Extract a likely section heading from queries asking for full section content."""
+        query_norm = self._normalize_query_text(query)
+        if not query_norm:
+            return ''
+
+        figure_match = re.search(r'\b(?:hinh|figure|image|anh)\s*\d+\b.*', query_norm)
+        if figure_match:
+            heading = figure_match.group(0)
+            heading = re.sub(
+                r'\b(toi|minh|muon|can|xem|lay|trich|in|hien|thi|noi dung|cua|ve)\b',
+                ' ',
+                heading,
+            )
+            heading = re.sub(r'\s+', ' ', heading).strip(' .:-')
+            return heading if len(heading) >= 8 else ''
+
+        if not any(marker in query_norm for marker in ('noi dung', 'toan bo', 'day du', 'muc', 'phan', 'bang', 'danh sach', 'xem', 'lay', 'trich', 'section', 'chuong')):
+            return ''
+
+        heading = ''
+        for marker in ('noi dung', 'bang', 'danh sach', 'muc', 'phan', 'section', 'chuong', 'xem', 'lay', 'trich'):
+            marker_text = f' {marker} '
+            if marker_text in f' {query_norm} ':
+                heading = query_norm.split(marker, 1)[1]
+                break
+        if not heading:
+            heading = query_norm
+
+        heading = re.sub(
+            r'\b(toi|minh|muon|can|xem|lay|trich|in|ra|toan bo|day du|chi tiet|noi dung|cua|ve|phan|muc|bang|danh sach)\b',
+            ' ',
+            heading,
+        )
+        heading = re.sub(r'\s+', ' ', heading).strip(' .:-')
+        return heading if len(heading) >= 8 else ''
+
+    def _is_specific_image_query(self, query: str) -> bool:
+        """True when the user asks for a particular figure/image such as "Hinh 2"."""
+        query_norm = self._normalize_query_text(query)
+        if not query_norm:
+            return False
+        return bool(re.search(r'\b(?:hinh|figure|image|anh)\s*\d+\b', query_norm))
+
+    def _requested_image_limit(self, query: str, default_specific: Optional[int] = 1) -> Optional[int]:
+        """Return requested image count. None means no explicit cap/all images."""
+        query_norm = self._normalize_query_text(query)
+        if not query_norm:
+            return default_specific
+
+        if any(marker in query_norm for marker in ('tat ca', 'toan bo', 'liet ke', 'danh sach', 'all images', 'all image')):
+            return None
+
+        digit_match = re.search(r'\b(\d{1,3})\s*(?:anh|hinh|hinh anh|image|images|photo|photos)\b', query_norm)
+        if digit_match:
+            return max(1, min(100, int(digit_match.group(1))))
+
+        word_counts = {
+            'mot': 1,
+            'hai': 2,
+            'ba': 3,
+            'bon': 4,
+            'tu': 4,
+            'nam': 5,
+            'sau': 6,
+            'bay': 7,
+            'tam': 8,
+            'chin': 9,
+            'muoi': 10,
+        }
+        word_match = re.search(r'\b(mot|hai|ba|bon|tu|nam|sau|bay|tam|chin|muoi)\s*(?:anh|hinh|hinh anh|image|images|photo|photos)\b', query_norm)
+        if word_match:
+            return word_counts.get(word_match.group(1), default_specific)
+
+        return default_specific if self._is_specific_image_query(query) else None
+
+    def _retrieve_assets_for_exact_image(
+        self,
+        query: str,
+        candidates: List[Dict[str, Any]],
+        max_assets: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Attach image assets near an exact figure-caption chunk."""
+        if not candidates or not self._is_specific_image_query(query):
+            return []
+
+        chunk_ids = [c.get('chunk_id') for c in candidates if c.get('chunk_id')]
+        document_ids = list({str(c.get('document_id')) for c in candidates if c.get('document_id')})
+        pages = list({c.get('page') for c in candidates if c.get('page')})
+        if not document_ids or (not chunk_ids and not pages):
+            return []
+
+        heading_norm = self._extract_requested_heading(query)
+        figure_match = re.search(r'\b(?:hinh|figure|image|anh)\s*(\d+)\b', self._normalize_query_text(query))
+        figure_token = f"hinh {figure_match.group(1)}" if figure_match else ''
+        requested_figure_number = figure_match.group(1) if figure_match else ''
+        requested_limit = max_assets if max_assets is not None else self._requested_image_limit(query, default_specific=1)
+
+        try:
+            from django.db.models import Q
+
+            DocumentAsset = apps.get_model('documents', 'DocumentAsset')
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            filters = Q(document_id__in=document_ids, is_deleted=False)
+            location_filter = Q()
+            if chunk_ids:
+                location_filter |= Q(chunk_id__in=chunk_ids)
+            if pages:
+                location_filter |= Q(page_number__in=pages)
+            if location_filter:
+                filters &= location_filter
+
+            assets = list(
+                DocumentAsset.objects.select_related('chunk')
+                .filter(filters)
+                .order_by('page_number', 'created_at')[: (max(requested_limit * 3, 12) if requested_limit else 100)]
+            )
+
+            selected_asset = None
+            if requested_figure_number and len(assets) > 1:
+                page_numbers = [page for page in pages if page]
+                page_figure_numbers: Dict[int, List[str]] = {}
+                chunk_rows = (
+                    DocumentChunk.objects.filter(
+                        document_id__in=document_ids,
+                        page_number__in=page_numbers,
+                        node_type='detail',
+                        is_deleted=False,
+                    )
+                    .order_by('page_number', 'chunk_index')
+                    .values('page_number', 'content')
+                )
+                for row in chunk_rows:
+                    page_number = row.get('page_number')
+                    if not page_number:
+                        continue
+                    numbers = page_figure_numbers.setdefault(int(page_number), [])
+                    for number in re.findall(r'\bhinh\s*(\d+)\b', self._normalize_query_text(row.get('content') or '')):
+                        if number not in numbers:
+                            numbers.append(number)
+
+                for page_number in page_numbers:
+                    page_assets = [a for a in assets if int(a.page_number or 0) == int(page_number)]
+                    figures_on_page = page_figure_numbers.get(int(page_number), [])
+                    if requested_figure_number not in figures_on_page or not page_assets:
+                        continue
+
+                    page_assets.sort(
+                        key=lambda asset: float((asset.position_in_document or {}).get('y') or 0.0)
+                    )
+                    if len(figures_on_page) > 1 and len(page_assets) > 1:
+                        figure_idx = figures_on_page.index(requested_figure_number)
+                        asset_idx = round(figure_idx * (len(page_assets) - 1) / (len(figures_on_page) - 1))
+                    else:
+                        asset_idx = 0
+                    selected_asset = page_assets[max(0, min(asset_idx, len(page_assets) - 1))]
+                    break
+
+                if selected_asset and requested_limit == 1:
+                    assets = [selected_asset]
+
+            scored_assets: List[Tuple[float, Any]] = []
+            selected_asset_id = str(selected_asset.id) if selected_asset else ''
+            selected_asset_y = (
+                float((selected_asset.position_in_document or {}).get('y') or 0.0)
+                if selected_asset else None
+            )
+            for asset in assets:
+                linked_text = ''
+                try:
+                    linked_text = asset.chunk.content if asset.chunk_id and asset.chunk else ''
+                except Exception:
+                    linked_text = ''
+                combined_norm = self._normalize_query_text(
+                    ' '.join([
+                        asset.caption or '',
+                        asset.ocr_text or '',
+                        asset.context_text or '',
+                        linked_text or '',
+                    ])
+                )
+
+                score = 0.55
+                if figure_token and figure_token in combined_norm:
+                    score += 0.35
+                if heading_norm and heading_norm in combined_norm:
+                    score += 0.25
+                if asset.chunk_id and str(asset.chunk_id) in {str(cid) for cid in chunk_ids}:
+                    score += 0.2
+                if selected_asset_id and str(asset.id) == selected_asset_id:
+                    score += 0.4
+                scored_assets.append((min(1.25, score), asset))
+
+            scored_assets.sort(
+                key=lambda item: (
+                    item[0],
+                    -abs(float((item[1].position_in_document or {}).get('y') or 0.0) - selected_asset_y)
+                    if selected_asset_y is not None else 0.0,
+                    (float(item[1].image_width or 0.0) * float(item[1].image_height or 0.0)),
+                ),
+                reverse=True,
+            )
+
+            result = []
+            seen = set()
+            for score, asset in scored_assets:
+                if str(asset.id) in seen:
+                    continue
+                seen.add(str(asset.id))
+                result.append({
+                    'chunk_id': '',
+                    'document_id': str(asset.document_id),
+                    'score': score,
+                    'source': 'asset',
+                    'snippet': (asset.caption or '')[:300],
+                    'asset_id': str(asset.id),
+                    'asset_caption': asset.caption or '',
+                    'asset_image_path': asset.image_path,
+                    'asset_page_number': asset.page_number,
+                    'asset_sheet_name': asset.sheet_name,
+                    'asset_anchor_cell': asset.anchor_cell,
+                    'asset_paragraph_index': asset.paragraph_index,
+                    'asset_position_in_document': asset.position_in_document or {},
+                    'asset_context_text': '',
+                    'asset_ocr_text': asset.ocr_text or '',
+                    'asset_linked_chunk_text': (asset.chunk.content or '') if asset.chunk_id and asset.chunk else '',
+                    '_asset_text_score': score,
+                    '_exact_image_asset': True,
+                })
+                if requested_limit is not None and len(result) >= requested_limit:
+                    break
+            return result
+        except Exception as e:
+            logger.warning(f"[_retrieve_assets_for_exact_image] failed: {e}")
+            return []
+
+    def _trim_section_text(self, text: str, heading_norm: str, is_first: bool) -> str:
+        """Trim a section chunk to the requested heading and stop before obvious next sections."""
+        if not text:
+            return ''
+
+        result = text
+        if is_first and heading_norm:
+            norm_chars = []
+            original_positions = []
+            for idx, char in enumerate(text):
+                if char.isspace():
+                    normalized_char = ' '
+                else:
+                    decomposed = unicodedata.normalize('NFD', char.lower())
+                    normalized_char = ''.join(
+                        ch for ch in decomposed
+                        if unicodedata.category(ch) != 'Mn'
+                    )
+                    normalized_char = normalized_char.replace('đ', 'd').replace('Đ', 'd')
+                    normalized_char = re.sub(r'[^\w\s]+', ' ', normalized_char)
+                for out_char in normalized_char:
+                    norm_chars.append(out_char)
+                    original_positions.append(idx)
+            text_norm = ''.join(norm_chars)
+            pattern = r'\s+'.join(re.escape(part) for part in heading_norm.split())
+            match = re.search(pattern, text_norm)
+            if match:
+                result = text[original_positions[match.start()]:]
+
+        stop_patterns = [
+            r'\n\s*TÀI LIỆU THAM KHẢO\b',
+            r'\n\s*TAI LIEU THAM KHAO\b',
+            r'\n\s*PHỤ LỤC\b',
+            r'\n\s*PHU LUC\b',
+            r'\s+Chỉ Số Đánh Giá\b',
+            r'\s+Chi So Danh Gia\b',
+            r'\s+Thành phần hệ thống\b',
+            r'\s+Thanh phan he thong\b',
+            r'\s+Phương Pháp\b',
+            r'\s+Phuong Phap\b',
+        ]
+        for pattern in stop_patterns:
+            match = re.search(pattern, result, flags=re.IGNORECASE)
+            if match:
+                result = result[:match.start()]
+                break
+        return result.strip()
+
+    def _starts_new_numbered_section(self, text: str) -> bool:
+        """Detect the next section heading when collecting contiguous chunks."""
+        return bool(re.match(r'^\s*\d+(?:\.\d+)*\.\s+\S+', text or ''))
+
+    def _first_numbered_section_id(self, text: str) -> str:
+        """Return the leading section number from a chunk, e.g. '3' or '3.1'."""
+        match = re.match(r'^\s*(\d+(?:\.\d+)*)\.\s+\S+', text or '')
+        return match.group(1) if match else ''
+
+    def _is_child_section_id(self, current_id: str, candidate_id: str) -> bool:
+        """True if candidate section belongs under current section."""
+        if not current_id or not candidate_id:
+            return False
+        return candidate_id == current_id or candidate_id.startswith(f"{current_id}.")
+
+    def _starts_new_outside_section(self, text: str, current_section_id: str) -> bool:
+        """Detect a new numbered section outside the requested section subtree."""
+        section_id = self._first_numbered_section_id(text)
+        if not section_id:
+            return False
+        if not current_section_id:
+            return True
+        return not self._is_child_section_id(current_section_id, section_id)
+
+    def _trim_to_section_scope(self, text: str, current_section_id: str) -> str:
+        """Trim text before the first numbered section outside current_section_id."""
+        if not text or not current_section_id:
+            return text or ''
+
+        kept = []
+        for line in text.splitlines():
+            section_id = self._first_numbered_section_id(line)
+            if section_id and not self._is_child_section_id(current_section_id, section_id):
+                break
+            kept.append(line)
+        return '\n'.join(kept).strip()
+
+    def _has_heading_line(self, text: str, heading_norm: str) -> bool:
+        """Return true when the requested heading appears as a standalone section heading."""
+        for raw_line in (text or '').splitlines():
+            line_norm = self._normalize_query_text(raw_line)
+            if not line_norm or heading_norm not in line_norm:
+                continue
+            prefix = line_norm.split(heading_norm, 1)[0].strip()
+            suffix = line_norm.split(heading_norm, 1)[1].strip()
+            if suffix and not re.match(r'^\d+$', suffix):
+                continue
+            if not prefix:
+                return True
+            if re.match(r'^\d+(?:\.\d+)*\.?\s*(?:cac|nhung|phan)?$', prefix):
+                return True
+        return False
+
+    def _heading_section_id(self, text: str, heading_norm: str) -> str:
+        """Return section number for the heading line that matched heading_norm."""
+        for raw_line in (text or '').splitlines():
+            line_norm = self._normalize_query_text(raw_line)
+            if not line_norm or heading_norm not in line_norm:
+                continue
+            prefix = line_norm.split(heading_norm, 1)[0].strip()
+            match = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(?:cac|nhung|phan)?$', prefix)
+            if match:
+                return match.group(1)
+        return ''
+
+    def _looks_like_toc_chunk(self, row: Dict[str, Any]) -> bool:
+        """Detect table-of-contents/list-of-tables chunks before exact-heading extraction."""
+        text = row.get('content') or ''
+        text_norm = self._normalize_query_text(text)
+        metadata = row.get('metadata') or {}
+        if metadata.get('is_toc') or metadata.get('layout_role') == 'toc':
+            return True
+        if any(marker in text_norm for marker in ('muc luc', 'danh sach bang', 'danh sach hinh anh')):
+            return True
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if any(re.search(r'\.\.\.\s*\d+$', line) for line in lines[:20]):
+            return True
+        if len(lines) < 2:
+            return False
+
+        toc_like = 0
+        for line in lines[:20]:
+            if re.search(r'\.\.\.\s*\d+$', line) or re.search(r'^(?:\d+(?:\.\d+)*|bảng\s+\d+|hình\s+\d+)\b.+\s\d+$', line, flags=re.IGNORECASE):
+                toc_like += 1
+        return toc_like >= 2 and (toc_like / max(1, min(len(lines), 20))) >= 0.35
+
+    def _find_exact_heading_start_pos(self, rows: List[Dict[str, Any]], heading_norm: str) -> Optional[int]:
+        """Find the real section start, preferring content over TOC occurrences."""
+        matches = [
+            idx
+            for idx, row in enumerate(rows)
+            if heading_norm in self._normalize_query_text(row.get('content') or '')
+        ]
+        if not matches:
+            return None
+
+        scored_matches = []
+        for idx in matches:
+            row = rows[idx]
+            text = row.get('content') or ''
+            text_norm = self._normalize_query_text(text)
+            score = 0
+            if self._looks_like_toc_chunk(row):
+                score -= 10
+            else:
+                score += 3
+
+            if self._has_heading_line(text, heading_norm):
+                score += 4
+
+            heading_pos = text_norm.find(heading_norm)
+            heading_tail = text_norm[heading_pos + len(heading_norm):] if heading_pos >= 0 else ''
+            if len(heading_tail.strip()) > 80:
+                score += 2
+            if len(heading_tail.strip()) > 20 and not re.match(r'^\s*(?:\.+\s*)?\d+\b', heading_tail):
+                score += 1
+
+            block_type = (row.get('metadata') or {}).get('block_type')
+            if block_type in ('paragraph', 'mixed', 'table'):
+                score += 1
+            elif block_type in ('list', 'title'):
+                score -= 1
+
+            heading_path = (row.get('metadata') or {}).get('heading_path') or []
+            if isinstance(heading_path, (list, tuple)):
+                heading_path_text = ' '.join(str(item) for item in heading_path if item)
+            else:
+                heading_path_text = str(heading_path)
+            if heading_norm in self._normalize_query_text(heading_path_text):
+                score += 2
+
+            if idx + 1 < len(rows):
+                next_row = rows[idx + 1]
+                next_text = next_row.get('content') or ''
+                same_doc = str(next_row.get('document_id')) == str(row.get('document_id'))
+                adjacent = int(next_row.get('chunk_index') or 0) - int(row.get('chunk_index') or 0) == 1
+                if (
+                    same_doc
+                    and adjacent
+                    and len(next_text.strip()) > 80
+                    and not self._looks_like_toc_chunk(next_row)
+                    and not self._starts_new_outside_section(next_text, self._heading_section_id(text, heading_norm))
+                ):
+                    score += 1
+            scored_matches.append((score, idx))
+
+        scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        best_score, best_idx = scored_matches[0]
+        if best_score <= -5:
+            return matches[0]
+        return best_idx
+
+    def _retrieve_exact_heading_section_candidates(
+        self,
+        query: str,
+        resolved_doc_ids: List[str],
+        max_chunks: int = 6,
+    ) -> List[Dict[str, Any]]:
+        """Fetch continuous chunks for an explicitly requested heading."""
+        heading_norm = self._extract_requested_heading(query)
+        if not heading_norm or not resolved_doc_ids:
+            return []
+
+        try:
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            rows = list(
+                DocumentChunk.objects.filter(
+                    document_id__in=resolved_doc_ids,
+                    node_type='detail',
+                    is_deleted=False,
+                )
+                .order_by('document_id', 'chunk_index')
+                .values('id', 'document_id', 'content', 'page_number', 'chunk_index', 'metadata')
+            )
+            start_pos = self._find_exact_heading_start_pos(rows, heading_norm)
+            if start_pos is None:
+                return []
+
+            start_text = rows[start_pos].get('content') or ''
+            current_section_id = self._heading_section_id(start_text, heading_norm) or self._first_numbered_section_id(start_text)
+            section_rows = rows[start_pos:start_pos + max_chunks]
+            candidates = []
+            for offset, row in enumerate(section_rows):
+                row_text = row.get('content') or ''
+                if offset > 0 and self._starts_new_outside_section(row_text, current_section_id):
+                    break
+                snippet = self._trim_section_text(row.get('content') or '', heading_norm, offset == 0)
+                snippet = self._trim_to_section_scope(snippet, current_section_id)
+                if not snippet:
+                    continue
+                candidates.append({
+                    'chunk_id': str(row['id']),
+                    'document_id': str(row['document_id']),
+                    'score': 1.5 - (offset * 0.03),
+                    'source': 'exact_heading',
+                    'snippet': snippet,
+                    'page': row.get('page_number'),
+                    'chunk_index': row.get('chunk_index'),
+                    'metadata': row.get('metadata') or {},
+                    '_exact_heading': heading_norm,
+                })
+                if offset > 0 and len(snippet) < len(row.get('content') or ''):
+                    break
+            return candidates
+        except Exception as e:
+            logger.warning(f"[_retrieve_exact_heading_section_candidates] failed: {e}")
+            return []
 
     def _candidate_content_signature(self, candidate: Dict[str, Any]) -> str:
         """Create a stable signature for near-duplicate chunk content."""
@@ -156,8 +652,21 @@ Cách làm việc:
         if metadata.get('is_toc') or metadata.get('layout_role') == 'toc':
             return True
 
-        snippet = self._normalize_query_text(candidate.get('snippet') or candidate.get('citation_excerpt') or '')
-        return any(marker in snippet for marker in ('muc luc', 'table of contents', 'contents', 'index'))
+        text = candidate.get('snippet') or candidate.get('citation_excerpt') or candidate.get('content') or ''
+        snippet = self._normalize_query_text(text)
+        if any(marker in snippet for marker in ('muc luc', 'danh sach bang', 'danh sach hinh anh', 'table of contents', 'contents page')):
+            return True
+
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if any(re.search(r'\.\.\.\s*\d+$', line) for line in lines[:20]):
+            return True
+        if len(lines) < 2:
+            return False
+        toc_like = 0
+        for line in lines[:20]:
+            if re.search(r'\.\.\.\s*\d+$', line) or re.search(r'^(?:\d+(?:\.\d+)*|bảng\s+\d+|hình\s+\d+)\b.+\s\d+$', line, flags=re.IGNORECASE):
+                toc_like += 1
+        return toc_like >= 2 and (toc_like / max(1, min(len(lines), 20))) >= 0.35
 
     def _filter_front_matter_candidates(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Keep TOC/front-matter only when the user is explicitly asking for it."""
@@ -169,10 +678,7 @@ Cách làm việc:
         if asks_toc:
             return candidates
 
-        body_candidates = [candidate for candidate in candidates if not self._looks_like_front_matter_candidate(candidate)]
-        if body_candidates:
-            return body_candidates
-        return candidates
+        return [candidate for candidate in candidates if not self._looks_like_front_matter_candidate(candidate)]
 
     def _is_better_candidate(self, existing: Dict[str, Any], candidate: Dict[str, Any]) -> bool:
         """Prefer body content over front-matter and higher-scoring evidence."""
@@ -690,7 +1196,7 @@ Cách làm việc:
             r'\b(cac|nhung)\b',
             r'\b(bao gom|gom|gom nhung gi)\b',
             r'\b(liet ke|ke ra|neu|trinh bay)\b',
-            r'\b(day du|chi tiet|tat ca)\b',
+            r'\b(day du|chi tiet|tat ca|toan bo)\b',
             r'\b(la gi|nhu the nao)\b',
             r'\b(dac diem|dac trung|thanh phan|noi dung|nguyen tac|yeu cau)\b',
             r'^\s*\d+\s*[/.)-]\s*',
@@ -1288,7 +1794,7 @@ Cách làm việc:
                 
                 # SMART FILTER: Only include asset if it's referenced in the answer
                 # OR if the user question explicitly asks for images/proofs.
-                is_explicit_request = False
+                is_explicit_request = self._is_specific_image_query(query) or self._is_image_query(query)
                 
                 if answer_text and citation_id:
                     try:
@@ -1308,7 +1814,8 @@ Cách làm việc:
                             # - Nếu KHÔNG được trích dẫn: 
                             #   + Chỉ hiện nếu là yêu cầu xem ảnh ĐÍCH DANH và điểm số phải cao (> 0.85)
                             #   + Hoặc điểm số phải CỰC CAO (> 0.95) để tránh hiện nhầm icon.
-                            continue
+                            if not (is_explicit_request and score >= 0.45):
+                                continue
                     except (ValueError, TypeError):
                         pass
 
@@ -1636,6 +2143,7 @@ Cách làm việc:
         top_k: int = 4,  # Fix E: Giam tu 5 -> 4 de nhanh hon, it noise hon
         snippet_chars: int = 900,
         rag_mode: str = 'fast',
+        current_page: int = None,
     ) -> Tuple[str, List[Dict]]:
         """
         Thực hiện Hybrid RAG search (BM25 + Vector) → rerank → build context string.
@@ -1656,19 +2164,31 @@ Cách làm việc:
 
         try:
             t_route_start = time.monotonic()
-            router = self._get_router()
-
-            # Truyền document_ids vào user_context để HybridRetriever / RAPTOR biết giới hạn
-            user_context = {'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'}
-
-            # QueryRouter: quyết định dùng RAPTOR hay Hybrid, rồi rerank
-            candidates = router.route(
-                query=query,
-                user_context=user_context,
-                top_k=top_k,
-                conversation_history=conversation_history,
+            exact_heading_candidates = self._retrieve_exact_heading_section_candidates(
+                query,
+                resolved_doc_ids,
+                max_chunks=int(getattr(settings, 'RAG_EXACT_HEADING_MAX_CHUNKS', 6)),
             )
-            t_route_done = (time.monotonic() - t_route_start) * 1000
+            if exact_heading_candidates:
+                exact_image_assets = self._retrieve_assets_for_exact_image(query, exact_heading_candidates)
+                candidates = exact_heading_candidates + exact_image_assets
+                t_route_done = (time.monotonic() - t_route_start) * 1000
+            else:
+                router = self._get_router()
+
+                # Truyền document_ids vào user_context để HybridRetriever / RAPTOR biết giới hạn
+                user_context = {'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'}
+                if current_page:
+                    user_context['current_page'] = current_page
+
+                # QueryRouter: quyết định dùng RAPTOR hay Hybrid, rồi rerank
+                candidates = router.route(
+                    query=query,
+                    user_context=user_context,
+                    top_k=top_k,
+                    conversation_history=conversation_history,
+                )
+                t_route_done = (time.monotonic() - t_route_start) * 1000
 
             if not candidates:
                 logger.debug("[_retrieve_context] Không tìm thấy chunks phù hợp")
@@ -1688,21 +2208,26 @@ Cách làm việc:
             # Separate assets from chunks before neighbor expansion
             asset_candidates_ctx = [c for c in candidates if c.get('source') == 'asset']
             chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
-            if not is_spreadsheet_retrieval:
+            if exact_heading_candidates:
+                chunk_candidates_ctx = exact_heading_candidates
+            elif not is_spreadsheet_retrieval:
                 chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
             candidates = self._deduplicate_candidates_by_content(chunk_candidates_ctx + asset_candidates_ctx)
             # Context stitching: merge sequential chunks into continuous blocks
             if not is_spreadsheet_retrieval:
                 candidates = self._stitch_sequential_chunks(candidates)
             # Self-RAG: relevance check, re-retrieve if too few relevant
-            relevance = {'passed': True} if is_spreadsheet_retrieval else self._self_rag_relevance_check(query, candidates)
-            if not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
+            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
+            if not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
                 logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
                 try:
                     router = self._get_router()
+                    re_user_context = {'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'}
+                    if current_page:
+                        re_user_context['current_page'] = current_page
                     re_candidates = router.route(
                         query=query,
-                        user_context={'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'},
+                        user_context=re_user_context,
                         top_k=max(8, top_k * 2),
                         conversation_history=conversation_history,
                     )
@@ -1829,8 +2354,18 @@ Cách làm việc:
                     if loc:
                         prefix += f"Vi tri: {loc.strip()}\n"
                     prefix += f"Cach trich dan: {source_label}\n"
-                    
-                    asset_parts.append(f"{prefix}Mo ta: {cap}")
+
+                    details = [f"{prefix}Mo ta: {cap}"]
+                    context_text = (c.get('asset_context_text') or '').strip()
+                    if context_text:
+                        details.append(f"Ngu canh gan anh: {context_text[:700]}")
+                    linked_chunk_text = (c.get('asset_linked_chunk_text') or '').strip()
+                    if linked_chunk_text:
+                        details.append(f"Doan tai lieu gan nhat: {linked_chunk_text[:900]}")
+                    ocr_text = (c.get('asset_ocr_text') or '').strip()
+                    if ocr_text:
+                        details.append(f"Chu/OCR trong anh: {ocr_text[:500]}")
+                    asset_parts.append("\n".join(details))
 
             if asset_parts:
                 asset_context = "=== THONG TIN HINH ANH TRONG TAI LIEU (CHI TRICH DAN KHI THUC SU LIEN QUAN) ===\n" + "\n\n".join(asset_parts) + "\n=== HET HINH ANH ==="
@@ -1910,6 +2445,7 @@ Cách làm việc:
                 folder_ids=(filters or {}).get('folder_ids') or [],
             )
             rag_mode = (filters or {}).get('rag_mode') or rag_mode or 'fast'
+            current_page = (filters or {}).get('current_page') or (filters or {}).get('currentPage')
 
             # 4. Lấy lịch sử
             messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
@@ -1923,6 +2459,7 @@ Cách làm việc:
                 top_k=self._get_rag_top_k(query, default_top_k=3),
                 snippet_chars=self._get_context_snippet_chars(query),
                 rag_mode=rag_mode,
+                current_page=current_page,
             )
 
             # 5. Đính kèm tài liệu vào câu hỏi nếu có
@@ -1973,6 +2510,7 @@ Cách làm việc:
         document_ids: List[str] = None,
         folder_ids: List[str] = None,
         rag_mode: str = 'fast',
+        current_page: int = None,
     ) -> Generator[str, None, None]:
         """
         Chat STREAM với Model — hỗ trợ RAG khi có tài liệu đính kèm.
@@ -2059,6 +2597,7 @@ Cách làm việc:
                     top_k=self._get_rag_top_k(query, default_top_k=4),
                     snippet_chars=self._get_context_snippet_chars(query),
                     rag_mode=rag_mode,
+                    current_page=current_page,
                 )
                 t5 = time.monotonic()
                 logger.debug(

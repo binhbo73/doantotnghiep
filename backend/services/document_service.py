@@ -1714,14 +1714,112 @@ class DocumentService(BaseService):
             total_chunks = chunks.count()
             # Chunks with embeddings are considered "completed"
             chunks_with_embeddings = chunks.filter(embeddings__isnull=False).distinct().count()
+            metadata = document.metadata or {}
+
+            def _status_to_step(status_value: str) -> str:
+                if status_value in {'ready', 'completed', 'skipped', 'not_required'}:
+                    return 'completed'
+                if status_value in {'failed', 'timeout'}:
+                    return 'failed'
+                if status_value in {'queued', 'building', 'processing', 'deferred'}:
+                    return 'in_progress'
+                return 'not_started'
+
+            processing_steps = list(metadata.get('processing_steps') or [])
+            raptor_status = metadata.get('raptor_status') or 'not_required'
+            asset_status = metadata.get('asset_status') or 'not_required'
+
+            if raptor_status not in {'not_required', None, ''}:
+                processing_steps.append({
+                    'key': 'raptor_tree',
+                    'label': 'Đang xây dựng RAPTOR',
+                    'status': _status_to_step(raptor_status),
+                    'detail': raptor_status,
+                })
+
+            if asset_status not in {'not_required', None, ''}:
+                processing_steps.append({
+                    'key': 'asset_processing',
+                    'label': 'Đang xử lý ảnh/OCR',
+                    'status': _status_to_step(asset_status),
+                    'detail': asset_status,
+                })
+
+            raw_progress_percent = int(metadata.get('processing_progress_percent') or 0)
+            progress_percent = raw_progress_percent
+            current_stage = metadata.get('processing_current_stage')
+            current_label = metadata.get('processing_current_stage_label') or ''
+            blocking_statuses = {'queued', 'building', 'processing'}
+            raptor_blocking = raptor_status in blocking_statuses
+            asset_blocking = asset_status in blocking_statuses
+
+            if document.status == 'pending':
+                current_stage = current_stage or 'queued'
+                current_label = 'Đang chờ worker xử lý'
+                progress_percent = max(progress_percent, 2)
+            elif document.status == 'processing':
+                current_label = current_label or 'Đang xử lý tài liệu'
+                progress_percent = max(progress_percent, 5)
+            elif document.status == 'failed':
+                current_stage = current_stage or 'failed'
+                current_label = 'Xử lý thất bại'
+                progress_percent = max(progress_percent, 100)
+            else:
+                if asset_status == 'processing':
+                    current_stage = 'asset_processing'
+                    current_label = 'Đang xử lý ảnh/OCR'
+                    progress_percent = 84
+                elif raptor_status == 'building':
+                    current_stage = 'raptor_tree'
+                    current_label = 'Đang xây dựng RAPTOR'
+                    progress_percent = 92 if asset_status in {'ready', 'not_required', 'skipped'} else 88
+                elif asset_status == 'queued':
+                    current_stage = 'asset_processing'
+                    current_label = 'Đang chờ xử lý ảnh/OCR'
+                    progress_percent = 78
+                elif raptor_status == 'queued':
+                    current_stage = 'raptor_tree'
+                    current_label = 'Đang chờ xây dựng RAPTOR'
+                    progress_percent = 88
+                else:
+                    current_stage = 'completed'
+                    current_label = 'Tài liệu đã sẵn sàng'
+                    progress_percent = 100
+
+            ready_for_chat = (
+                document.status == 'completed'
+                and not raptor_blocking
+                and not asset_blocking
+            )
+            if not ready_for_chat and document.status != 'failed':
+                progress_percent = min(progress_percent, 99)
 
             return {
                 'document_id': str(document.id),
                 'document_status': document.status,
                 'document_error': getattr(document, 'error_message', None),
+                'current_stage': current_stage,
+                'current_stage_label': current_label,
+                'progress_percent': max(0, min(100, progress_percent)),
+                'processing_steps': processing_steps,
+                'ready_for_chat': ready_for_chat,
+                'indexing_status': metadata.get('indexing_status'),
+                'raptor_status': raptor_status,
+                'raptor_ready': bool(metadata.get('raptor_ready')),
+                'asset_status': asset_status,
+                'asset_ready': bool(metadata.get('asset_ready')),
+                'metadata': {
+                    'page_count': metadata.get('page_count'),
+                    'chunk_count': metadata.get('chunk_count'),
+                    'raptor_node_count': metadata.get('raptor_node_count'),
+                    'asset_count': metadata.get('asset_count'),
+                    'processing_error': metadata.get('processing_error'),
+                },
                 'chunk_processing_status': {
                     'total_chunks': total_chunks,
                     'processed_chunks': chunks_with_embeddings,
+                    'completed_chunks': chunks_with_embeddings,
+                    'failed_chunks': 0,
                     'pending_chunks': max(0, total_chunks - chunks_with_embeddings),
                 },
                 'processing_completed_at': str(getattr(document, 'processing_completed_at', '')) or None,

@@ -167,7 +167,7 @@ LLM_TOP_P = float(os.environ.get("LLM_TOP_P", "0.9"))
 LLM_MAX_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "2048"))
 LLM_CONTEXT_WINDOW = int(os.environ.get("LLM_CONTEXT_WINDOW", "4096"))
 LLM_REQUEST_TIMEOUT = int(os.environ.get("LLM_REQUEST_TIMEOUT", "120"))
-RAG_LLM_MAX_TOKENS = int(os.environ.get("RAG_LLM_MAX_TOKENS", "384"))
+RAG_LLM_MAX_TOKENS = int(os.environ.get("RAG_LLM_MAX_TOKENS", "768"))
 RAG_LLM_TEMPERATURE = float(os.environ.get("RAG_LLM_TEMPERATURE", "0.2"))
 RAG_LLM_MAX_TOKENS_LIST = int(os.environ.get("RAG_LLM_MAX_TOKENS_LIST", "1280"))
 RAG_RETRIEVAL_TOP_K = int(os.environ.get("RAG_RETRIEVAL_TOP_K", "4"))
@@ -200,6 +200,10 @@ EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", LLM_MODEL)
 EMBEDDING_DEVICE = os.environ.get("EMBEDDING_DEVICE", "auto")
 EMBEDDING_TIMEOUT = int(os.environ.get("EMBEDDING_TIMEOUT", "60"))
 EMBEDDING_RETRY_TIMES = int(os.environ.get("EMBEDDING_RETRY_TIMES", "1"))
+EMBEDDING_PRELOAD_ENABLED = os.environ.get("EMBEDDING_PRELOAD_ENABLED", "true").lower() in ["true", "1", "yes"]
+EMBEDDING_PRELOAD_TEST_EMBED = os.environ.get("EMBEDDING_PRELOAD_TEST_EMBED", "true").lower() in ["true", "1", "yes"]
+EMBEDDING_PRELOAD_FAIL_FAST = os.environ.get("EMBEDDING_PRELOAD_FAIL_FAST", "false").lower() in ["true", "1", "yes"]
+EMBEDDING_PRELOAD_TEXT = os.environ.get("EMBEDDING_PRELOAD_TEXT", "warmup embedding model")
 
 # Determine dimension
 if EMBEDDING_BACKEND.lower() in ('flag', 'flagembedding', 'native'):
@@ -346,12 +350,26 @@ DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER)
 FRONTEND_URL = os.environ.get("APP_URL", "http://localhost:3000")
 # RAG Pipeline Settings
 RAG_RAPTOR_THRESHOLD_PAGES = int(os.environ.get("RAG_RAPTOR_THRESHOLD_PAGES", "3"))
+RAG_RAPTOR_CLUSTERING_ENABLED = os.environ.get("RAG_RAPTOR_CLUSTERING_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_RAPTOR_MAX_DEPTH = int(os.environ.get("RAG_RAPTOR_MAX_DEPTH", "4"))
+RAG_RAPTOR_PAGE_WINDOW_SIZE = int(os.environ.get("RAG_RAPTOR_PAGE_WINDOW_SIZE", "3"))
+RAG_RAPTOR_MIN_CLUSTER_SIZE = int(os.environ.get("RAG_RAPTOR_MIN_CLUSTER_SIZE", "4"))
+RAG_RAPTOR_MAX_CLUSTERS = int(os.environ.get("RAG_RAPTOR_MAX_CLUSTERS", "8"))
+RAG_RAPTOR_UMAP_NEIGHBORS = int(os.environ.get("RAG_RAPTOR_UMAP_NEIGHBORS", "15"))
+RAG_RAPTOR_UMAP_COMPONENTS = int(os.environ.get("RAG_RAPTOR_UMAP_COMPONENTS", "5"))
+RAG_RAPTOR_GMM_MEMBERSHIP_THRESHOLD = float(os.environ.get("RAG_RAPTOR_GMM_MEMBERSHIP_THRESHOLD", "0.10"))
+RAG_RAPTOR_MAX_MEMBERSHIPS_PER_NODE = int(os.environ.get("RAG_RAPTOR_MAX_MEMBERSHIPS_PER_NODE", "3"))
+RAG_RAPTOR_RANDOM_STATE = int(os.environ.get("RAG_RAPTOR_RANDOM_STATE", "42"))
 RAG_UPLOAD_FAST_MODE = os.environ.get("RAG_UPLOAD_FAST_MODE", "false").lower() in ["true", "1", "yes"]
 RAG_DEFER_SUMMARY_ON_UPLOAD = os.environ.get("RAG_DEFER_SUMMARY_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 RAG_BUILD_RAPTOR_ON_UPLOAD = os.environ.get("RAG_BUILD_RAPTOR_ON_UPLOAD", "true").lower() in ["true", "1", "yes"]
 RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD = os.environ.get("RAG_QUEUE_SECTION_SUMMARIES_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD = os.environ.get("RAG_SUMMARIZE_DETAIL_CHUNKS_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
+RAG_CREATE_PAGE_CONTAINERS_ON_UPLOAD = os.environ.get("RAG_CREATE_PAGE_CONTAINERS_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 RAG_RAPTOR_BUILD_WORKERS = int(os.environ.get("RAG_RAPTOR_BUILD_WORKERS", "1"))
+RAG_RAPTOR_DESCENDANT_LIMIT = int(os.environ.get("RAG_RAPTOR_DESCENDANT_LIMIT", "80"))
+RAG_TABLE_CHUNK_MAX_TOKENS = int(os.environ.get("RAG_TABLE_CHUNK_MAX_TOKENS", "1600"))
+RAG_MAX_ASSET_RESULTS = int(os.environ.get("RAG_MAX_ASSET_RESULTS", "4"))
 RAG_VECTORIZE_PAGE_SECTIONS = os.environ.get("RAG_VECTORIZE_PAGE_SECTIONS", "false").lower() in ["true", "1", "yes"]
 RAG_CONTEXTUAL_EMBEDDING_PREFIX_ENABLED = os.environ.get("RAG_CONTEXTUAL_EMBEDDING_PREFIX_ENABLED", "true").lower() in ["true", "1", "yes"]
 RAG_CONTEXTUAL_EMBEDDING_PREFIX_CHARS = int(os.environ.get("RAG_CONTEXTUAL_EMBEDDING_PREFIX_CHARS", "360"))
@@ -362,6 +380,11 @@ RAG_SPREADSHEET_RAPTOR_MIN_SHEETS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_M
 RAG_SPREADSHEET_RAPTOR_MIN_ROWS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_ROWS", "200"))
 RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS = int(os.environ.get("RAG_SPREADSHEET_RAPTOR_MIN_CHUNKS", "12"))
 RAG_PDF_EXACT_PAGE_TEXT = os.environ.get("RAG_PDF_EXACT_PAGE_TEXT", "true").lower() in ["true", "1", "yes"]
+RAG_PDF_OCR_FALLBACK_ENABLED = os.environ.get("RAG_PDF_OCR_FALLBACK_ENABLED", "true").lower() in ["true", "1", "yes"]
+RAG_PDF_OCR_PAGE_TEXT_MIN_CHARS = int(os.environ.get("RAG_PDF_OCR_PAGE_TEXT_MIN_CHARS", "40"))
+RAG_PDF_OCR_EMPTY_PAGE_RATIO = float(os.environ.get("RAG_PDF_OCR_EMPTY_PAGE_RATIO", "0.60"))
+RAG_PDF_OCR_DPI = int(os.environ.get("RAG_PDF_OCR_DPI", "180"))
+RAG_PDF_OCR_MAX_PAGES = int(os.environ.get("RAG_PDF_OCR_MAX_PAGES", "300"))
 RAG_QDRANT_TEXT_PREVIEW_CHARS = int(os.environ.get("RAG_QDRANT_TEXT_PREVIEW_CHARS", "1000"))
 RAG_RERANK_SNIPPET_CHARS = int(os.environ.get("RAG_RERANK_SNIPPET_CHARS", "1800"))
 
@@ -372,7 +395,9 @@ ASSET_PIPELINE_ENABLED = os.environ.get("ASSET_PIPELINE_ENABLED", "true").lower(
 ASSET_PROCESS_INLINE_ON_UPLOAD = os.environ.get("ASSET_PROCESS_INLINE_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 ASSET_PROCESS_ASYNC_ON_UPLOAD = os.environ.get("ASSET_PROCESS_ASYNC_ON_UPLOAD", "true").lower() in ["true", "1", "yes"]
 ASSET_OCR_ENABLED = os.environ.get("ASSET_OCR_ENABLED", "true").lower() in ["true", "1", "yes"]
+ASSET_OCR_ENGINE = os.environ.get("ASSET_OCR_ENGINE", "tesseract")
 ASSET_OCR_LANGUAGES = os.environ.get("ASSET_OCR_LANGUAGES", "vie+eng")
+ASSET_PADDLEOCR_LANG = os.environ.get("ASSET_PADDLEOCR_LANG", "vi")
 ASSET_VL_CAPTION_ENABLED = os.environ.get("ASSET_VL_CAPTION_ENABLED", "true").lower() in ["true", "1", "yes"]
 ASSET_EMBED_CAPTIONS = os.environ.get("ASSET_EMBED_CAPTIONS", "true").lower() in ["true", "1", "yes"]
 ASSET_CAPTION_METHOD = os.environ.get("ASSET_CAPTION_METHOD", "vl-model")  # 'vl-model' or 'rule-based'
@@ -386,7 +411,7 @@ QDRANT_ASSET_VECTOR_SIZE = int(os.environ.get("QDRANT_ASSET_VECTOR_SIZE", str(QD
 # VL Model (Qwen2.5-VL-3B) for image captioning
 VL_MODEL_BASE_URL = os.environ.get("VL_MODEL_BASE_URL", "http://llama-vl-server:8081/v1")
 VL_MODEL_NAME = os.environ.get("VL_MODEL_NAME", "Qwen2.5-VL-3B-Instruct")
-VL_MODEL_TIMEOUT = int(os.environ.get("VL_MODEL_TIMEOUT", "120"))
+VL_MODEL_TIMEOUT = int(os.environ.get("VL_MODEL_TIMEOUT", "300"))
 VL_MODEL_MAX_TOKENS = int(os.environ.get("VL_MODEL_MAX_TOKENS", "256"))
 VL_MODEL_TEMPERATURE = float(os.environ.get("VL_MODEL_TEMPERATURE", "0.3"))
 

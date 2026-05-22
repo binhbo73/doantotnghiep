@@ -242,8 +242,14 @@ class PageAwareParserEnhancer:
         """
         try:
             if getattr(settings, 'RAG_PDF_EXACT_PAGE_TEXT', True):
+                page_texts = read_pdf_page_texts(file_path)
+                if self._should_use_pdf_ocr_fallback(page_texts):
+                    ocr_page_aware = self._ocr_pdf_pages_to_page_aware(file_path)
+                    if ocr_page_aware:
+                        return ocr_page_aware
+
                 page_aware = self._page_texts_to_page_aware(
-                    read_pdf_page_texts(file_path),
+                    page_texts,
                     source="pypdf_page_text",
                 )
                 if page_aware:
@@ -293,6 +299,78 @@ class PageAwareParserEnhancer:
             logger.error(f"Error in PDF page-aware parsing: {str(e)}")
             return None
 
+    def _should_use_pdf_ocr_fallback(self, page_texts: List[str]) -> bool:
+        """Use local OCR when a PDF appears scanned or has almost no extractable text."""
+        if not getattr(settings, 'RAG_PDF_OCR_FALLBACK_ENABLED', True):
+            return False
+
+        if not page_texts:
+            return True
+
+        threshold = int(getattr(settings, 'RAG_PDF_OCR_PAGE_TEXT_MIN_CHARS', 40))
+        empty_pages = sum(1 for page in page_texts if len((page or '').strip()) < threshold)
+        ratio = empty_pages / max(1, len(page_texts))
+        min_ratio = float(getattr(settings, 'RAG_PDF_OCR_EMPTY_PAGE_RATIO', 0.6))
+        return ratio >= min_ratio
+
+    def _ocr_pdf_pages_to_page_aware(self, file_path: str) -> Optional[PageAwareText]:
+        """Render PDF pages and OCR them locally so scanned documents enter text chunks."""
+        try:
+            import io
+            import fitz
+            import pytesseract
+            from PIL import Image
+
+            dpi = int(getattr(settings, 'RAG_PDF_OCR_DPI', 180))
+            languages = getattr(settings, 'ASSET_OCR_LANGUAGES', 'vie+eng')
+            max_pages = int(getattr(settings, 'RAG_PDF_OCR_MAX_PAGES', 300))
+
+            page_texts: List[str] = []
+            doc = fitz.open(file_path)
+            try:
+                for page_index, page in enumerate(doc):
+                    if page_index >= max_pages:
+                        logger.warning(
+                            f"PDF OCR fallback reached max_pages={max_pages}; "
+                            f"remaining pages are skipped for {file_path}"
+                        )
+                        break
+
+                    pix = page.get_pixmap(dpi=dpi)
+                    image = Image.open(io.BytesIO(pix.tobytes("png")))
+                    if image.mode not in ('L', 'LA'):
+                        image = image.convert('L')
+                    text = pytesseract.image_to_string(
+                        image,
+                        lang=languages,
+                        config=r'--oem 3 --psm 6',
+                    )
+                    page_texts.append((text or '').strip())
+            finally:
+                doc.close()
+
+            page_aware = self._page_texts_to_page_aware(
+                page_texts,
+                source="local_pdf_ocr",
+                metadata={
+                    "ocr_enabled": True,
+                    "ocr_language": languages,
+                    "ocr_dpi": dpi,
+                },
+            )
+            if page_aware:
+                logger.info(
+                    f"PDF OCR fallback produced {sum(1 for p in page_texts if p.strip())}/"
+                    f"{len(page_texts)} pages with text for {file_path}"
+                )
+            return page_aware
+        except ImportError as e:
+            logger.warning(f"PDF OCR fallback unavailable; missing dependency: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"PDF OCR fallback failed for {file_path}: {e}", exc_info=True)
+            return None
+
     def enhance_office_pdf(self, file_path: str) -> Optional[PageAwareText]:
         """Extract Office documents by converting to the same PDF preview used by the UI."""
         try:
@@ -322,26 +400,25 @@ class PageAwareParserEnhancer:
             boundaries = [PageBoundary(1, 0)] # Start with page 1
             char_pos = 0
             
-            for para in docx.paragraphs:
+            for block in self._iter_docx_blocks(docx):
+                if getattr(block, 'rows', None) is not None:
+                    table_text = self._docx_table_to_markdown(block)
+                    if table_text:
+                        table_text = table_text + "\n\n"
+                        text_parts.append(table_text)
+                        char_pos += len(table_text)
+                    continue
+
                 # 1. Check for page break in this paragraph
-                if self._has_page_break(para):
+                if self._has_page_break(block):
                     page_num += 1
                     text_parts.append(self.PAGE_BREAK_MARKER)
                     char_pos += len(self.PAGE_BREAK_MARKER)
                     boundaries.append(PageBoundary(page_num, char_pos))
                 
-                para_text = para.text + "\n"
+                para_text = block.text + "\n"
                 text_parts.append(para_text)
                 char_pos += len(para_text)
-            
-            # Handle tables
-            for table in docx.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        text_parts.append(cell.text + " ")
-                        char_pos += len(cell.text) + 1
-                    text_parts.append("\n")
-                    char_pos += 1
             
             full_text = "".join(text_parts)
 
@@ -360,6 +437,47 @@ class PageAwareParserEnhancer:
         except Exception as e:
             logger.error(f"Error in DOCX page-aware parsing: {str(e)}")
             return None
+
+    def _iter_docx_blocks(self, doc):
+        """Yield DOCX paragraphs and tables in source order."""
+        try:
+            from docx.oxml.table import CT_Tbl
+            from docx.oxml.text.paragraph import CT_P
+            from docx.table import Table
+            from docx.text.paragraph import Paragraph
+
+            for child in doc.element.body.iterchildren():
+                if isinstance(child, CT_P):
+                    yield Paragraph(child, doc)
+                elif isinstance(child, CT_Tbl):
+                    yield Table(child, doc)
+        except Exception:
+            for paragraph in getattr(doc, 'paragraphs', []) or []:
+                yield paragraph
+            for table in getattr(doc, 'tables', []) or []:
+                yield table
+
+    def _docx_table_to_markdown(self, table) -> str:
+        """Render a DOCX table as markdown so table chunks preserve rows/columns."""
+        rows = []
+        for row in table.rows:
+            cells = []
+            for cell in row.cells:
+                value = (cell.text or '').strip()
+                value = re.sub(r'\s*\n+\s*', '<br>', value)
+                value = value.replace('|', '\\|')
+                cells.append(value)
+            if any(cells):
+                rows.append(cells)
+
+        if not rows:
+            return ''
+
+        max_cols = max(len(row) for row in rows)
+        padded_rows = [row + [''] * (max_cols - len(row)) for row in rows]
+        lines = ['| ' + ' | '.join(row) + ' |' for row in padded_rows]
+        separator = '| ' + ' | '.join(['---'] * max_cols) + ' |'
+        return '\n'.join([lines[0], separator] + lines[1:])
 
     def _align_docx_text_to_pdf_preview(self, docx_text: str, file_path: str) -> Optional[PageAwareText]:
         """Align DOCX extraction text to the same PDF preview pages shown in UI."""
@@ -629,6 +747,63 @@ class PageAwareParserEnhancer:
         
         except Exception as e:
             logger.error(f"Error in Excel page-aware parsing: {str(e)}")
+            return None
+
+    def enhance_pptx(self, file_path: str) -> Optional[PageAwareText]:
+        """Extract slide-aware text from PPTX; each slide is treated as one page."""
+        try:
+            from pptx import Presentation
+
+            prs = Presentation(file_path)
+            text_parts = []
+            boundaries = []
+            char_pos = 0
+
+            for slide_index, slide in enumerate(prs.slides, start=1):
+                slide_header = f"\n--- Slide {slide_index} (Page {slide_index}) ---\n\n"
+                text_parts.append(slide_header)
+                boundaries.append(PageBoundary(slide_index, char_pos))
+                char_pos += len(slide_header)
+
+                slide_lines = []
+                for shape in slide.shapes:
+                    if getattr(shape, "has_text_frame", False) and shape.text_frame:
+                        text = (shape.text or '').strip()
+                        if text:
+                            slide_lines.append(text)
+
+                    if getattr(shape, "has_table", False):
+                        table_lines = []
+                        for row in shape.table.rows:
+                            cells = []
+                            for cell in row.cells:
+                                cells.append(self._format_excel_cell(cell.text))
+                            table_lines.append("| " + " | ".join(cells) + " |")
+                        if table_lines:
+                            slide_lines.append("\n".join(table_lines))
+
+                    if getattr(shape, "shape_type", None) and "PICTURE" in str(shape.shape_type):
+                        slide_lines.append("[Image: slide picture]")
+
+                body = "\n\n".join(line for line in slide_lines if line).strip()
+                if body:
+                    body += "\n"
+                    text_parts.append(body)
+                    char_pos += len(body)
+
+            text = "".join(text_parts)
+            return PageAwareText(
+                text,
+                boundaries or [PageBoundary(1, 0)],
+                max(1, len(prs.slides)),
+                metadata={
+                    "content_format": "presentation_text",
+                    "slide_count": len(prs.slides),
+                    "page_count_source": "python_pptx",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error in PPTX page-aware parsing: {str(e)}")
             return None
 
     def _enhance_xls(self, file_path: str) -> Optional[PageAwareText]:

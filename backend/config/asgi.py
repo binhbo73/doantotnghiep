@@ -25,6 +25,21 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 # Setup Django
 django_asgi_app = get_asgi_application()
 
+try:
+    from django.conf import settings
+    if getattr(settings, "EMBEDDING_PRELOAD_ENABLED", True):
+        from services.ai.embedding_client import warmup_embedding_model
+        warmup_embedding_model(source="asgi")
+except Exception:
+    import logging
+    logging.getLogger(__name__).exception("[EMBEDDING_WARMUP] failed during ASGI startup")
+    fail_fast = bool(
+        "settings" in locals()
+        and getattr(settings, "EMBEDDING_PRELOAD_FAIL_FAST", False)
+    )
+    if fail_fast:
+        raise
+
 from api.routing import websocket_urlpatterns
 
 # Fail fast if websocket stack is not available to avoid silent 404 on /ws/* routes.

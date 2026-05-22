@@ -77,8 +77,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     )
 
     const uploadReadinessPercent = uploadStats.total > 0
-        ? Math.round((uploadStats.completed / uploadStats.total) * 100)
+        ? Math.round(
+            attachments.reduce((sum, att) => {
+                if (att.status === 'completed') return sum + 100
+                if (att.status === 'failed') return sum
+                return sum + Math.max(0, Math.min(100, att.progress || 0))
+            }, 0) / uploadStats.total
+        )
         : 0
+    const hasActiveUploadStatus = uploadStats.uploading > 0 || uploadStats.processing > 0 || uploadStats.failed > 0
 
     const uploadReadinessLabel = (() => {
         if (uploadStats.total === 0) return 'Chưa có file nào được tải lên'
@@ -86,8 +93,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             return 'Có file tải lên bị lỗi'
         }
         if (uploadStats.completed === uploadStats.total) return 'Tất cả file đã sẵn sàng để tìm kiếm'
-        if (uploadStats.processing > 0) return 'Đang phân tích tài liệu để sẵn sàng tìm kiếm'
-        if (uploadStats.uploading > 0) return 'Đang tải file lên'
+        if (uploadStats.processing > 0) {
+            return attachments.find(att => att.status === 'processing' && att.statusText)?.statusText
+                || 'Đang phân tích tài liệu để sẵn sàng tìm kiếm'
+        }
+        if (uploadStats.uploading > 0) {
+            return attachments.find(att => att.status === 'uploading' && att.statusText)?.statusText
+                || 'Đang tải file lên'
+        }
         return 'Đang cập nhật trạng thái file'
     })()
 
@@ -198,7 +211,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                     accessScope: 'personal',
                     onProgress: (percent) => {
                         setAttachments(prev => prev.map(att =>
-                            att.id === uploadId ? { ...att, progress: percent } : att
+                            att.id === uploadId ? { ...att, progress: Math.min(60, Math.round(percent * 0.6)) } : att
                         ))
                     }
                 })
@@ -209,6 +222,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                         ...att,
                         status: 'processing',
                         statusText: 'Đang phân tích...',
+                        progress: 65,
                         documentId: document.id
                     } : att
                 ))
@@ -227,9 +241,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
                     try {
                         const statusData = await getDocumentStatus(document.id)
-                        const docStatus = statusData.data?.document_status
+                        const statusPayload = statusData.data || statusData
+                        const docStatus = statusPayload.document_status
+                        const progressPercent = typeof statusPayload.progress_percent === 'number'
+                            ? statusPayload.progress_percent
+                            : undefined
+                        const currentLabel = statusPayload.current_stage_label || 'Dang phan tich tai lieu'
+                        const readyForChat = statusPayload.ready_for_chat === true || (
+                            statusPayload.ready_for_chat === undefined &&
+                            docStatus === 'completed'
+                        )
+                        const displayProgressPercent = progressPercent === undefined
+                            ? undefined
+                            : readyForChat
+                                ? progressPercent
+                                : Math.min(progressPercent, 99)
 
-                        if (docStatus === 'completed') {
+                        if (readyForChat) {
                             setAttachments(prev => prev.map(att =>
                                 att.id === uploadId ? {
                                     ...att,
@@ -243,13 +271,24 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                             throw new Error('Xử lý thất bại')
                         } else {
                             // Cập nhật text chi tiết nếu có
-                            const chunks = statusData.data?.chunk_processing_status
+                            const chunks = statusPayload.chunk_processing_status
                             if (chunks) {
-                                const percent = Math.round((chunks.completed_chunks / (chunks.total_chunks || 1)) * 100)
+                                const percent = displayProgressPercent ?? Math.round((chunks.completed_chunks / (chunks.total_chunks || 1)) * 100)
                                 setAttachments(prev => prev.map(att =>
                                     att.id === uploadId ? {
                                         ...att,
-                                        statusText: `Đang phân tích (${percent}%)`
+                                        progress: percent,
+                                        statusText: `${currentLabel} (${percent}%)`
+                                    } : att
+                                ))
+                            } else {
+                                setAttachments(prev => prev.map(att =>
+                                    att.id === uploadId ? {
+                                        ...att,
+                                        progress: displayProgressPercent ?? att.progress,
+                                        statusText: displayProgressPercent !== undefined
+                                            ? `${currentLabel} (${displayProgressPercent}%)`
+                                            : currentLabel
                                     } : att
                                 ))
                             }
@@ -260,7 +299,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 }
 
                 if (!isDone) {
-                    throw new Error('Hết thời gian chờ xử lý')
+                    setAttachments(prev => prev.map(att =>
+                        att.id === uploadId ? {
+                            ...att,
+                            status: 'processing',
+                            statusText: 'Đã tải lên, đang xử lý ngầm...',
+                            progress: Math.max(att.progress || 65, 65),
+                            documentId: document.id,
+                        } : att
+                    ))
                 }
 
             } catch (error) {
@@ -425,14 +472,24 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 </div>
 
                 {/* Upload readiness bar */}
-                {attachments.length > 0 && (
+                {hasActiveUploadStatus && (
                     <div className="mt-3 px-2">
                         <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-800/80 px-4 py-3 shadow-sm">
                             <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <p className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                                        {uploadReadinessLabel}
+                                    </p>
+                                    <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
+                                        Trang thai nay tu dong an khi tai lieu san sang.
+                                    </p>
+                                </div>
 
                                 <div className="shrink-0 text-right">
                                     <div className="text-lg font-extrabold text-primary">{uploadReadinessPercent}%</div>
-                                    <div className="text-[10px] uppercase tracking-widest text-slate-400">Sẵn sàng</div>
+                                    <div className="text-[10px] uppercase tracking-widest text-slate-400">
+                                        {uploadStats.failed > 0 ? 'Lỗi' : 'Đang xử lý'}
+                                    </div>
                                 </div>
                             </div>
 
@@ -443,38 +500,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                 />
                             </div>
                         </div>
-                    </div>
-                )}
-
-                {/* Uploads Preview with Status */}
-                {attachments.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2 px-2">
-                        {attachments.map((att) => (
-                            <div key={att.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 flex gap-2 items-start">
-                                <div className="flex flex-col max-w-[150px]">
-                                    <span className="font-medium truncate" title={att.name}>{att.name}</span>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                        {att.status === 'uploading' || att.status === 'processing' ? (
-                                            <div className="w-12 h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full bg-primary transition-all duration-300"
-                                                    style={{ width: `${att.progress || 0}%` }}
-                                                />
-                                            </div>
-                                        ) : att.status === 'completed' ? (
-                                            <Check size={10} className="text-success" />
-                                        ) : null}
-                                        <span className="text-[9px] opacity-70 uppercase tracking-tight">{att.statusText}</span>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => removeAttachment(att.id)}
-                                    className="p-1 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
-                                >
-                                    <X size={14} />
-                                </button>
-                            </div>
-                        ))}
                     </div>
                 )}
 

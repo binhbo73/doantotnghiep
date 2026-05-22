@@ -240,7 +240,7 @@ class DocumentParser:
                 page_count = None
             elif file_type in ('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'):
                 text = self.parse_excel(file_path, file_type=file_type)
-                page_count = None
+                page_count = max(1, text.count('=== SHEET:'))
             elif file_type in ('text/plain', 'text/markdown'):
                 text = self.parse_text(file_path)
                 page_count = None
@@ -426,12 +426,9 @@ class DocumentParser:
             
             # Add text from tables
             for table in doc.tables:
-                for row in table.rows:
-                    row_data = []
-                    for cell in row.cells:
-                        row_data.append(cell.text.strip())
-                    if any(row_data):
-                        text_parts.append(' | '.join(row_data))
+                table_text = self._docx_table_to_markdown(table)
+                if table_text:
+                    text_parts.append(table_text)
             
             text = '\n'.join(text_parts)
             
@@ -443,6 +440,28 @@ class DocumentParser:
         except Exception as e:
             logger.error(f"DOCX parsing error: {str(e)}")
             raise DocumentProcessingError(f"Failed to parse DOCX: {str(e)}")
+
+    def _docx_table_to_markdown(self, table) -> str:
+        """Render DOCX tables as markdown to preserve table shape for RAG."""
+        rows = []
+        for row in table.rows:
+            cells = []
+            for cell in row.cells:
+                value = (cell.text or '').strip()
+                value = re.sub(r'\s*\n+\s*', '<br>', value)
+                value = value.replace('|', '\\|')
+                cells.append(value)
+            if any(cells):
+                rows.append(cells)
+
+        if not rows:
+            return ''
+
+        max_cols = max(len(row) for row in rows)
+        padded_rows = [row + [''] * (max_cols - len(row)) for row in rows]
+        lines = ['| ' + ' | '.join(row) + ' |' for row in padded_rows]
+        separator = '| ' + ' | '.join(['---'] * max_cols) + ' |'
+        return '\n'.join([lines[0], separator] + lines[1:])
     
     def parse_text(self, file_path: str) -> str:
         """

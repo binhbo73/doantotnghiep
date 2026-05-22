@@ -92,6 +92,9 @@ class LlamaClient:
         self.max_tokens = max_tokens or getattr(settings, 'LLAMA_MAX_TOKENS', 2048)
         self.timeout = timeout or getattr(settings, 'LLAMA_TIMEOUT', 60)
         self.retry_times = retry_times or getattr(settings, 'LLAMA_RETRY_TIMES', 3)
+        self.loading_model_retry_times = int(
+            getattr(settings, 'LLAMA_LOADING_MODEL_RETRY_TIMES', max(self.retry_times, 12))
+        )
         
         # Validate config
         if not self.api_url:
@@ -643,20 +646,41 @@ class LlamaClient:
             LLMServiceError: After all retries exhausted
         """
         last_error = None
+        loading_model_mode = False
+        max_retries = self.retry_times
         
-        for attempt in range(self.retry_times):
+        attempt = 0
+        while attempt < max_retries:
             try:
-                logger.debug(f"Request to LLM ({attempt + 1}/{self.retry_times}): {method} {url}")
+                logger.debug(f"Request to LLM ({attempt + 1}/{max_retries}): {method} {url}")
                 
                 response = requests.request(method, url, **kwargs)
                 
                 # Retry on 5xx errors
                 if response.status_code >= 500:
+                    response_text = (response.text or "").strip()
+                    is_loading_model = (
+                        response.status_code == 503
+                        and 'loading model' in response_text.lower()
+                    )
+
+                    if is_loading_model and not loading_model_mode:
+                        loading_model_mode = True
+                        max_retries = max(self.loading_model_retry_times, self.retry_times)
+
                     last_error = f"Server error {response.status_code}"
-                    if attempt < self.retry_times - 1:
-                        wait_time = 2 ** attempt  # 1, 2, 4 seconds
+                    if response_text:
+                        last_error = f"{last_error}: {response_text[:200]}"
+
+                    if attempt < max_retries - 1:
+                        if loading_model_mode:
+                            wait_time = min(30, 5 * (attempt + 1))
+                        else:
+                            wait_time = 2 ** attempt  # 1, 2, 4 seconds
+
                         logger.warning(f"LLM error, retrying in {wait_time}s: {last_error}")
                         time.sleep(wait_time)
+                        attempt += 1
                         continue
                 
                 # Success
@@ -664,10 +688,11 @@ class LlamaClient:
             
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_error = str(e)
-                if attempt < self.retry_times - 1:
+                if attempt < max_retries - 1:
                     wait_time = 2 ** attempt
                     logger.warning(f"Connection error, retrying in {wait_time}s: {last_error}")
                     time.sleep(wait_time)
+                    attempt += 1
                     continue
                 else:
                     raise
@@ -675,9 +700,11 @@ class LlamaClient:
             except Exception as e:
                 last_error = str(e)
                 raise
+            
+            attempt += 1
         
         # All retries exhausted
-        raise LLMServiceError(f"LLM API failed after {self.retry_times} retries: {last_error}")
+        raise LLMServiceError(f"LLM API failed after {max_retries} retries: {last_error}")
     
     # ============================================================================
     # UTILITY METHODS

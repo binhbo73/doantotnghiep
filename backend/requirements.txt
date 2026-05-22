@@ -43,6 +43,8 @@ opendataloader-pdf>=2.0.0              # Trích xuất text từ PDF (quality ca
 pypdf>=5.0.0                            # Read PDF page counts accurately
 flashrank>=0.2.0                     # Re-ranking kết quả RAG
 langgraph>=0.0.10                    # Workflow AI (RAG orchestration)
+scikit-learn>=1.8.0                  # GMM clustering + normalization
+umap-learn>=0.5.7                    # UMAP dimensionality reduction for RAPTOR clustering
 python-docx>=0.8.11                  # Parse DOCX nhanh (5-10x so với docling)
 python-pptx>=0.6.21                  # Parse PPTX/PPT
 openpyxl>=3.1.0                      # Parse Excel .xlsx (fast)
@@ -51,7 +53,9 @@ xlrd>=2.0.1                         # Parse legacy Excel .xls
 # ============================================================
 # OCR & IMAGE PROCESSING (Asset Pipeline)
 # ============================================================
-pytesseract>=0.3.10           # Python wrapper cho Tesseract OCR
+paddlepaddle>=3.0.0           # Runtime for PaddleOCR
+paddleocr>=3.0.0              # OCR/layout engine for asset images
+pytesseract>=0.3.10           # Legacy fallback when ASSET_OCR_ENGINE=tesseract
 Pillow>=10.0.0                # Xử lý ảnh (resize, convert, thumbnail)
 PyMuPDF>=1.23.0               # Render/extract ảnh từ PDF + extract embedded images
 

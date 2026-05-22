@@ -55,6 +55,7 @@ class EnhancedDocumentChunker:
         Args:
             base_chunker: Existing DocumentChunker instance (optional)
         """
+        self.logger = logging.getLogger(__name__)
         if base_chunker is None:
             from services.document.chunker import DocumentChunker
             self.base_chunker = DocumentChunker()
@@ -66,7 +67,7 @@ class EnhancedDocumentChunker:
             from services.document.chunk_summary_service import ChunkSummaryService
             self.summary_service = ChunkSummaryService()
         except Exception as e:
-            logger.warning(f"ChunkSummaryService not available: {e}")
+            self.logger.warning(f"ChunkSummaryService not available: {e}")
             self.summary_service = None
     
     def chunk_and_embed_enhanced(
@@ -77,6 +78,7 @@ class EnhancedDocumentChunker:
         qdrant_client,
         metadata: Dict[str, Any] = None,
         page_aware_text: Optional[PageAwareText] = None,
+        structured_document=None,
         generate_summaries: bool = True,
         summary_mode: str = 'sync',  # 'sync' or 'async'
     ) -> List[Dict[str, Any]]:
@@ -101,7 +103,71 @@ class EnhancedDocumentChunker:
             # Step 1: Use hierarchical chunking if page-aware, else fallback to regular chunking
             should_raptor = False
             t_chunking_start = time.monotonic()
-            if page_aware_text:
+
+            # CRITICAL: Log which chunking path we're taking
+            if structured_document:
+                self.logger.info(
+                    f"🚀 [CHUNKING_PATH] Using STRUCTURED DOCUMENT chunking for {document_id}"
+                )
+            elif page_aware_text:
+                self.logger.info(
+                    f"📄 [CHUNKING_PATH] Using PAGE-AWARE chunking for {document_id}"
+                )
+            else:
+                self.logger.info(
+                    f"📝 [CHUNKING_PATH] Using PLAIN TEXT chunking for {document_id}"
+                )
+
+            if structured_document:
+                page_count = len(getattr(structured_document, 'pages', []) or []) or (
+                    page_aware_text.total_pages if page_aware_text else 1
+                )
+                threshold = getattr(settings, 'RAG_RAPTOR_THRESHOLD_PAGES', 3)
+                should_raptor = page_count >= threshold
+
+                if hasattr(self.base_chunker, 'chunk_structured_document'):
+                    chunks = self.base_chunker.chunk_structured_document(
+                        structured_document,
+                        metadata,
+                    )
+
+                    # Log metadata capture
+                    if chunks:
+                        sample_meta = chunks[0].get('metadata', {})
+                        self.logger.info(
+                            f"✅ [STRUCTURED_CHUNKS_CREATED] {len(chunks)} chunks with Mineru metadata:\n"
+                            f"   📦 Block types: {sample_meta.get('block_type')}\n"
+                            f"   🗺️  Heading path: {sample_meta.get('heading_path')}\n"
+                            f"   📍 BBox: {bool(sample_meta.get('bbox'))}\n"
+                            f"   📊 Reading order: {sample_meta.get('reading_order_start')}-{sample_meta.get('reading_order_end')}\n"
+                            f"   🏗️  Parse backend: {sample_meta.get('parse_backend')}"
+                        )
+
+                    logger.info(
+                        f"Created {len(chunks)} structured block-first chunks "
+                        f"for document {document_id} (pages={page_count})"
+                    )
+                else:
+                    logger.warning(
+                        f"chunk_structured_document not available on "
+                        f"{type(self.base_chunker).__name__}, "
+                        f"falling back to page-aware / text chunking"
+                    )
+                    if page_aware_text:
+                        chunks = self.base_chunker.chunk_by_pages(
+                            page_aware_text, metadata
+                        )
+                        logger.info(
+                            f"Created {len(chunks)} fallback page-aware chunks "
+                            f"for document {document_id}"
+                        )
+                    else:
+                        chunks = self.base_chunker.chunk_text(text, metadata)
+                        logger.info(
+                            f"Created {len(chunks)} fallback text chunks "
+                            f"for document {document_id}"
+                        )
+            elif page_aware_text:
                 page_count = page_aware_text.total_pages
                 threshold = getattr(settings, 'RAG_RAPTOR_THRESHOLD_PAGES', 3)
                 should_raptor = page_count >= threshold
@@ -120,7 +186,7 @@ class EnhancedDocumentChunker:
             
             # Step 2: Skip page enrichment if already done by chunk_by_pages()
             # (page_number is already accurate from hierarchical chunking)
-            if page_aware_text:
+            if page_aware_text and not structured_document:
                 chunks = self._enrich_chunks_with_pages(chunks, page_aware_text)
             
             # Step 3: Generate embeddings + store in DB
@@ -157,9 +223,14 @@ class EnhancedDocumentChunker:
             for page_number in sorted(page_groups.keys()):
                 page_chunks = page_groups[page_number]
 
-                # Create an explicit page-level container
+                # RAPTOR tree construction owns parent-child links. Page
+                # containers are legacy nodes and should stay opt-in so they
+                # do not become orphaned after RAPTOR re-parents detail chunks.
                 page_container = None
-                if page_aware_text and should_raptor:
+                create_page_containers = bool(
+                    getattr(settings, 'RAG_CREATE_PAGE_CONTAINERS_ON_UPLOAD', False)
+                )
+                if page_aware_text and should_raptor and create_page_containers:
                     page_container_content = "\n".join(chunk['text'] for chunk in page_chunks)
                     content_hash = hashlib.md5(page_container_content.encode()).hexdigest()
                     
@@ -450,6 +521,15 @@ class EnhancedDocumentChunker:
             if row_end and row_end != row_start:
                 row_text += f"-{row_end}"
             parts.append(row_text)
+        heading_path = chunk_metadata.get('heading_path') or []
+        if heading_path:
+            if isinstance(heading_path, (list, tuple)):
+                parts.append("Section: " + " > ".join(str(item) for item in heading_path if item))
+            else:
+                parts.append(f"Section: {heading_path}")
+        block_type = chunk_metadata.get('block_type')
+        if block_type:
+            parts.append(f"Block: {block_type}")
 
         if not parts:
             return chunk_text
