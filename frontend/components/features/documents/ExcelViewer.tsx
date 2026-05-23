@@ -74,6 +74,35 @@ function getExcelSearchTerms(searchText?: string): string[] {
         .slice(0, 12)
 }
 
+function normalizeExcelSearchValue(value: string): string {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\u0111/g, 'd')
+        .replace(/\u0110/g, 'd')
+        .toLowerCase()
+}
+
+function scoreSheetForSearch(sheet: SheetData, searchTerms: string[]): number {
+    if (!searchTerms.length) return 0
+    const normalizedTerms = searchTerms.map(normalizeExcelSearchValue).filter(Boolean)
+    let score = 0
+
+    sheet.data.forEach((row) => {
+        row.forEach((cell) => {
+            const value = normalizeExcelSearchValue(String(cell || ''))
+            if (!value) return
+            normalizedTerms.forEach((term) => {
+                if (value.includes(term)) {
+                    score += term.length >= 18 ? 4 : 1
+                }
+            })
+        })
+    })
+
+    return score
+}
+
 function getCellDisplayValue(worksheet: XLSX.WorkSheet, row: number, col: number): CellValue {
     const address = XLSX.utils.encode_cell({ r: row, c: col })
     const cell = worksheet[address]
@@ -313,6 +342,20 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
     }, [activeSheet, sheets.length])
 
     useEffect(() => {
+        if (!sheets.length || !searchTerms.length || assetImage?.anchorCell) return
+
+        const ranked = sheets
+            .map((sheet, index) => ({ index, score: scoreSheetForSearch(sheet, searchTerms) }))
+            .sort((a, b) => b.score - a.score)
+        const best = ranked[0]
+        const currentScore = ranked.find((item) => item.index === activeSheet)?.score || 0
+
+        if (best && best.score > 0 && best.index !== activeSheet && best.score > currentScore) {
+            setActiveSheet(best.index)
+        }
+    }, [activeSheet, assetImage?.anchorCell, searchTerms, sheets])
+
+    useEffect(() => {
         if (!isLoading && !error && assetImage?.anchorCell) {
             const cellId = assetImage.anchorCell.trim().toUpperCase()
             // Wait a bit for the table to render and stabilize
@@ -413,8 +456,8 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
     const { covered, visible } = currentSheet
     const isHighlightedCell = (cell: CellValue) => {
         if (searchTerms.length === 0) return false
-        const value = String(cell).toLowerCase()
-        return searchTerms.some((term) => value.includes(term.toLowerCase()))
+        const value = normalizeExcelSearchValue(String(cell))
+        return searchTerms.some((term) => value.includes(normalizeExcelSearchValue(term)))
     }
 
     return (

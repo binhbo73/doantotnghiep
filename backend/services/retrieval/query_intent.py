@@ -226,6 +226,8 @@ class QueryIntentClassifier:
         QueryIntent.LIST: [
             (r"\b(liet ke|ke ra|neu ra|tong hop|danh sach)\b", 5),
             (r"\b(tom tat|tong quan|khai quat|noi dung chinh|y chinh|chu de chinh)\b", 5),
+            (r"\b(xem|cho xem|lay|trich|in)\s+(noi dung|muc|phan|section|chuong)\b", 6),
+            (r"\bnoi dung\s+(?:cua\s+)?(?:muc|phan|section|chuong|cac|nhung)\b", 5),
             (r"\b(file|tai lieu|van ban)\s+(nay\s+)?(noi ve gi|viet ve gi|trinh bay gi|co noi dung gi)\b", 5),
             (r"\btrinh bay\b", 2),
             (r"\b(tat ca|toan bo|day du|chi tiet)\b", 2),

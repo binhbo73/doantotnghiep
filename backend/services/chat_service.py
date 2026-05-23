@@ -173,6 +173,14 @@ Cách làm việc:
         heading = re.sub(r'\s+', ' ', heading).strip(' .:-')
         return heading if len(heading) >= 8 else ''
 
+    def _extract_requested_table_number(self, query: str) -> str:
+        """Return the table number when the user asks for an exact Bảng/Table N."""
+        query_norm = self._normalize_query_text(query)
+        if not query_norm:
+            return ''
+        match = re.search(r'\b(?:bang|table)\s*(\d{1,3})\b', query_norm)
+        return match.group(1) if match else ''
+
     def _is_specific_image_query(self, query: str) -> bool:
         """True when the user asks for a particular figure/image such as "Hinh 2"."""
         query_norm = self._normalize_query_text(query)
@@ -601,12 +609,26 @@ Cách làm việc:
 
             start_text = rows[start_pos].get('content') or ''
             current_section_id = self._heading_section_id(start_text, heading_norm) or self._first_numbered_section_id(start_text)
+            start_doc_id = str(rows[start_pos].get('document_id'))
+            start_page = rows[start_pos].get('page_number')
             section_rows = rows[start_pos:start_pos + max_chunks]
             candidates = []
             for offset, row in enumerate(section_rows):
                 row_text = row.get('content') or ''
-                if offset > 0 and self._starts_new_outside_section(row_text, current_section_id):
-                    break
+                if offset > 0:
+                    if current_section_id:
+                        if self._starts_new_outside_section(row_text, current_section_id):
+                            break
+                    else:
+                        # Non-numbered headings, especially table titles in
+                        # converted Office/PDF text, are often followed by
+                        # numbered cell fragments like author lists. Keep the
+                        # contiguous page instead of treating "1." as a new
+                        # section immediately.
+                        if str(row.get('document_id')) != start_doc_id:
+                            break
+                        if start_page and row.get('page_number') and row.get('page_number') != start_page:
+                            break
                 snippet = self._trim_section_text(row.get('content') or '', heading_norm, offset == 0)
                 snippet = self._trim_to_section_scope(snippet, current_section_id)
                 if not snippet:
@@ -628,6 +650,283 @@ Cách làm việc:
         except Exception as e:
             logger.warning(f"[_retrieve_exact_heading_section_candidates] failed: {e}")
             return []
+
+    def _retrieve_exact_table_candidates(
+        self,
+        query: str,
+        resolved_doc_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Fetch the exact table requested as "Bảng N" before semantic retrieval."""
+        table_number = self._extract_requested_table_number(query)
+        if not table_number or not resolved_doc_ids:
+            return []
+
+        heading_norm = self._extract_requested_heading(query)
+        try:
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            rows = list(
+                DocumentChunk.objects.filter(
+                    document_id__in=resolved_doc_ids,
+                    node_type='detail',
+                    is_deleted=False,
+                )
+                .order_by('document_id', 'chunk_index')
+                .values('id', 'document_id', 'content', 'page_number', 'chunk_index', 'metadata')
+            )
+
+            table_pattern = re.compile(rf'\b(?:bang|table)\s*{re.escape(table_number)}\b')
+            scored_matches = []
+            for idx, row in enumerate(rows):
+                row_text = row.get('content') or ''
+                row_norm = self._normalize_query_text(row_text)
+                if not table_pattern.search(row_norm):
+                    continue
+
+                metadata = row.get('metadata') or {}
+                score = 5
+                if self._looks_like_toc_chunk(row):
+                    score -= 8
+                else:
+                    score += 4
+
+                if re.search(rf'(^|\n)\s*(?:bang|table)\s*{re.escape(table_number)}\b', row_norm):
+                    score += 3
+                if metadata.get('block_type') == 'table' or 'table' in (metadata.get('block_types') or []):
+                    score += 2
+                if heading_norm:
+                    if heading_norm in row_norm:
+                        score += 5
+                    else:
+                        score += min(4, self._term_overlap_score(row_text, heading_norm))
+                if 'stt' in row_norm and ('truong du lieu' in row_norm or 'mo ta' in row_norm):
+                    score += 2
+
+                scored_matches.append((score, idx))
+
+            if not scored_matches:
+                return []
+
+            scored_matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            best_score, best_idx = scored_matches[0]
+            if best_score <= 0:
+                return []
+
+            row = rows[best_idx]
+            snippet = (row.get('content') or '').strip()
+            if not snippet:
+                return []
+
+            return [{
+                'chunk_id': str(row['id']),
+                'document_id': str(row['document_id']),
+                'score': 2.0,
+                'source': 'exact_table',
+                'snippet': snippet,
+                'page': row.get('page_number'),
+                'chunk_index': row.get('chunk_index'),
+                'metadata': row.get('metadata') or {},
+                '_exact_table_number': table_number,
+            }]
+        except Exception as e:
+            logger.warning(f"[_retrieve_exact_table_candidates] failed: {e}")
+            return []
+
+    def _markdown_table_from_rows(self, rows: List[List[Any]], reference_text: str = '') -> str:
+        """Convert extracted table cells to markdown without changing cell content."""
+        cleaned_rows: List[List[str]] = []
+        for row in rows or []:
+            cells = [
+                re.sub(r'\s+', ' ', str(cell or '').replace('|', '/')).strip()
+                for cell in (row or [])
+            ]
+            if any(cells):
+                cleaned_rows.append(cells)
+
+        if not cleaned_rows:
+            return ''
+
+        cleaned_rows = self._repair_table_identifier_cells(cleaned_rows, reference_text)
+        max_cols = max(len(row) for row in cleaned_rows)
+        normalized_rows = [row + [''] * (max_cols - len(row)) for row in cleaned_rows]
+
+        first_row = normalized_rows[0]
+        first_row_is_data = bool(first_row and re.match(r'^\s*\d+\s*$', first_row[0] or ''))
+        if first_row_is_data:
+            headers = [f"Cột {index}" for index in range(1, max_cols + 1)]
+            data_rows = normalized_rows
+        else:
+            headers = first_row
+            data_rows = normalized_rows[1:]
+
+        table_lines = [
+            "| " + " | ".join(headers) + " |",
+            "| " + " | ".join("---" for _ in headers) + " |",
+        ]
+        table_lines.extend("| " + " | ".join(row) + " |" for row in data_rows)
+        return "\n".join(table_lines)
+
+    def _repair_table_identifier_cells(
+        self,
+        rows: List[List[str]],
+        reference_text: str = '',
+    ) -> List[List[str]]:
+        """Repair OCR/PDF table cells like "absence id _" using identifiers in the chunk text."""
+        if not rows or not reference_text:
+            return rows
+
+        reference_identifiers: Dict[str, str] = {}
+        for match in re.finditer(r'(?m)^\s*([A-Za-z][A-Za-z0-9_]{2,})\b', reference_text):
+            identifier = match.group(1).strip()
+            key = re.sub(r'[^a-z0-9]+', '', identifier.lower())
+            if key:
+                reference_identifiers.setdefault(key, identifier)
+
+        if not reference_identifiers:
+            return rows
+
+        repaired: List[List[str]] = []
+        for row_index, row in enumerate(rows):
+            repaired_row = list(row)
+            if row_index > 0 and repaired_row:
+                cell_key = re.sub(r'[^a-z0-9]+', '', repaired_row[0].lower())
+                if cell_key in reference_identifiers:
+                    repaired_row[0] = reference_identifiers[cell_key]
+            repaired.append(repaired_row)
+        return repaired
+
+    def _try_extract_pdf_table_markdown(self, candidate: Dict[str, Any], snippet: str) -> str:
+        """Use PyMuPDF table detection for exact PDF/Office-preview table requests when available."""
+        document_id = candidate.get('document_id')
+        page = candidate.get('page')
+        if not document_id or not page:
+            return ''
+
+        try:
+            Document = apps.get_model('documents', 'Document')
+            doc = Document.objects.filter(id=document_id, is_deleted=False).first()
+            if not doc:
+                return ''
+
+            file_type = (getattr(doc, 'file_type', '') or getattr(doc, 'mime_type', '') or '').lower()
+            storage_path = getattr(doc, 'storage_path', '') or ''
+            pdf_path = storage_path if ('pdf' in file_type or storage_path.lower().endswith('.pdf')) else ''
+            if not pdf_path:
+                metadata = candidate.get('metadata') or {}
+                preview_path = ((metadata.get('spreadsheet') or {}).get('preview_pdf_path') or '').strip()
+                if preview_path.lower().endswith('.pdf'):
+                    pdf_path = preview_path
+            if not pdf_path:
+                return ''
+
+            import fitz  # PyMuPDF
+            import io
+            from contextlib import redirect_stderr, redirect_stdout
+
+            with fitz.open(pdf_path) as pdf:
+                page_index = int(page) - 1
+                if page_index < 0 or page_index >= pdf.page_count:
+                    return ''
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    table_finder = pdf[page_index].find_tables()
+                tables = getattr(table_finder, 'tables', []) or []
+                if not tables:
+                    return ''
+
+                snippet_norm = self._normalize_query_text(snippet)
+                snippet_terms = {
+                    term for term in re.split(r'\W+', snippet_norm)
+                    if len(term) >= 2
+                }
+
+                best_rows: List[List[Any]] = []
+                best_score = 0
+                for table in tables:
+                    rows = table.extract() or []
+                    table_text = ' '.join(
+                        str(cell or '')
+                        for row in rows
+                        for cell in (row or [])
+                    )
+                    table_norm = self._normalize_query_text(table_text)
+                    if not table_norm:
+                        continue
+                    table_terms = {
+                        term for term in re.split(r'\W+', table_norm)
+                        if len(term) >= 2
+                    }
+                    overlap = len(snippet_terms & table_terms)
+                    coverage = overlap / max(1, min(len(snippet_terms), len(table_terms)))
+                    exact_fragments = sum(
+                        1 for fragment in re.findall(r'\b[\w@./-]{4,}\b', table_norm)
+                        if fragment in snippet_norm
+                    )
+                    score = overlap + int(coverage * 20) + exact_fragments
+                    if score > best_score:
+                        best_score = score
+                        best_rows = rows
+
+                if not best_rows or best_score < 5:
+                    return ''
+                return self._markdown_table_from_rows(best_rows, reference_text=snippet)
+        except Exception as e:
+            logger.debug(f"[_try_extract_pdf_table_markdown] failed: {e}")
+            return ''
+
+    def _format_exact_table_snippet(self, snippet: str, candidate: Optional[Dict[str, Any]] = None) -> str:
+        """Render exact table evidence without inventing columns or cell boundaries."""
+        text = (snippet or '').replace('\r\n', '\n').replace('\r', '\n').strip()
+        if not text:
+            return ''
+
+        lines = [line.rstrip() for line in text.split('\n') if line.strip()]
+        title = lines[0] if lines else ''
+
+        has_markdown_table = any(line.strip().startswith('|') and line.strip().endswith('|') for line in lines)
+        has_markdown_separator = any(re.match(r'^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$', line.strip()) for line in lines)
+        if has_markdown_table:
+            if has_markdown_separator:
+                return text
+            if len(lines) >= 2 and all(line.strip().startswith('|') for line in lines[:2]):
+                header_cols = lines[0].strip().strip('|').split('|')
+                separator = '| ' + ' | '.join('---' for _ in header_cols) + ' |'
+                return '\n'.join([lines[0], separator, *lines[1:]])
+            return text
+
+        extracted_table = self._try_extract_pdf_table_markdown(candidate or {}, text)
+        if extracted_table:
+            return (title + "\n\n" if title and not title.startswith('|') else "") + extracted_table
+
+        body = '\n'.join(lines[1:]).strip() if len(lines) > 1 else ''
+        if title and body:
+            return f"{title}\n\n```text\n{body}\n```"
+        return f"```text\n{text}\n```"
+
+    def _build_exact_table_answer(self, candidates: List[Dict[str, Any]]) -> str:
+        """Create a deterministic answer for exact Bảng/Table N requests."""
+        exact_candidate = next((c for c in candidates if c.get('source') == 'exact_table'), None)
+        if not exact_candidate:
+            return ''
+
+        snippet = (
+            exact_candidate.get('citation_excerpt')
+            or exact_candidate.get('snippet')
+            or ''
+        ).strip()
+        if not snippet:
+            return ''
+
+        title = (
+            exact_candidate.get('document_title')
+            or exact_candidate.get('title')
+            or exact_candidate.get('document_name')
+            or 'Tài liệu'
+        )
+        source_label = self._build_source_label(
+            title=title,
+            page=exact_candidate.get('page'),
+            citation_id=exact_candidate.get('citation_id') or 1,
+        )
+        return f"{self._format_exact_table_snippet(snippet, exact_candidate)}\n\n{source_label}"
 
     def _candidate_content_signature(self, candidate: Dict[str, Any]) -> str:
         """Create a stable signature for near-duplicate chunk content."""
@@ -1203,6 +1502,28 @@ Cách làm việc:
         ]
         return any(re.search(pattern, q) for pattern in comprehensive_patterns)
 
+    def _is_section_content_query(self, query: str) -> bool:
+        """True when the user asks to view/extract the content of a named heading."""
+        q = self._normalize_query_text(query)
+        if not q:
+            return False
+        if not self._extract_requested_heading(query):
+            return False
+        section_markers = (
+            'xem',
+            'lay',
+            'trich',
+            'noi dung',
+            'toan bo',
+            'day du',
+            'chi tiet',
+            'muc',
+            'phan',
+            'section',
+            'chuong',
+        )
+        return any(marker in q for marker in section_markers)
+
     def _is_image_query(self, query: str) -> bool:
         """Detect if user asks to LIST ALL images. If they describe a SPECIFIC one, we return False to let RAG rank it."""
         q = self._normalize_query_text(query)
@@ -1223,6 +1544,9 @@ Cách làm việc:
 
     def _get_rag_top_k(self, query: str, default_top_k: int) -> int:
         """Intent-driven top_k: use QueryIntentClassifier for adaptive depth."""
+        if self._is_section_content_query(query):
+            base_top_k = int(getattr(settings, 'RAG_RETRIEVAL_TOP_K', default_top_k))
+            return int(getattr(settings, 'RAG_RETRIEVAL_TOP_K_SECTION', max(base_top_k, 12)))
         try:
             _intent, config = self._get_query_intent(query)
             return config.top_k
@@ -1234,6 +1558,10 @@ Cách làm việc:
 
     def _get_rag_max_tokens(self, query: str) -> int:
         """Intent-driven max_tokens: LIST queries get up to 2048 tokens to prevent truncation."""
+        if self._is_section_content_query(query):
+            context_window = int(getattr(settings, 'LLM_CONTEXT_WINDOW', 4096))
+            default_tokens = 2048 if context_window >= 6144 else 1536
+            return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_SECTION', default_tokens))
         try:
             _intent, config = self._get_query_intent(query)
             from services.retrieval.query_intent import QueryIntent
@@ -1255,6 +1583,9 @@ Cách làm việc:
 
     def _get_context_snippet_chars(self, query: str) -> int:
         """Intent-driven snippet_chars: use QueryIntentClassifier. LIST gets 3000 chars to hold full tables."""
+        if self._is_section_content_query(query):
+            list_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_LIST', 3000))
+            return int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_SECTION', max(list_chars, 5000)))
         try:
             _intent, config = self._get_query_intent(query)
             return config.snippet_chars
@@ -1284,7 +1615,10 @@ Cách làm việc:
         """Cap total RAG context so neighbor expansion stays inside the LLM window."""
         base_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS', 5000))
         list_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS_LIST', max(base_chars, 7000)))
-        configured_chars = list_chars if self._is_list_style_query(query) else base_chars
+        if self._is_section_content_query(query):
+            configured_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS_SECTION', max(list_chars, 12000)))
+        else:
+            configured_chars = list_chars if self._is_list_style_query(query) else base_chars
         token_budget = self._get_context_token_budget(query)
         chars_per_token = float(getattr(settings, 'RAG_CONTEXT_CHARS_PER_TOKEN', 3.2))
         token_safe_chars = int(token_budget * max(1.0, chars_per_token))
@@ -1292,6 +1626,11 @@ Cách làm việc:
 
     def _get_neighbor_window(self, query: str) -> Tuple[int, int, int]:
         """Intent-driven neighbor window for context expansion."""
+        if self._is_section_content_query(query):
+            before = int(getattr(settings, 'RAG_CONTEXT_NEIGHBOR_BEFORE_SECTION', 1))
+            after = int(getattr(settings, 'RAG_CONTEXT_NEIGHBOR_AFTER_SECTION', 8))
+            max_chunks = int(getattr(settings, 'RAG_CONTEXT_MAX_CHUNKS_SECTION', 24))
+            return max(0, before), max(0, after), max(1, max_chunks)
         try:
             _intent, config = self._get_query_intent(query)
             return config.neighbor_before, config.neighbor_after, config.max_context_chunks
@@ -2164,12 +2503,26 @@ Cách làm việc:
 
         try:
             t_route_start = time.monotonic()
-            exact_heading_candidates = self._retrieve_exact_heading_section_candidates(
-                query,
-                resolved_doc_ids,
-                max_chunks=int(getattr(settings, 'RAG_EXACT_HEADING_MAX_CHUNKS', 6)),
-            )
-            if exact_heading_candidates:
+            exact_table_candidates = self._retrieve_exact_table_candidates(query, resolved_doc_ids)
+            exact_heading_candidates: List[Dict[str, Any]] = []
+            if not exact_table_candidates:
+                exact_heading_candidates = self._retrieve_exact_heading_section_candidates(
+                    query,
+                    resolved_doc_ids,
+                    max_chunks=int(getattr(settings, 'RAG_EXACT_HEADING_MAX_CHUNKS', 16)),
+                )
+            if exact_table_candidates:
+                snippet_chars = max(
+                    snippet_chars,
+                    int(getattr(settings, 'RAG_EXACT_TABLE_SNIPPET_CHARS', 5000)),
+                )
+                candidates = exact_table_candidates
+                t_route_done = (time.monotonic() - t_route_start) * 1000
+            elif exact_heading_candidates:
+                snippet_chars = max(
+                    snippet_chars,
+                    int(getattr(settings, 'RAG_EXACT_HEADING_SNIPPET_CHARS', 5000)),
+                )
                 exact_image_assets = self._retrieve_assets_for_exact_image(query, exact_heading_candidates)
                 candidates = exact_heading_candidates + exact_image_assets
                 t_route_done = (time.monotonic() - t_route_start) * 1000
@@ -2208,7 +2561,9 @@ Cách làm việc:
             # Separate assets from chunks before neighbor expansion
             asset_candidates_ctx = [c for c in candidates if c.get('source') == 'asset']
             chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
-            if exact_heading_candidates:
+            if exact_table_candidates:
+                chunk_candidates_ctx = exact_table_candidates
+            elif exact_heading_candidates:
                 chunk_candidates_ctx = exact_heading_candidates
             elif not is_spreadsheet_retrieval:
                 chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
@@ -2217,8 +2572,8 @@ Cách làm việc:
             if not is_spreadsheet_retrieval:
                 candidates = self._stitch_sequential_chunks(candidates)
             # Self-RAG: relevance check, re-retrieve if too few relevant
-            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
-            if not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
+            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_table_candidates or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
+            if not exact_table_candidates and not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
                 logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
                 try:
                     router = self._get_router()
@@ -2462,6 +2817,22 @@ Cách làm việc:
                 current_page=current_page,
             )
 
+            exact_table_answer = self._build_exact_table_answer(rag_candidates)
+            if exact_table_answer:
+                bot_response_text, citations, _grounding = self._finalize_rag_answer(
+                    query=query,
+                    answer_text=exact_table_answer,
+                    context_str=context_str,
+                    candidates=rag_candidates,
+                    allow_revision=False,
+                )
+                bot_message = self.message_repo.create_bot_message(
+                    conversation_id=conversation.id,
+                    content=bot_response_text,
+                    metadata=citations,
+                )
+                return bot_response_text, bot_message
+
             # 5. Đính kèm tài liệu vào câu hỏi nếu có
             # P2#9: Unified context injection (same as ask_stream)
             if context_str:
@@ -2614,6 +2985,28 @@ Cách làm việc:
 
             # ── BƯỚC 5: Build prompt cho LLM ──────────────────────────────────
             # Chèn context vào tin nhắn CUỐI của user (không thay đổi lịch sử cũ)
+            exact_table_answer = self._build_exact_table_answer(rag_candidates)
+            if exact_table_answer:
+                full_response, citations, _grounding = self._finalize_rag_answer(
+                    query=query,
+                    answer_text=exact_table_answer,
+                    context_str=context_str,
+                    candidates=rag_candidates,
+                    allow_revision=False,
+                )
+                yield full_response
+                yield {'citations': citations}
+                self.message_repo.create_bot_message(
+                    conversation_id=conversation.id,
+                    content=full_response,
+                    metadata=citations,
+                )
+                logger.debug(
+                    f"Saved deterministic exact-table answer for conversation {conversation.id} "
+                    f"({len(citations)} citations)"
+                )
+                return
+
             if context_str and messages_for_llm:
                 last_msg = messages_for_llm[-1].copy()
                 last_msg['content'] = (

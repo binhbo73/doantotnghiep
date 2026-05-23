@@ -481,7 +481,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                         {uploadReadinessLabel}
                                     </p>
                                     <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
-                                        Trang thai nay tu dong an khi tai lieu san sang.
+                                        Trạng thái sẽ tự động ẩn khi tài liệu sẵn sàng.
                                     </p>
                                 </div>
 

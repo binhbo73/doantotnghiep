@@ -94,7 +94,7 @@ class AssetPipelineStage(PipelineStage):
             ext_map = {
                 '.pdf': ('pdf', extractor.extract_from_pdf),
                 '.docx': ('docx', extractor.extract_from_docx),
-                '.doc': ('docx', extractor.extract_from_docx),
+                '.doc': ('office_pdf', self._extract_from_office_pdf_assets),
                 '.xlsx': ('xlsx', extractor.extract_from_xlsx),
                 '.xls': ('xlsx', extractor.extract_from_xlsx),
             }
@@ -108,7 +108,7 @@ class AssetPipelineStage(PipelineStage):
 
             extract_func = ext_map[file_ext][1]
             raw_assets = extract_func(file_path, full_text)
-            if file_ext in {'.doc', '.docx'} and raw_assets:
+            if file_ext == '.docx' and raw_assets:
                 self._enrich_docx_assets_with_pages(raw_assets, file_path, pa_text)
 
             if not raw_assets:
@@ -335,6 +335,30 @@ class AssetPipelineStage(PipelineStage):
                 )
         except Exception as e:
             self.logger.warning(f"Failed to enrich DOCX assets with page numbers: {e}")
+
+    def _extract_from_office_pdf_assets(self, file_path: str, full_text: str = '') -> List[Dict[str, Any]]:
+        """Extract assets from legacy Office files through the PDF preview path.
+
+        python-docx only supports real DOCX packages. Legacy .doc files uploaded
+        by users can still be previewed by LibreOffice, so reuse that converted
+        PDF instead of logging a noisy DOCX content-type error.
+        """
+        try:
+            from services.document.asset_extractor import AssetExtractor
+            from services.document.office_preview import convert_office_to_pdf
+
+            preview_pdf = convert_office_to_pdf(file_path)
+            assets = AssetExtractor().extract_from_pdf(preview_pdf, full_text)
+            for asset in assets:
+                asset['asset_type'] = 'docx_inline'
+                position = asset.setdefault('position', {})
+                position['source_file_type'] = 'doc'
+                position['source_conversion'] = 'office_pdf'
+                asset['source'] = f"office_pdf_{asset.get('source', 'asset')}"
+            return assets
+        except Exception as e:
+            self.logger.warning(f"Legacy DOC asset extraction via PDF preview failed: {e}")
+            return []
 
     def _enrich_docx_assets_with_pdf_image_pages(
         self,

@@ -580,25 +580,35 @@ function CitationViewerContent() {
                 const initialKind = classifyFileType(payload.type, title)
 
                 if (initialKind === 'word' && payload.document_id && isOfficeWordFile(payload.type, title)) {
-                    const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/preview`), {
-                        headers: {
-                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                        },
-                        signal: controller.signal,
-                    })
+                    try {
+                        const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/preview`), {
+                            headers: {
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                            },
+                            signal: controller.signal,
+                        })
 
-                    if (!response.ok) {
-                        throw new Error(`Khong the tai preview Word: ${response.status}`)
+                        if (!response.ok) {
+                            throw new Error(`Khong the tai preview Word: ${response.status}`)
+                        }
+
+                        const blob = await response.blob()
+                        objectUrl = URL.createObjectURL(blob)
+                        setViewer({
+                            kind: 'pdf',
+                            fileUrl: objectUrl,
+                            fileType: 'application/pdf',
+                        })
+                        return
+                    } catch (previewError) {
+                        if ((previewError as Error).name === 'AbortError') throw previewError
+                        setViewer({
+                            kind: 'word',
+                            fileUrl: `/documents/${payload.document_id}/preview?format=html`,
+                            fileType: payload.type || 'docx',
+                        })
+                        return
                     }
-
-                    const blob = await response.blob()
-                    objectUrl = URL.createObjectURL(blob)
-                    setViewer({
-                        kind: 'pdf',
-                        fileUrl: objectUrl,
-                        fileType: 'application/pdf',
-                    })
-                    return
                 }
 
                 const response = await fetch(buildApiUrl(endpoint), {
@@ -625,25 +635,35 @@ function CitationViewerContent() {
                         throw new Error('Can document_id de xem preview Word')
                     }
 
-                    const previewResponse = await fetch(buildApiUrl(`/documents/${payload.document_id}/preview`), {
-                        headers: {
-                            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                        },
-                        signal: controller.signal,
-                    })
+                    try {
+                        const previewResponse = await fetch(buildApiUrl(`/documents/${payload.document_id}/preview`), {
+                            headers: {
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                            },
+                            signal: controller.signal,
+                        })
 
-                    if (!previewResponse.ok) {
-                        throw new Error(`Khong the tai preview Word: ${previewResponse.status}`)
+                        if (!previewResponse.ok) {
+                            throw new Error(`Khong the tai preview Word: ${previewResponse.status}`)
+                        }
+
+                        const previewBlob = await previewResponse.blob()
+                        objectUrl = URL.createObjectURL(previewBlob)
+                        setViewer({
+                            kind: 'pdf',
+                            fileUrl: objectUrl,
+                            fileType: 'application/pdf',
+                        })
+                        return
+                    } catch (previewError) {
+                        if ((previewError as Error).name === 'AbortError') throw previewError
+                        setViewer({
+                            kind: 'word',
+                            fileUrl: `/documents/${payload.document_id}/preview?format=html`,
+                            fileType: payload.type || contentType || getFileExtension(resolvedTitle) || 'docx',
+                        })
+                        return
                     }
-
-                    const previewBlob = await previewResponse.blob()
-                    objectUrl = URL.createObjectURL(previewBlob)
-                    setViewer({
-                        kind: 'pdf',
-                        fileUrl: objectUrl,
-                        fileType: 'application/pdf',
-                    })
-                    return
                 }
 
                 if (resolvedKind === 'word') {

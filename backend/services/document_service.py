@@ -68,7 +68,7 @@ class DocumentService(BaseService):
     """
 
     repository_class = DocumentRepository
-    PREVIEW_CACHE_VERSION = 'v3'
+    PREVIEW_CACHE_VERSION = 'v4'
 
     # Configuration
     MAX_FILE_SIZE_MB = 100  # Max 100MB
@@ -1175,17 +1175,25 @@ class DocumentService(BaseService):
                 '<div class="docx-preview bg-white rounded-lg p-6 text-slate-900" '
                 'style="line-height:1.7;font-size:14px;">'
             ]
-            image_counter = {'value': 0}
+            preview_state = {'image_index': 0, 'block_index': 0, 'char_pos': 0}
 
             for block in doc.element.body.iterchildren():
                 if block.tag.endswith('}p'):
                     paragraph = Paragraph(block, doc)
-                    paragraph_html = self._convert_docx_paragraph_to_html(paragraph, doc, image_counter)
+                    paragraph_html = self._convert_docx_paragraph_to_html(
+                        paragraph,
+                        doc,
+                        preview_state=preview_state,
+                    )
                     if paragraph_html:
                         html_parts.append(paragraph_html)
                 elif block.tag.endswith('}tbl'):
                     table = Table(block, doc)
-                    html_parts.append(self._convert_docx_table_to_html(table, doc, image_counter))
+                    html_parts.append(self._convert_docx_table_to_html(
+                        table,
+                        doc,
+                        preview_state=preview_state,
+                    ))
 
             html_parts.append('</div>')
             return '\n'.join(html_parts)
@@ -1234,11 +1242,18 @@ class DocumentService(BaseService):
             logger.error(f"DOC preview generation error: {e}", exc_info=True)
             raise DocumentProcessingError(f"Failed to generate DOC preview: {str(e)}")
 
-    def _convert_docx_paragraph_to_html(self, paragraph, document, image_counter=None) -> str:
+    def _convert_docx_paragraph_to_html(self, paragraph, document, image_counter=None, preview_state=None) -> str:
         parts = []
         text_buffer = []
-        if image_counter is None:
-            image_counter = {'value': 0}
+        if preview_state is None:
+            preview_state = {'image_index': 0, 'block_index': 0, 'char_pos': 0}
+        if image_counter is not None and 'image_index' not in preview_state:
+            preview_state['image_index'] = image_counter.get('value', 0)
+
+        block_index = int(preview_state.get('block_index') or 0)
+        char_start = int(preview_state.get('char_pos') or 0)
+        source_text = paragraph.text or ''
+        char_end = char_start + len(source_text)
 
         for run in paragraph.runs:
             if run.text:
@@ -1258,8 +1273,10 @@ class DocumentService(BaseService):
 
                 content_type = getattr(image_part, 'content_type', 'image/png') or 'image/png'
                 image_data = base64.b64encode(image_part.blob).decode('ascii')
-                image_index = image_counter['value']
-                image_counter['value'] += 1
+                image_index = int(preview_state.get('image_index') or 0)
+                preview_state['image_index'] = image_index + 1
+                if image_counter is not None:
+                    image_counter['value'] = preview_state['image_index']
                 parts.append(
                     f'<img src="data:{content_type};base64,{image_data}" '
                     f'data-docx-image-index="{image_index}" '
@@ -1282,20 +1299,44 @@ class DocumentService(BaseService):
             tag = 'h4'
 
         if text_content:
-            parts.insert(0, f'<{tag}>{text_content}</{tag}>')
+            parts.insert(
+                0,
+                f'<{tag} data-docx-block-index="{block_index}" '
+                f'data-docx-paragraph-index="{block_index}" '
+                f'data-docx-char-start="{char_start}" '
+                f'data-docx-char-end="{char_end}">{text_content}</{tag}>'
+            )
 
         if not parts:
+            preview_state['block_index'] = block_index + 1
+            preview_state['char_pos'] = char_end + 1
             return ''
 
+        preview_state['block_index'] = block_index + 1
+        preview_state['char_pos'] = char_end + 1
         return ''.join(parts)
 
-    def _convert_docx_table_to_html(self, table, document, image_counter=None) -> str:
+    def _convert_docx_table_to_html(self, table, document, image_counter=None, preview_state=None) -> str:
         from docx.table import Table
         from docx.text.paragraph import Paragraph
-        if image_counter is None:
-            image_counter = {'value': 0}
+        if preview_state is None:
+            preview_state = {'image_index': 0, 'block_index': 0, 'char_pos': 0}
+        if image_counter is not None and 'image_index' not in preview_state:
+            preview_state['image_index'] = image_counter.get('value', 0)
 
-        html_parts = ['<table style="width:100%;border-collapse:collapse;margin:1rem 0;">']
+        block_index = int(preview_state.get('block_index') or 0)
+        char_start = int(preview_state.get('char_pos') or 0)
+        table_text = self._docx_table_text_for_anchor(table)
+        char_end = char_start + len(table_text)
+
+        html_parts = [
+            '<table '
+            f'data-docx-block-index="{block_index}" '
+            f'data-docx-paragraph-index="{block_index}" '
+            f'data-docx-char-start="{char_start}" '
+            f'data-docx-char-end="{char_end}" '
+            'style="width:100%;border-collapse:collapse;margin:1rem 0;">'
+        ]
 
         for row in table.rows:
             html_parts.append('<tr>')
@@ -1304,12 +1345,32 @@ class DocumentService(BaseService):
                 for block in cell._tc.iterchildren():
                     if block.tag.endswith('}p'):
                         paragraph = Paragraph(block, cell)
-                        paragraph_html = self._convert_docx_paragraph_to_html(paragraph, document, image_counter)
+                        cell_state = {
+                            **preview_state,
+                            'block_index': block_index,
+                            'char_pos': char_start,
+                        }
+                        paragraph_html = self._convert_docx_paragraph_to_html(
+                            paragraph,
+                            document,
+                            preview_state=cell_state,
+                        )
+                        preview_state['image_index'] = cell_state.get('image_index', preview_state.get('image_index', 0))
                         if paragraph_html:
                             cell_html.append(paragraph_html)
                     elif block.tag.endswith('}tbl'):
                         nested_table = Table(block, cell)
-                        cell_html.append(self._convert_docx_table_to_html(nested_table, document, image_counter))
+                        cell_state = {
+                            **preview_state,
+                            'block_index': block_index,
+                            'char_pos': char_start,
+                        }
+                        cell_html.append(self._convert_docx_table_to_html(
+                            nested_table,
+                            document,
+                            preview_state=cell_state,
+                        ))
+                        preview_state['image_index'] = cell_state.get('image_index', preview_state.get('image_index', 0))
 
                 html_parts.append(
                     '<td style="border:1px solid #d1d5db;padding:0.55rem;vertical-align:top;">'
@@ -1319,7 +1380,17 @@ class DocumentService(BaseService):
             html_parts.append('</tr>')
 
         html_parts.append('</table>')
+        preview_state['block_index'] = block_index + 1
+        preview_state['char_pos'] = char_end + 2
         return ''.join(html_parts)
+
+    def _docx_table_text_for_anchor(self, table) -> str:
+        rows = []
+        for row in table.rows:
+            cells = [(cell.text or '').strip() for cell in row.cells]
+            if any(cells):
+                rows.append(' | '.join(cells))
+        return '\n'.join(rows)
 
     def _convert_text_to_html(self, storage_path: str, file_type: str) -> str:
         try:

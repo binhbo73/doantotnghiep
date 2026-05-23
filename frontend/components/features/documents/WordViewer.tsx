@@ -49,6 +49,21 @@ function normalizeText(value: string) {
         .toLowerCase()
 }
 
+function normalizeTextWithMap(value: string) {
+    let normalized = ''
+    const map: number[] = []
+
+    Array.from(value).forEach((char, index) => {
+        const normalizedChar = normalizeText(char)
+        Array.from(normalizedChar).forEach((part) => {
+            normalized += part
+            map.push(index)
+        })
+    })
+
+    return { normalized, map }
+}
+
 function stripCitationMarkup(text?: string) {
     return (text || '')
         .replace(/\[(?:Ngu[^\]]*|Source):[^\]]+\]\s*\[\d{1,3}\]/gi, ' ')
@@ -121,6 +136,54 @@ function findBestPreviewBlock(root: HTMLElement, referenceText?: string): HTMLEl
     return best?.element || null
 }
 
+function getDatasetNumber(element: HTMLElement, key: string): number | null {
+    const value = element.dataset[key]
+    if (value === undefined) return null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+}
+
+function findMetadataAnchor(
+    root: HTMLElement,
+    citationTarget?: WordViewerProps['citationTarget'],
+): HTMLElement | null {
+    if (!citationTarget) return null
+
+    if (typeof citationTarget.startChar === 'number' || typeof citationTarget.endChar === 'number') {
+        const targetStart = citationTarget.startChar ?? citationTarget.endChar ?? 0
+        const targetEnd = citationTarget.endChar ?? citationTarget.startChar ?? targetStart
+        const candidates = Array.from(root.querySelectorAll('[data-docx-char-start][data-docx-char-end]')) as HTMLElement[]
+        let best: { element: HTMLElement; score: number; distance: number } | null = null
+
+        for (const element of candidates) {
+            const start = getDatasetNumber(element, 'docxCharStart')
+            const end = getDatasetNumber(element, 'docxCharEnd')
+            if (start === null || end === null) continue
+
+            const overlap = Math.max(0, Math.min(end, targetEnd) - Math.max(start, targetStart))
+            const contains = start <= targetStart && end >= targetStart ? 8 : 0
+            const distance = Math.min(Math.abs(start - targetStart), Math.abs(end - targetStart))
+            const score = overlap + contains - Math.min(distance / 1000, 4)
+
+            if (!best || score > best.score || (score === best.score && distance < best.distance)) {
+                best = { element, score, distance }
+            }
+        }
+
+        if (best && (best.score > 0 || best.distance < 600)) {
+            return best.element
+        }
+    }
+
+    if (typeof citationTarget.lineStart === 'number') {
+        const blockIndex = Math.max(0, citationTarget.lineStart - 1)
+        const byLine = root.querySelector(`[data-docx-block-index="${blockIndex}"], [data-docx-paragraph-index="${blockIndex}"]`) as HTMLElement | null
+        if (byLine) return byLine
+    }
+
+    return null
+}
+
 function highlightPreviewHtml(html: string, searchText?: string, chunkText?: string, answerContext?: string): string {
     if (typeof window === 'undefined') return html
 
@@ -152,15 +215,17 @@ function highlightPreviewHtml(html: string, searchText?: string, chunkText?: str
 
     textNodes.forEach((node) => {
         const text = node.nodeValue || ''
-        const lowerText = text.toLowerCase()
+        const normalizedNode = normalizeTextWithMap(text)
         const matches: { start: number; end: number }[] = []
 
         phrases.forEach((phrase) => {
-            const needle = phrase.toLowerCase()
-            let index = lowerText.indexOf(needle)
+            const needle = normalizeText(phrase)
+            let index = normalizedNode.normalized.indexOf(needle)
             while (index !== -1) {
-                matches.push({ start: index, end: index + phrase.length })
-                index = lowerText.indexOf(needle, index + phrase.length)
+                const originalStart = normalizedNode.map[index] ?? 0
+                const originalEnd = (normalizedNode.map[index + needle.length - 1] ?? originalStart) + 1
+                matches.push({ start: originalStart, end: originalEnd })
+                index = normalizedNode.normalized.indexOf(needle, index + Math.max(needle.length, 1))
             }
         })
 
@@ -208,7 +273,7 @@ function highlightPreviewHtml(html: string, searchText?: string, chunkText?: str
     return root.innerHTML
 }
 
-export function WordViewer({ fileUrl, searchText, chunkText, answerContext, assetImage, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
+export function WordViewer({ fileUrl, searchText, chunkText, answerContext, assetImage, citationTarget, onLoadSuccess, onLoadError, onScrollStatsChange }: WordViewerProps) {
     const [htmlContent, setHtmlContent] = useState<string>('')
     const [isLoading, setIsLoading] = useState(true)
     const [error, setError] = useState<string | null>(null)
@@ -266,6 +331,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
                         .docx-preview blockquote { margin: 0 0 1rem; padding-left: 1rem; border-left: 3px solid #cbd5e1; color: #475569; }
                         .docx-preview .citation-preview-highlight { background: #fde68a; color: inherit; border-radius: 4px; padding: 0 2px; box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.16); }
                         .docx-preview .citation-preview-block-highlight { background: #fef3c7; outline: 2px solid rgba(245, 158, 11, 0.25); outline-offset: 4px; border-radius: 8px; }
+                        .docx-preview .citation-preview-anchor-highlight { background: #fef3c7; outline: 3px solid rgba(245, 158, 11, 0.34); outline-offset: 4px; border-radius: 8px; }
                         .docx-preview .citation-asset-image-highlight { outline: 4px solid rgb(34 211 238); outline-offset: 6px; border-radius: 8px; box-shadow: 0 0 0 8px rgba(34, 211, 238, 0.16); }
                     </style>
                 `
@@ -298,6 +364,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
         const container = containerRef.current
         if (!container || isLoading || error || !htmlContent) return
 
+        const metadataTarget = findMetadataAnchor(container, citationTarget)
         const firstHighlight = container.querySelector('.citation-preview-highlight, .citation-preview-block-highlight') as HTMLElement | null
         const assetTarget = (() => {
             if (!assetImage) return null
@@ -323,6 +390,11 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
             window.setTimeout(() => {
                 assetTarget.scrollIntoView({ block: 'center', behavior: 'smooth' })
             }, 100)
+        } else if (metadataTarget) {
+            metadataTarget.classList.add('citation-preview-anchor-highlight')
+            window.setTimeout(() => {
+                metadataTarget.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            }, 100)
         } else if (firstHighlight) {
             window.setTimeout(() => {
                 firstHighlight.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -346,7 +418,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
             container.removeEventListener('scroll', updateStats)
             window.removeEventListener('resize', updateStats)
         }
-    }, [htmlContent, isLoading, error, assetImage])
+    }, [htmlContent, isLoading, error, assetImage, citationTarget])
 
     if (isLoading) {
         return (

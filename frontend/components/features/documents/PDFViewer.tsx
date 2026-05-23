@@ -40,7 +40,7 @@ type AssetImageHint = {
     contextText?: string
 }
 
-type MatchSource = 'answer_context' | 'citation_chunk'
+type MatchSource = 'answer_context' | 'citation_chunk' | 'exact_anchor'
 
 type PdfMatch = {
     pageNumber: number
@@ -49,6 +49,7 @@ type PdfMatch = {
     source?: MatchSource
     itemStart?: number
     itemEnd?: number
+    strong?: boolean
 }
 
 type ItemRange = {
@@ -155,6 +156,52 @@ const getSearchPhrases = (text?: string) => {
         .slice(0, 8)
 }
 
+const getExactTableAnchorText = (...texts: Array<string | undefined>) => {
+    for (const text of texts) {
+        const cleaned = stripCitationMarkup(text || '')
+        if (!cleaned) continue
+
+        const lines = cleaned
+            .split(/\n+/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+
+        const tableLine = lines.find((line) => /\b(?:Bảng|Bang|Table)\s*\d{1,3}\b/i.test(line))
+        if (tableLine) return tableLine.slice(0, 220)
+
+        const match = cleaned.match(/\b(?:Bảng|Bang|Table)\s*\d{1,3}\b/i)
+        if (match) return match[0]
+    }
+
+    return ''
+}
+
+const getPageSearchOrder = (pageCount: number, targetPage?: number | null, initialPage?: number) => {
+    const seen = new Set<number>()
+    const pages: number[] = []
+    const add = (page?: number | null) => {
+        if (!page || page < 1 || page > pageCount || seen.has(page)) return
+        seen.add(page)
+        pages.push(page)
+    }
+
+    add(targetPage || undefined)
+    add(initialPage)
+
+    if (targetPage) {
+        for (let radius = 1; radius <= 3; radius += 1) {
+            add(targetPage - radius)
+            add(targetPage + radius)
+        }
+    }
+
+    for (let page = 1; page <= pageCount; page += 1) {
+        add(page)
+    }
+
+    return pages
+}
+
 const getTextLayerSpans = (pageEl: HTMLElement) =>
     Array.from(
         pageEl.querySelectorAll([
@@ -210,7 +257,7 @@ const findBestWindowInTexts = (
     if (!strongestPhraseHit && pageHits.length < minHits) return null
 
     let bestWindow = { start: -1, end: -1, score: 0, hits: 0 }
-    const maxWindow = source === 'answer_context' ? 18 : 42
+    const maxWindow = source === 'answer_context' ? 18 : source === 'exact_anchor' ? 14 : 42
 
     for (let start = rangeStart; start <= rangeEnd; start += 1) {
         let combined = ''
@@ -232,6 +279,14 @@ const findBestWindowInTexts = (
 
     if (bestWindow.start < 0 || (!strongestPhraseHit && bestWindow.hits < minHits)) return null
     return bestWindow
+}
+
+const expandItemRange = (range: ItemRange | null, itemCount: number, before: number, after: number): ItemRange | undefined => {
+    if (!range || itemCount <= 0) return undefined
+    return {
+        start: Math.max(0, range.start - before),
+        end: Math.min(itemCount - 1, range.end + after),
+    }
 }
 
 export function PDFViewer({
@@ -258,14 +313,18 @@ export function PDFViewer({
     const matchedTextRef = useRef<string[]>([])
     const matchedPageRef = useRef<number | null>(null)
     const matchedRangeRef = useRef<{ start: number; end: number } | null>(null)
+    const matchedSourceRef = useRef<MatchSource | null>(null)
     const lastAnchorKeyRef = useRef<string>('')
+    const lockedAnswerAnchorKeyRef = useRef<string>('')
 
     useEffect(() => {
         didInitialScrollRef.current = false
         matchedTextRef.current = []
         matchedPageRef.current = null
         matchedRangeRef.current = null
+        matchedSourceRef.current = null
         lastAnchorKeyRef.current = ''
+        lockedAnswerAnchorKeyRef.current = ''
     }, [fileUrl])
 
     useEffect(() => {
@@ -327,7 +386,13 @@ export function PDFViewer({
             searchText || '',
             answerContext || '',
         ].join('|')
+        const answerAnchorKey = [
+            fileUrl,
+            citationTarget?.chunkId || '',
+            answerContext || '',
+        ].join('|')
 
+        if (answerContext && lockedAnswerAnchorKeyRef.current === answerAnchorKey) return
         if (lastAnchorKeyRef.current === anchorKey) return
         lastAnchorKeyRef.current = anchorKey
 
@@ -353,6 +418,7 @@ export function PDFViewer({
         const match = await findBestPdfMatch(pdf, startPage, searchText || '', answerContext || '', chunkText || '', citationTarget)
         matchedTextRef.current = match.matches
         matchedPageRef.current = match.score > 0 ? match.pageNumber : null
+        matchedSourceRef.current = match.score > 0 ? match.source || null : null
         matchedRangeRef.current = (
             match.score > 0 &&
             typeof match.itemStart === 'number' &&
@@ -363,6 +429,10 @@ export function PDFViewer({
             setCurrentPage(match.pageNumber)
             currentPageRef.current = match.pageNumber
             onPageChangeRef.current?.(match.pageNumber)
+        }
+
+        if (answerContext && match.source === 'answer_context' && match.strong && match.score > 0) {
+            lockedAnswerAnchorKeyRef.current = answerAnchorKey
         }
 
         if (match.score <= 0) {
@@ -520,6 +590,13 @@ export function PDFViewer({
             const pageHits = referenceTokens.filter((token) => pageTokenSet.has(token) || normalizedSearchText.includes(token))
             const coverage = referenceTokens.length ? pageHits.length / referenceTokens.length : 0
             const strongestPhraseHit = phrases.some((phrase) => phrase.length >= 24 && normalizedSearchText.includes(phrase))
+            const strongPageMatch = Boolean(strongestPhraseHit || coverage >= 0.62)
+            const tableMarkerCount = (normalizedSearchText.match(/\bbang\s*\d{1,3}\b/g) || []).length
+            const tocPenalty = (
+                source === 'exact_anchor' &&
+                (normalizedSearchText.includes('danh sach bang') || tableMarkerCount >= 4) &&
+                !normalizedSearchText.includes(' stt ')
+            ) ? 380 : 0
 
             const minHits = Math.min(4, Math.max(2, Math.ceil(referenceTokens.length * 0.35)))
             if (!strongestPhraseHit && pageHits.length < minHits) {
@@ -527,7 +604,7 @@ export function PDFViewer({
             }
 
             let bestWindow = { start: -1, end: -1, score: 0, hits: 0 }
-            const maxWindow = source === 'answer_context' ? 18 : 42
+            const maxWindow = source === 'answer_context' ? 18 : source === 'exact_anchor' ? 14 : 42
 
             for (let start = rangeStart; start <= rangeEnd; start += 1) {
                 let combined = ''
@@ -555,8 +632,8 @@ export function PDFViewer({
                 .slice(bestWindow.start, bestWindow.end + 1)
                 .filter((item: string) => item.length >= 2)
 
-            const sourceBonus = source === 'answer_context' ? 80 : 8
-            const pageScore = bestWindow.score + (coverage * 50) + (strongestPhraseHit ? 30 : 0) + sourceBonus
+            const sourceBonus = source === 'answer_context' ? 80 : source === 'exact_anchor' ? 120 : 8
+            const pageScore = bestWindow.score + (coverage * 50) + (strongestPhraseHit ? 30 : 0) + sourceBonus - tocPenalty
 
             return {
                 pageNumber,
@@ -565,6 +642,7 @@ export function PDFViewer({
                 source,
                 itemStart: bestWindow.start,
                 itemEnd: bestWindow.end,
+                strong: strongPageMatch || bestWindow.hits >= Math.max(minHits + 2, Math.ceil(referenceTokens.length * 0.55)),
             }
         } catch (err) {
             console.warn('Failed to find PDF text matches:', err)
@@ -581,9 +659,8 @@ export function PDFViewer({
         target?: CitationTarget,
     ): Promise<PdfMatch> {
         const targetPage = target?.page && target.page > 0 ? Math.min(target.page, pdf.numPages) : null
-        const pagesToSearch = targetPage
-            ? [targetPage]
-            : Array.from({ length: pdf.numPages }, (_, index) => index + 1)
+        const pagesToSearch = getPageSearchOrder(pdf.numPages, targetPage, initialPageNumber)
+        const exactAnchorText = getExactTableAnchorText(referenceText, chunkReferenceText, contextText)
 
         let best: PdfMatch = { pageNumber: targetPage || initialPageNumber, matches: [], score: 0 }
 
@@ -600,9 +677,10 @@ export function PDFViewer({
             ) ? { start: chunkCandidate.itemStart, end: chunkCandidate.itemEnd } : undefined
 
             const references = [
-                ...(referenceText ? [{ text: referenceText, source: 'citation_chunk' as const, bonus: 140 }] : []),
-                ...(chunkReferenceText ? [{ text: chunkReferenceText, source: 'citation_chunk' as const, bonus: 80 }] : []),
-                ...(contextText ? [{ text: contextText, source: 'answer_context' as const, bonus: 5 }] : []),
+                ...(exactAnchorText ? [{ text: exactAnchorText, source: 'exact_anchor' as const, bonus: 260 }] : []),
+                ...(contextText ? [{ text: contextText, source: 'answer_context' as const, bonus: 170 }] : []),
+                ...(referenceText ? [{ text: referenceText, source: 'citation_chunk' as const, bonus: 120 }] : []),
+                ...(chunkReferenceText ? [{ text: chunkReferenceText, source: 'citation_chunk' as const, bonus: 60 }] : []),
             ]
 
             for (const reference of references) {
@@ -611,13 +689,15 @@ export function PDFViewer({
                     pageNumber,
                     reference.text,
                     reference.source,
-                    chunkRange,
+                    reference.source === 'answer_context' || reference.source === 'exact_anchor' ? undefined : chunkRange,
                 )
 
                 if (candidate.score > 0) {
+                    const targetPageBonus = targetPage && candidate.pageNumber === targetPage ? 25 : 0
+                    const nearbyPageBonus = targetPage && Math.abs(candidate.pageNumber - targetPage) <= 2 ? 8 : 0
                     const adjustedCandidate = {
                         ...candidate,
-                        score: candidate.score + reference.bonus,
+                        score: candidate.score + reference.bonus + targetPageBonus + nearbyPageBonus,
                     }
                     if (adjustedCandidate.score > best.score) {
                         best = adjustedCandidate
@@ -629,6 +709,9 @@ export function PDFViewer({
                 best = chunkCandidate
             }
 
+            if (best.strong && (best.source === 'answer_context' || best.source === 'exact_anchor')) {
+                break
+            }
         }
 
         return best
@@ -640,6 +723,32 @@ export function PDFViewer({
 
         const visualSpanItems = getVisualSpanItems(spans)
         const normalizedSpanTexts = visualSpanItems.map((item) => normalizeText(item.text))
+
+        if (answerContext) {
+            const anchorRange = matchedSourceRef.current === 'exact_anchor' || matchedSourceRef.current === 'citation_chunk'
+                ? expandItemRange(matchedRangeRef.current, normalizedSpanTexts.length, 2, 90)
+                : undefined
+            const answerRange = findBestWindowInTexts(normalizedSpanTexts, answerContext, 'answer_context', anchorRange)
+                || findBestWindowInTexts(normalizedSpanTexts, answerContext, 'answer_context')
+            const range = answerRange || (matchedSourceRef.current === 'answer_context' ? matchedRangeRef.current : null)
+
+            if (!range) return 0
+
+            let highlightedCount = 0
+            for (let index = range.start; index <= range.end && index < visualSpanItems.length; index += 1) {
+                const span = visualSpanItems[index]?.span
+                if (!span) continue
+                highlightedCount += 1
+                span.classList.add('citation-pdf-highlight')
+                span.style.backgroundColor = 'rgba(253, 230, 138, 0.85)'
+                span.style.color = 'rgb(15, 23, 42)'
+                span.style.borderRadius = '2px'
+                span.style.boxShadow = '0 0 0 2px rgba(253, 230, 138, 0.35)'
+            }
+
+            return highlightedCount
+        }
+
         const chunkRange = chunkText
             ? findBestWindowInTexts(normalizedSpanTexts, chunkText, 'citation_chunk')
             : null
@@ -649,7 +758,7 @@ export function PDFViewer({
         const answerRange = answerContext
             ? findBestWindowInTexts(normalizedSpanTexts, answerContext, 'answer_context', sourceRange || chunkRange || undefined)
             : null
-        const range = sourceRange || chunkRange || answerRange || matchedRangeRef.current
+        const range = answerRange || sourceRange || chunkRange || matchedRangeRef.current
         if (range) {
             let highlightedCount = 0
             for (let index = range.start; index <= range.end && index < visualSpanItems.length; index += 1) {

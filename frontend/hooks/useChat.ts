@@ -85,6 +85,7 @@ const normalizeCitationBundle = (raw: MessageDTO['citations'] | any): Pick<Messa
 }
 
 const STREAM_RENDER_INTERVAL_MS = 80
+const CHAT_MESSAGES_PAGE_SIZE = 500
 
 export const useChat = (options: UseChatOptions = {}) => {
     const { autoFetchConversations = true, onConversationCreated, onMessageSent } = options
@@ -133,7 +134,11 @@ export const useChat = (options: UseChatOptions = {}) => {
     const fetchMessages = useCallback(async (conversationId: string) => {
         try {
             setIsLoading(true)
-            const result = await ChatService.getMessages(conversationId)
+            let result = await ChatService.getMessages(conversationId, 1, CHAT_MESSAGES_PAGE_SIZE)
+            if (result.total > result.pageSize) {
+                const latestPage = Math.max(1, Math.ceil(result.total / result.pageSize))
+                result = await ChatService.getMessages(conversationId, latestPage, CHAT_MESSAGES_PAGE_SIZE)
+            }
             const formattedMessages: Message[] = result.data.map((msg: MessageDTO) => {
                 const citationBundle = normalizeCitationBundle(msg.citations)
                 return {

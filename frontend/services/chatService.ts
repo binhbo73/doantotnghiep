@@ -225,7 +225,7 @@ export class ChatService {
     /**
      * Get messages in a conversation
      */
-    static async getMessages(conversationId: string, page: number = 1, pageSize: number = 50) {
+    static async getMessages(conversationId: string, page: number = 1, pageSize: number = 500) {
         try {
             const params = new URLSearchParams({
                 page: page.toString(),

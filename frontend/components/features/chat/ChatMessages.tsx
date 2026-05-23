@@ -201,6 +201,18 @@ const splitMarkdownTableRow = (line: string) => {
     return trimmed.split('|').map((cell) => cell.trim())
 }
 
+const renderTableCellContent = (cell: string) => {
+    const parts = cell.split(/(?:<br\s*\/?>|&lt;br\s*\/?&gt;)/gi)
+    if (parts.length === 1) return cell
+
+    return parts.map((part, index) => (
+        <React.Fragment key={`${part}-${index}`}>
+            {index > 0 && <br />}
+            {part}
+        </React.Fragment>
+    ))
+}
+
 const parseMessageContentBlocks = (content: string): MessageContentBlock[] => {
     const lines = content.replace(/\r\n/g, '\n').split('\n')
     const blocks: MessageContentBlock[] = []
@@ -993,7 +1005,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                                                                                         key={`cell-${blockIndex}-${rowIndex}-${cellIndex}`}
                                                                                         className="border border-slate-200 dark:border-slate-700 px-3 py-2 align-top leading-relaxed whitespace-pre-wrap"
                                                                                     >
-                                                                                        {cell}
+                                                                                        {renderTableCellContent(cell)}
                                                                                     </td>
                                                                                 ))}
                                                                             </tr>
