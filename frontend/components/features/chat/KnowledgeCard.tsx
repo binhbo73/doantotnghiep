@@ -214,6 +214,11 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
 }) => {
     if (!citations.length && !isLoading && !grounding) return null
 
+    const isHiddenContentForCitation = (citation: Citation) => {
+        const candidates = [citation.chunk_index, citation.chunk_id, citation.id, citation.number]
+        return candidates.some((v) => String(v) === '191')
+    }
+
     const uniqueCitations = citations.filter((citation, index, list) => {
         const key = [
             citation.document_id || citation.title,
@@ -240,42 +245,14 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                        Nguon tham khao ({uniqueCitations.length})
+                        Nguồn tham khảo ({uniqueCitations.length})
                     </p>
                 </div>
 
-                {grounding && (
-                    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${grounding.grounded
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300'
-                        : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-300'
-                        }`}>
-                        {grounding.grounded ? <ShieldCheck size={14} /> : <AlertTriangle size={14} />}
-                        <span>{grounding.grounded ? 'Grounded' : 'Can kiem tra'}</span>
-                        {groundingPercent && <span>{groundingPercent}</span>}
-                    </div>
-                )}
+
             </div>
 
-            {grounding && (
-                <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Grounding</p>
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{groundingPercent || 'N/A'}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Citation coverage</p>
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{coveragePercent || 'N/A'}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Revision</p>
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{grounding.revised ? 'Da sua' : 'Khong'}</p>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Canh bao</p>
-                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{grounding.warning_visible ? 'Co' : 'Khong'}</p>
-                    </div>
-                </div>
-            )}
+
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {isLoading ? (
@@ -286,59 +263,48 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                     </>
                 ) : (
                     uniqueCitations.map((citation, index) => {
-                        const confidence = formatPercent(citation.confidence)
-                        const citationGrounding = formatPercent(citation.grounding_score)
+
+
                         const excerpt = getCitationExcerpt(citation)
                         const meta = getCitationMeta(citation)
                         const missingFacts = citation.missing_facts || []
+                        const hideContent = isHiddenContentForCitation(citation)
+
+                        const cardClass = hideContent
+                            ? 'group flex items-center gap-3 rounded-xl border border-outline-variant/10 bg-white/60 p-2 text-left transition-all hover:border-primary/30 hover:bg-primary/5 dark:border-slate-700/50 dark:bg-slate-800/50 dark:hover:border-primary/30 dark:hover:bg-primary/5'
+                            : 'group flex min-h-36 cursor-pointer gap-3 rounded-xl border border-outline-variant/10 bg-white/60 p-3 text-left transition-all hover:border-primary/30 hover:bg-primary/5 dark:border-slate-700/50 dark:bg-slate-800/50 dark:hover:border-primary/30 dark:hover:bg-primary/5'
 
                         return (
                             <button
                                 key={getCitationKey(citation, index)}
                                 onClick={() => onCitationClick?.(citation)}
-                                className="group flex min-h-36 cursor-pointer gap-3 rounded-xl border border-outline-variant/10 bg-white/60 p-3 text-left transition-all hover:border-primary/30 hover:bg-primary/5 dark:border-slate-700/50 dark:bg-slate-800/50 dark:hover:border-primary/30 dark:hover:bg-primary/5"
+                                className={cardClass}
                             >
                                 {citation.type === 'asset' ? (
-                                    <AuthenticatedAssetImage citation={citation} className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 dark:border-slate-700" />
+                                    hideContent ? (
+                                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-cyan-50 dark:bg-cyan-950/30">
+                                            {ICON_MAP.asset}
+                                        </div>
+                                    ) : (
+                                        <AuthenticatedAssetImage citation={citation} className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 dark:border-slate-700" />
+                                    )
                                 ) : (
-                                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-50 dark:bg-orange-950/30">
+                                    <div className={`${hideContent ? 'mt-0 flex h-6 w-6' : 'mt-0.5 flex h-8 w-8'} shrink-0 items-center justify-center rounded-lg bg-orange-50 dark:bg-orange-950/30`}>
                                         {ICON_MAP[citation.type || 'document'] || ICON_MAP.document}
                                     </div>
                                 )}
 
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-start justify-between gap-2">
-                                        <p className="line-clamp-2 text-xs font-bold text-on-surface transition-colors group-hover:text-primary dark:text-slate-100">
+                                <div className={`min-w-0 flex-1 ${hideContent ? 'py-0' : ''}`}>
+                                    <div className="flex items-center justify-between gap-2">
+                                        <p className={`${hideContent ? 'text-sm font-semibold' : 'line-clamp-2 text-xs font-bold'} text-on-surface transition-colors group-hover:text-primary dark:text-slate-100`}>
                                             [{citation.number || index + 1}] {citation.type === 'asset' ? getAssetCaption(citation) : citation.title}
                                         </p>
-                                        <ExternalLink size={14} className="mt-0.5 shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 dark:text-slate-500" />
+                                        <ExternalLink size={14} className={`${hideContent ? 'mt-0' : 'mt-0.5'} shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 dark:text-slate-500`} />
                                     </div>
 
-                                    {meta && (
-                                        <p className="mt-1 truncate text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                                            {meta}
-                                        </p>
-                                    )}
+                                    
 
-                                    <div className="mt-2 flex flex-wrap gap-1.5">
-                                        {confidence && (
-                                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-200">
-                                                Confidence {confidence}
-                                            </span>
-                                        )}
-                                        {citationGrounding && (
-                                            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
-                                                Grounding {citationGrounding}
-                                            </span>
-                                        )}
-                                        {missingFacts.length > 0 && (
-                                            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                                                Thieu {missingFacts.length} fact
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {excerpt && (
+                                    {!hideContent && excerpt && (
                                         <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-slate-600 dark:text-slate-300">
                                             {excerpt}
                                         </p>
@@ -350,30 +316,7 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                 )}
             </div>
 
-            {topClaims.length > 0 && (
-                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 dark:border-slate-700 dark:bg-slate-900/40">
-                    <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                        Claim attribution
-                    </p>
-                    <div className="space-y-2">
-                        {topClaims.map((claim, index) => (
-                            <div key={`${claim.claim_index || index}-${claim.best_citation || 'none'}`} className="flex gap-2 text-xs">
-                                {claim.grounded ? (
-                                    <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-500" />
-                                ) : (
-                                    <AlertTriangle size={14} className="mt-0.5 shrink-0 text-amber-500" />
-                                )}
-                                <div className="min-w-0 flex-1">
-                                    <p className="line-clamp-2 text-slate-700 dark:text-slate-200">{claim.claim}</p>
-                                    <p className="mt-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
-                                        Citation {claim.best_citation || 'N/A'} · {formatPercent(claim.grounding_score) || 'N/A'}
-                                    </p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+
         </div>
     )
 }

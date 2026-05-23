@@ -247,15 +247,15 @@ function isOfficeWordFile(type?: string, title?: string, contentType?: string): 
 function getViewerLabel(kind?: ViewerKind): string {
     switch (kind) {
         case 'pdf':
-            return 'Tai lieu PDF'
+            return 'Tài liệu PDF'
         case 'word':
-            return 'Tai lieu Word / van ban'
+            return 'Tài liệu Word / văn bản'
         case 'excel':
-            return 'Bang tinh Excel'
+            return 'Bảng tính Excel'
         case 'image':
-            return 'Hinh anh'
+            return 'Hình ảnh'
         default:
-            return 'Tai lieu nguon'
+            return 'Tài liệu nguồn'
     }
 }
 
@@ -464,14 +464,14 @@ function CitationViewerContent() {
 
     const currentAsset = useMemo(() => {
         if (!hasAsset || !assetId) return undefined
-        
+
         // If still loading, we shouldn't prematurely resolve to the stale ID
         if (isAssetsLoading) return undefined
-        
+
         // Try to find the actual asset from documentAssets first (more reliable IDs)
         const targetSheet = payload.asset_sheet_name || payload.asset?.sheet_name
         const targetAnchor = payload.asset_anchor_cell || payload.asset?.anchor_cell
-        
+
         // Find if this specific assetId still exists in the document's assets
         const exactMatch = documentAssets.find(a => a.id === assetId)
         if (exactMatch) {
@@ -491,8 +491,8 @@ function CitationViewerContent() {
 
         // If not found by ID, try to find a replacement at the same sheet/cell
         if (targetSheet && targetAnchor) {
-            const anchorMatch = documentAssets.find(a => 
-                a.sheet_name === targetSheet && 
+            const anchorMatch = documentAssets.find(a =>
+                a.sheet_name === targetSheet &&
                 a.anchor_cell === targetAnchor
             )
             if (anchorMatch) {
@@ -691,18 +691,7 @@ function CitationViewerContent() {
                         {hasAsset && (payload.asset_sheet_name || payload.asset?.sheet_name) && (
                             <span className="ml-2 text-slate-600">Sheet {payload.asset_sheet_name || payload.asset?.sheet_name}</span>
                         )}
-                        {hasAsset && (payload.asset_anchor_cell || payload.asset?.anchor_cell) && (
-                            <span className="ml-2 text-slate-600">cell {payload.asset_anchor_cell || payload.asset?.anchor_cell}</span>
-                        )}
-                        {(viewer?.kind || guessedKind) === 'pdf' && ` - Trang ${initialPage || 1}${pageCount ? ` / ${pageCount}` : ''}`}
-                        {targetLabel && <span className="ml-2 text-slate-600">Nguon: {targetLabel}</span>}
-                        {!shouldOpenAssetImage && searchDebug ? (
-                            <span className="ml-2 text-green-600">
-                                Tim: {searchDebug.source} ({searchDebug.len} ky tu)
-                            </span>
-                        ) : !shouldOpenAssetImage ? (
-                            <span className="ml-2 text-red-500">Khong co noi dung tim kiem</span>
-                        ) : null}
+
                     </p>
                 </div>
                 <button
@@ -710,7 +699,7 @@ function CitationViewerContent() {
                     onClick={() => window.close()}
                     className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
                 >
-                    Dong
+                    Đóng
                 </button>
             </header>
 
@@ -723,7 +712,7 @@ function CitationViewerContent() {
 
                 {!error && !viewer && (
                     <div className="flex h-full items-center justify-center p-8 text-sm font-medium text-slate-500">
-                        Dang tai tai lieu...
+                        Đang tải tài liệu...
                     </div>
                 )}
 

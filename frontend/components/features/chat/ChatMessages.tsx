@@ -790,7 +790,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                         {answerCtx && (
                             <div className="mb-3 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
                                 <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
-                                    Cau tra loi
+                                    Câu trả lời
                                 </div>
                                 <div className="text-slate-900 dark:text-slate-100 font-semibold whitespace-pre-wrap leading-relaxed">
                                     {answerCtx}
@@ -806,7 +806,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                         onClick={() => handleOpenCitation(citation)}
                         className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline"
                     >
-                        {isAssetCitation ? 'Xem trong file goc' : 'Xem nguon'}
+                        {isAssetCitation ? 'Xem trong file gốc' : 'Xem nguồn'}
                         <ExternalLink size={14} />
                     </button>
                 </div>
