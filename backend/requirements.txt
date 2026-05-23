@@ -43,7 +43,8 @@ opendataloader-pdf>=2.0.0              # Trích xuất text từ PDF (quality ca
 pypdf>=5.0.0                            # Read PDF page counts accurately
 flashrank>=0.2.0                     # Re-ranking kết quả RAG
 langgraph>=0.0.10                    # Workflow AI (RAG orchestration)
-scikit-learn>=1.8.0                  # GMM clustering + normalization
+scikit-learn>=1.8.0,<1.9.0; python_version >= "3.11"  # GMM clustering + normalization
+scikit-learn>=1.7.2,<1.8.0; python_version < "3.11"  # Python 3.10-compatible fallback
 umap-learn>=0.5.7                    # UMAP dimensionality reduction for RAPTOR clustering
 python-docx>=0.8.11                  # Parse DOCX nhanh (5-10x so với docling)
 python-pptx>=0.6.21                  # Parse PPTX/PPT
