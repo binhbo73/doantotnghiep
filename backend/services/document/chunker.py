@@ -30,12 +30,61 @@ Usage:
 import logging
 import re
 from bisect import bisect_right
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from django.conf import settings
 from django.apps import apps
 from core.exceptions import DocumentProcessingError
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# VIETNAMESE DOCUMENT STRUCTURE PATTERNS
+# ============================================================================
+# These regex patterns detect Vietnamese legal/administrative document
+# structure elements that should serve as chunk boundaries.
+
+_VI_HEADING_PATTERNS = [
+    # Chương I, CHƯƠNG 1, Chương 1: Tiêu đề
+    re.compile(r'(?i)^\s*chương\s+[IVXLCDM\d]+[.:\s]', re.UNICODE),
+    # Điều 1, Điều 15:
+    re.compile(r'(?i)^\s*điều\s+\d+[.:\s]', re.UNICODE),
+    # Mục 1, Mục 1.1:
+    re.compile(r'(?i)^\s*mục\s+[\d.]+[.:\s]', re.UNICODE),
+    # Phần I, Phần thứ nhất
+    re.compile(r'(?i)^\s*phần\s+(thứ\s+)?[IVXLCDM\d]+[.:\s]', re.UNICODE),
+    # Khoản 1:
+    re.compile(r'(?i)^\s*khoản\s+\d+[.:\s]', re.UNICODE),
+    # I. / 1. / 1.1. / a) / (a) style headings
+    re.compile(r'^\s*(?:[IVXLCDM]+|\d+(?:\.\d+)*)[.)]\s+[A-ZÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴ]', re.UNICODE),
+    # Markdown-style headings: ### Tiêu đề
+    re.compile(r'^#{1,6}\s+\S', re.UNICODE),
+]
+
+# Common Vietnamese document type indicators for auto-detection
+_DOC_TYPE_PATTERNS = [
+    ('regulation', re.compile(
+        r'(?i)(nghị\s*định|thông\s*tư|quyết\s*định|quy\s*chế|quy\s*định\s*(?:chung|về|số)|'
+        r'nội\s*quy|văn\s*bản\s*quy\s*phạm|điều\s*lệ)'
+    )),
+    ('contract', re.compile(
+        r'(?i)(hợp\s*đồng|bên\s+(?:A|B|mua|bán|thuê|cho\s*thuê)|'
+        r'điều\s*khoản\s*\d+\s*:|phụ\s*lục\s*hợp\s*đồng|'
+        r'thanh\s*lý|biên\s*bản\s*(?:bàn\s*giao|nghiệm\s*thu|thanh\s*lý))'
+    )),
+    ('handbook', re.compile(
+        r'(?i)(sổ\s*tay|hướng\s*dẫn|quy\s*trình|cẩm\s*nang|'
+        r'manual|handbook|guide|hướng\s*dẫn\s*sử\s*dụng)'
+    )),
+    ('report', re.compile(
+        r'(?i)(báo\s*cáo|tổng\s*kết|báo\s*cáo\s*(?:tài\s*chính|thường\s*niên|'
+        r'kết\s*quả\s*kinh\s*doanh)|bảng\s*cân\s*đối|báo\s*cáo\s*thống\s*kê)'
+    )),
+    ('technical', re.compile(
+        r'(?i)(thông\s*số\s*kỹ\s*thuật|hướng\s*dẫn\s*kỹ\s*thuật|'
+        r'bản\s*vẽ|sơ\s*đồ|đặc\s*tả\s*kỹ\s*thuật|datasheet|specification)'
+    )),
+]
 
 
 class DocumentChunker:
@@ -168,6 +217,7 @@ class DocumentChunker:
         self,
         text: str,
         metadata: Dict[str, Any] = None,
+        structured_document=None,
     ) -> List[Dict[str, Any]]:
         """
         Split text into semantic chunks
@@ -201,12 +251,14 @@ class DocumentChunker:
             
             merged_metadata = metadata or {}
             file_type = (merged_metadata.get('file_type') or '').lower()
-            self._apply_chunk_profile(file_type)
+            structured_document = structured_document or merged_metadata.get('structured_document')
+            doc_text = getattr(structured_document, 'text', '') or ''
+            self._apply_chunk_profile(file_type, doc_text=doc_text)
 
             if self._is_spreadsheet_file_type(file_type):
                 return self._chunk_spreadsheet_text(text, merged_metadata)
 
-            word_spans = self._build_word_spans(text)
+            word_spans = self._build_word_spans(text, merged_metadata)
 
             # Fallback to char windows when text has no word spans (edge cases)
             if not word_spans:
@@ -216,9 +268,17 @@ class DocumentChunker:
             window_indices = self._build_token_windows(len(word_spans), breakpoints)
             result_chunks = []
             for seq, (start_token, end_token) in enumerate(window_indices):
-                start_char = word_spans[start_token][0]
+                raw_start_char = word_spans[start_token][0]
+                start_char = self._clean_chunk_start(text, raw_start_char) if seq > 0 else raw_start_char
                 end_char = word_spans[end_token - 1][1]
                 chunk_text = text[start_char:end_char]
+                if (
+                    seq > 0
+                    and start_char < raw_start_char
+                    and self._estimate_token_count(chunk_text) > self._max_clean_chunk_tokens()
+                ):
+                    start_char = raw_start_char
+                    chunk_text = text[start_char:end_char]
 
                 result_chunks.append({
                     'text': chunk_text,
@@ -285,7 +345,7 @@ class DocumentChunker:
                     'page_aware_metadata': page_aware_metadata,
                 }
             file_type = (merged_metadata.get('file_type') or '').lower()
-            self._apply_chunk_profile(file_type)
+            self._apply_chunk_profile(file_type, doc_text=text)
             if self._is_spreadsheet_file_type(file_type):
                 return self._chunk_spreadsheet_text(text, merged_metadata)
             
@@ -376,14 +436,19 @@ class DocumentChunker:
 
             merged_metadata = metadata or {}
             file_type = (merged_metadata.get('file_type') or '').lower()
-            self._apply_chunk_profile(file_type)
+            doc_text = getattr(structured_document, 'text', '') or ''
+            self._apply_chunk_profile(file_type, doc_text=doc_text)
 
             blocks = [
                 block for block in structured_document.blocks(include_discarded=False)
                 if self._structured_block_text(block)
             ]
             if not blocks:
-                return self.chunk_text(getattr(structured_document, 'text', '') or '', merged_metadata)
+                return self.chunk_text(
+                    getattr(structured_document, 'text', '') or '',
+                    merged_metadata,
+                    structured_document=structured_document,
+                )
 
             chunks: List[Dict[str, Any]] = []
             sequence = 0
@@ -459,7 +524,15 @@ class DocumentChunker:
                     continue
 
                 if block_type == 'title':
-                    if text_buffer:
+                    # Parser backends sometimes mark list labels and short
+                    # clause starts as titles. Treat only real section headings
+                    # as hard boundaries; otherwise keep the label with the
+                    # following content so retrieval gets a complete thought.
+                    if (
+                        text_buffer
+                        and self._is_structural_title_boundary(block_text)
+                        and self._buffer_has_substantive_content(buffer_blocks, text_buffer)
+                    ):
                         flush_text_buffer()
                     text_buffer.append(block_text)
                     buffer_blocks.append(block)
@@ -467,11 +540,19 @@ class DocumentChunker:
                     buffer_heading_path = heading_path
                     continue
 
-                if buffer_page is not None and page_number != buffer_page:
+                if (
+                    buffer_page is not None
+                    and page_number != buffer_page
+                    and self._buffer_has_substantive_content(buffer_blocks, text_buffer)
+                ):
                     flush_text_buffer()
 
                 projected = "\n\n".join(text_buffer + [block_text])
-                if text_buffer and self._estimate_token_count(projected) > self.chunk_size:
+                if (
+                    text_buffer
+                    and self._estimate_token_count(projected) > self.chunk_size
+                    and self._buffer_has_substantive_content(buffer_blocks, text_buffer)
+                ):
                     flush_text_buffer()
 
                 text_buffer.append(block_text)
@@ -480,6 +561,9 @@ class DocumentChunker:
                 buffer_heading_path = heading_path or buffer_heading_path
 
             flush_text_buffer()
+            chunks = self._merge_adjacent_small_structured_chunks(chunks)
+            self._repair_contextless_chunk_starts(chunks)
+            self._renumber_chunks(chunks)
 
             logger.info(
                 f"Structured chunking produced {len(chunks)} chunks "
@@ -496,17 +580,393 @@ class DocumentChunker:
         return getattr(block, name, default)
 
     def _structured_block_text(self, block) -> str:
+        block_type = self._get_block_attr(block, 'type') or ''
         if hasattr(block, 'content_text'):
-            return block.content_text()
-        if isinstance(block, dict):
-            return (
+            raw_text = block.content_text()
+        elif isinstance(block, dict):
+            raw_text = (
                 block.get('html')
                 or block.get('latex')
                 or block.get('caption')
                 or block.get('text')
                 or ''
-            ).strip()
-        return str(block or '').strip()
+            )
+        else:
+            raw_text = str(block or '')
+
+        return self._normalize_structured_block_text(raw_text, block_type)
+
+    def _normalize_structured_block_text(self, text: str, block_type: str = '') -> str:
+        """Normalize prose extracted from structured/PDF parsers.
+
+        Tables and HTML blocks keep their line structure. Prose blocks get
+        layout line-wraps removed, including PDF word splits like
+        ``kế t\noán`` and ``l\n\niên``.
+        """
+        if not text:
+            return ''
+
+        normalized = str(text).replace('\r\n', '\n').replace('\r', '\n').strip()
+        if not normalized:
+            return ''
+
+        block_kind = (block_type or '').lower()
+        if block_kind in {'table', 'image', 'chart', 'equation'} or self._looks_like_table_text(normalized):
+            normalized = re.sub(r'[ \t]+', ' ', normalized)
+            normalized = re.sub(r'\n{3,}', '\n\n', normalized)
+            return normalized.strip()
+
+        normalized = re.sub(r'[ \t]*\n+[ \t]*', ' ', normalized)
+        normalized = re.sub(r'[ \t]+', ' ', normalized)
+        return normalized.strip()
+
+    @staticmethod
+    def _looks_like_table_text(text: str) -> bool:
+        lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
+        if len(lines) < 2:
+            return False
+        table_like = sum(
+            1 for line in lines[:8]
+            if line.startswith('|') or '<table' in line.lower() or '</tr>' in line.lower()
+        )
+        return table_like >= 2
+
+    def _is_structural_title_boundary(self, text: str) -> bool:
+        """Return True for headings that should start a new chunk."""
+        clean = re.sub(r'\s+', ' ', (text or '').strip())
+        if not clean:
+            return False
+
+        if clean.endswith(':'):
+            return False
+
+        # Numbered list items such as 1., 23.1.1 or 19.7 are content, not
+        # chunk boundaries, even when the parser labels them as titles.
+        if re.match(r'^\d+(?:\.\d+)*[.)]\s+', clean):
+            return False
+
+        if any(pattern.match(clean) for pattern in _VI_HEADING_PATTERNS):
+            return True
+
+        letters = [ch for ch in clean if ch.isalpha()]
+        if len(letters) >= 8:
+            upper_ratio = sum(1 for ch in letters if ch.isupper()) / len(letters)
+            if upper_ratio >= 0.75:
+                return True
+
+        return False
+
+    def _buffer_has_substantive_content(self, blocks: List[Any], text_parts: List[str]) -> bool:
+        """True when the current structured buffer has real body content.
+
+        Heading-only buffers should stay attached to following content, even if
+        another heading arrives or the first body block would push the token
+        estimate over the normal chunk target.
+        """
+        if not text_parts:
+            return False
+
+        non_title_blocks = [
+            block for block in blocks
+            if (self._get_block_attr(block, 'type') or '').lower() != 'title'
+        ]
+        if non_title_blocks:
+            return True
+
+        text = "\n\n".join(part for part in text_parts if part).strip()
+        if not text:
+            return False
+
+        min_tokens = self._min_meaningful_chunk_tokens()
+        return self._estimate_token_count(text) >= min_tokens
+
+    def _min_meaningful_chunk_tokens(self) -> int:
+        configured = int(getattr(settings, 'RAG_MIN_MEANINGFUL_CHUNK_TOKENS', 0) or 0)
+        if configured > 0:
+            return configured
+        validator_min = int(getattr(settings, 'CHUNK_VALIDATOR_MIN_TOKENS', 20))
+        proportional = int(max(validator_min, self.chunk_size * 0.15))
+        return max(20, min(96, proportional))
+
+    def _min_meaningful_chunk_chars(self) -> int:
+        configured = int(getattr(settings, 'RAG_MIN_MEANINGFUL_CHUNK_CHARS', 0) or 0)
+        if configured > 0:
+            return configured
+        validator_min = int(getattr(settings, 'CHUNK_VALIDATOR_MIN_CHARS', 50))
+        return max(120, min(320, validator_min * 3))
+
+    def _merge_adjacent_small_structured_chunks(
+        self,
+        chunks: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Merge heading-only and tiny structured chunks into adjacent context.
+
+        This keeps RAG evidence units meaningful without changing source text:
+        the operation only changes chunk boundaries.
+        """
+        if len(chunks) <= 1:
+            return chunks
+
+        result: List[Dict[str, Any]] = []
+        index = 0
+        while index < len(chunks):
+            current = chunks[index]
+
+            if (
+                self._should_merge_small_chunk(current)
+                and index + 1 < len(chunks)
+                and self._can_merge_chunks(current, chunks[index + 1])
+            ):
+                result.append(self._merge_chunk_pair(current, chunks[index + 1]))
+                index += 2
+                continue
+
+            if (
+                self._should_merge_small_chunk(current)
+                and result
+                and self._can_merge_chunks(result[-1], current)
+            ):
+                result[-1] = self._merge_chunk_pair(result[-1], current)
+                index += 1
+                continue
+
+            result.append(current)
+            index += 1
+
+        # A single pass can leave a small merged heading before content when
+        # there were multiple adjacent title blocks. One extra bounded pass
+        # handles that without accidentally building giant chunks.
+        if len(result) < len(chunks):
+            second_pass: List[Dict[str, Any]] = []
+            index = 0
+            while index < len(result):
+                current = result[index]
+                if (
+                    self._should_merge_small_chunk(current)
+                    and index + 1 < len(result)
+                    and self._can_merge_chunks(current, result[index + 1])
+                ):
+                    second_pass.append(self._merge_chunk_pair(current, result[index + 1]))
+                    index += 2
+                else:
+                    second_pass.append(current)
+                    index += 1
+            result = second_pass
+
+        return result
+
+    def _should_merge_small_chunk(self, chunk: Dict[str, Any]) -> bool:
+        if not chunk or self._is_atomic_chunk(chunk):
+            return False
+
+        text = (chunk.get('text') or '').strip()
+        if not text:
+            return False
+
+        metadata = chunk.get('metadata') or {}
+        token_count = int(chunk.get('token_count') or self._estimate_token_count(text))
+        if token_count < self._min_meaningful_chunk_tokens():
+            return True
+        if len(text) < self._min_meaningful_chunk_chars():
+            return True
+        if metadata.get('block_type') == 'title' and self._is_structural_title_boundary(text):
+            return True
+        return False
+
+    @staticmethod
+    def _is_atomic_chunk(chunk: Dict[str, Any]) -> bool:
+        metadata = chunk.get('metadata') or {}
+        if metadata.get('atomic_block') or metadata.get('table_preserved'):
+            return True
+        block_type = metadata.get('block_type')
+        block_types = metadata.get('block_types') or []
+        if block_type in {'table', 'image', 'chart', 'equation'}:
+            return True
+        return any(item in {'table', 'image', 'chart', 'equation'} for item in block_types)
+
+    def _can_merge_chunks(self, left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+        left_text = (left.get('text') or '').strip()
+        right_text = (right.get('text') or '').strip()
+        if not left_text or not right_text:
+            return False
+
+        merged_text = f"{left_text}\n\n{right_text}"
+        merged_tokens = self._estimate_token_count(merged_text)
+        max_merge_tokens = int(getattr(
+            settings,
+            'RAG_MAX_MERGED_CHUNK_TOKENS',
+            max(self.chunk_size, int(self.chunk_size * 1.25)),
+        ))
+        if merged_tokens > max_merge_tokens:
+            return False
+
+        left_meta = left.get('metadata') or {}
+        right_meta = right.get('metadata') or {}
+        left_page = left.get('page_number') or left_meta.get('page_number')
+        right_page = right.get('page_number') or right_meta.get('page_number')
+        if left_page and right_page and abs(int(left_page) - int(right_page)) > 1:
+            return False
+
+        if self._is_atomic_chunk(left) or self._is_atomic_chunk(right):
+            return self._can_merge_atomic_context(left, right)
+
+        return True
+
+    def _can_merge_atomic_context(self, left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+        """Allow tiny captions/header fragments to stay attached to tables.
+
+        Tables remain atomic by default. The only exception is a very small
+        adjacent non-atomic chunk that looks like table context, such as a
+        markdown header row extracted separately from the table body.
+        """
+        left_is_table = self._is_table_chunk(left)
+        right_is_table = self._is_table_chunk(right)
+        if left_is_table == right_is_table:
+            return False
+
+        table_chunk = left if left_is_table else right
+        context_chunk = right if left_is_table else left
+        if self._is_atomic_chunk(context_chunk):
+            return False
+
+        context_text = (context_chunk.get('text') or '').strip()
+        if not context_text:
+            return False
+
+        context_tokens = int(context_chunk.get('token_count') or self._estimate_token_count(context_text))
+        if context_tokens > self._min_meaningful_chunk_tokens():
+            return False
+        if len(context_text) > self._min_meaningful_chunk_chars():
+            return False
+
+        if not self._looks_like_table_context(context_text):
+            return False
+
+        table_text = (table_chunk.get('text') or '').strip()
+        merged_tokens = self._estimate_token_count(f"{context_text}\n\n{table_text}")
+        max_table_merge_tokens = int(getattr(
+            settings,
+            'RAG_MAX_TABLE_CONTEXT_MERGE_TOKENS',
+            max(self.table_chunk_max_tokens, self.chunk_size),
+        ))
+        return merged_tokens <= max_table_merge_tokens
+
+    @staticmethod
+    def _is_table_chunk(chunk: Dict[str, Any]) -> bool:
+        metadata = chunk.get('metadata') or {}
+        block_type = metadata.get('block_type')
+        block_types = metadata.get('block_types') or []
+        return bool(
+            metadata.get('table_preserved')
+            or block_type == 'table'
+            or 'table' in block_types
+        )
+
+    @staticmethod
+    def _looks_like_table_context(text: str) -> bool:
+        clean = re.sub(r'\s+', ' ', (text or '').strip())
+        if not clean:
+            return False
+        if '|' in clean:
+            cells = [part.strip() for part in clean.split('|') if part.strip()]
+            return len(cells) >= 2
+        return clean.endswith(':') or bool(re.match(r'^(bảng|table)\s+\d+', clean, flags=re.IGNORECASE))
+
+    def _merge_chunk_pair(
+        self,
+        left: Dict[str, Any],
+        right: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        left_text = (left.get('text') or '').strip()
+        right_text = (right.get('text') or '').strip()
+        merged_text = f"{left_text}\n\n{right_text}".strip()
+
+        left_meta = left.get('metadata') or {}
+        right_meta = right.get('metadata') or {}
+        left_pages = self._chunk_page_range(left)
+        right_pages = self._chunk_page_range(right)
+        page_range = [
+            min(left_pages[0], right_pages[0]),
+            max(left_pages[1], right_pages[1]),
+        ]
+
+        block_types = []
+        for value in (left_meta.get('block_types') or [left_meta.get('block_type')]):
+            if value and value not in block_types:
+                block_types.append(value)
+        for value in (right_meta.get('block_types') or [right_meta.get('block_type')]):
+            if value and value not in block_types:
+                block_types.append(value)
+
+        merged_from_sequences = []
+        for item in (
+            left_meta.get('merged_from_sequences'),
+            [left.get('sequence')],
+            right_meta.get('merged_from_sequences'),
+            [right.get('sequence')],
+        ):
+            if isinstance(item, (list, tuple)):
+                for value in item:
+                    if value is not None and value not in merged_from_sequences:
+                        merged_from_sequences.append(value)
+
+        metadata = {
+            **left_meta,
+            **right_meta,
+            'block_type': block_types[0] if len(block_types) == 1 else 'mixed',
+            'block_types': block_types,
+            'page_number': page_range[0],
+            'page_range': page_range,
+            'merged_small_chunk': True,
+            'merged_from_sequences': merged_from_sequences,
+        }
+
+        if left_meta.get('heading_path') or right_meta.get('heading_path'):
+            metadata['heading_path'] = right_meta.get('heading_path') or left_meta.get('heading_path') or []
+
+        for key, fn in (
+            ('reading_order_start', min),
+            ('line_start', min),
+            ('start_char', min),
+        ):
+            values = [v for v in (left.get(key), right.get(key), left_meta.get(key), right_meta.get(key)) if v is not None]
+            if values:
+                metadata[key] = fn(values)
+        for key, fn in (
+            ('reading_order_end', max),
+            ('line_end', max),
+            ('end_char', max),
+        ):
+            values = [v for v in (left.get(key), right.get(key), left_meta.get(key), right_meta.get(key)) if v is not None]
+            if values:
+                metadata[key] = fn(values)
+
+        return {
+            **left,
+            'text': merged_text,
+            'start_char': min(left.get('start_char', 0) or 0, right.get('start_char', 0) or 0),
+            'end_char': max(left.get('end_char', 0) or 0, right.get('end_char', 0) or 0),
+            'token_start': left.get('token_start', 0),
+            'token_end': right.get('token_end', left.get('token_end', 0)),
+            'token_count': self._estimate_token_count(merged_text),
+            'page_number': page_range[0],
+            'page_range': page_range,
+            'metadata': metadata,
+        }
+
+    @staticmethod
+    def _chunk_page_range(chunk: Dict[str, Any]) -> List[int]:
+        metadata = chunk.get('metadata') or {}
+        page_range = chunk.get('page_range') or metadata.get('page_range')
+        if isinstance(page_range, (list, tuple)) and len(page_range) >= 2:
+            return [int(page_range[0] or 1), int(page_range[1] or page_range[0] or 1)]
+        page = chunk.get('page_number') or metadata.get('page_number') or 1
+        return [int(page), int(page)]
+
+    @staticmethod
+    def _renumber_chunks(chunks: List[Dict[str, Any]]) -> None:
+        for sequence, chunk in enumerate(chunks):
+            chunk['sequence'] = sequence
 
     def _merge_structured_block_metadata(self, blocks: List[Any]) -> Dict[str, Any]:
         if not blocks:
@@ -580,6 +1040,8 @@ class DocumentChunker:
 
         sub_chunks = self.chunk_text(text, metadata)
         for offset, chunk in enumerate(sub_chunks):
+            if offset > 0:
+                self._prepend_split_context(chunk, text, metadata)
             chunk['page_number'] = page_number
             chunk['sequence'] = sequence_start + offset
             chunk['metadata'] = {
@@ -645,6 +1107,189 @@ class DocumentChunker:
         for chunk in chunks:
             chunk['metadata']['atomic_block_split'] = True
         return chunks
+
+    def _prepend_split_context(
+        self,
+        chunk: Dict[str, Any],
+        source_text: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Prefix continuation chunks with nearby section context for RAG.
+
+        Sliding-window overlap can legitimately start a continuation in the
+        middle of a sentence. Prefixing the nearest heading keeps each stored
+        chunk self-contained without mutating the extracted source text itself.
+        """
+        chunk_text = (chunk.get('text') or '').lstrip()
+        if not chunk_text:
+            return
+
+        start_char = int(chunk.get('start_char') or 0)
+        prefix = self._split_context_prefix(source_text, start_char, metadata)
+        if not prefix or chunk_text.startswith(prefix):
+            return
+        prefix_lines = prefix.splitlines()
+        while prefix_lines and chunk_text.startswith(prefix_lines[-1]):
+            prefix_lines.pop()
+        prefix = "\n".join(prefix_lines).strip()
+        if not prefix:
+            return
+
+        chunk['text'] = f"{prefix}\n\n{chunk_text}"
+        chunk['token_count'] = self._estimate_token_count(chunk['text'])
+        chunk_metadata = chunk.get('metadata') or {}
+        chunk_metadata.update({
+            'context_prefix_added': True,
+            'context_prefix': prefix,
+        })
+        chunk['metadata'] = chunk_metadata
+
+    def _split_context_prefix(
+        self,
+        source_text: str,
+        start_char: int,
+        metadata: Dict[str, Any],
+    ) -> str:
+        heading_path = [
+            str(item).strip()
+            for item in (metadata.get('heading_path') or [])
+            if self._is_context_prefix_line(str(item).strip())
+        ]
+
+        before = source_text[:max(0, start_char)]
+        nearby_headings: List[str] = []
+        for raw_line in before.splitlines():
+            line = re.sub(r'\s+', ' ', raw_line).strip()
+            if not line or len(line) > 180:
+                continue
+            if self._is_context_prefix_line(line):
+                if line not in nearby_headings:
+                    nearby_headings.append(line)
+
+        prefix_lines = (heading_path + nearby_headings)[-3:]
+        if not prefix_lines:
+            first_lines = [
+                re.sub(r'\s+', ' ', line).strip()
+                for line in source_text.splitlines()
+                if line.strip()
+            ]
+            prefix_lines = first_lines[:2]
+
+        cleaned: List[str] = []
+        for line in prefix_lines:
+            if line and line not in cleaned:
+                cleaned.append(line)
+        return "\n".join(cleaned).strip()
+
+    @staticmethod
+    def _looks_like_section_context(text: str) -> bool:
+        clean = re.sub(r'\s+', ' ', (text or '').strip())
+        if not clean:
+            return False
+        if re.match(r'(?i)^(chương|điều|mục|phần|khoản)\s+[IVXLCDM\d]+', clean):
+            return True
+        letters = [ch for ch in clean if ch.isalpha()]
+        if len(letters) >= 8:
+            upper_ratio = sum(1 for ch in letters if ch.isupper()) / len(letters)
+            return upper_ratio >= 0.75
+        return False
+
+    def _is_context_prefix_line(self, text: str) -> bool:
+        clean = re.sub(r'\s+', ' ', (text or '').strip())
+        if not clean or len(clean) > 180:
+            return False
+        if re.match(r'^\d+\.\d+(?:\.\d+)*[.)]?\s+\S', clean):
+            return True
+        if re.match(r'^\d+[.)]\s+', clean):
+            return False
+        return self._is_structural_title_boundary(clean) or self._looks_like_section_context(clean)
+
+    def _repair_contextless_chunk_starts(self, chunks: List[Dict[str, Any]]) -> None:
+        for index, chunk in enumerate(chunks):
+            text = (chunk.get('text') or '').lstrip()
+            if not text or not self._has_contextless_start(text):
+                continue
+
+            metadata = chunk.get('metadata') or {}
+            prefix = self._chunk_context_prefix_from_neighbors(chunks, index)
+            if not prefix:
+                prefix = self._metadata_context_prefix(metadata)
+            if not prefix:
+                prefix = self._context_from_chunk_text(text)
+            if not prefix or text.startswith(prefix):
+                continue
+
+            chunk['text'] = f"{prefix}\n\n{text}"
+            chunk['token_count'] = self._estimate_token_count(chunk['text'])
+            metadata.update({
+                'context_prefix_added': True,
+                'context_prefix': prefix,
+                'context_prefix_reason': 'contextless_start',
+            })
+            chunk['metadata'] = metadata
+
+    @staticmethod
+    def _has_contextless_start(text: str) -> bool:
+        clean = re.sub(r'\s+', ' ', (text or '').strip())
+        if not clean:
+            return False
+        if re.match(r'^(chương|điều|mục|phần|khoản)\b', clean, flags=re.IGNORECASE):
+            return False
+        if re.match(r'^\d+(?:\.\d+)*[.)]\s+', clean):
+            return False
+        if re.match(r'^[A-ZÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶĐÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]{2,}\b', clean):
+            return False
+        first_word_match = re.match(r'^([\wÀ-ỹ]+)', clean, flags=re.UNICODE)
+        if not first_word_match:
+            return False
+        first = first_word_match.group(1)
+        broken_fragments = {'n', 'vị', 'rong', 'hực', 'ịnh', 'định', 'ủa', 'ác', 'ững', 'nghề'}
+        if first.lower() in broken_fragments:
+            return True
+        return first[:1].islower()
+
+    def _metadata_context_prefix(self, metadata: Dict[str, Any]) -> str:
+        lines = [
+            str(item).strip()
+            for item in (metadata.get('heading_path') or [])
+            if self._is_context_prefix_line(str(item).strip())
+        ]
+        return "\n".join(lines[-3:]).strip()
+
+    def _chunk_context_prefix_from_neighbors(
+        self,
+        chunks: List[Dict[str, Any]],
+        index: int,
+    ) -> str:
+        for prev_index in range(index - 1, max(-1, index - 4), -1):
+            prev_text = (chunks[prev_index].get('text') or '').strip()
+            candidates = self._extract_context_lines(prev_text)
+            if candidates:
+                return "\n".join(candidates[-3:]).strip()
+        return ''
+
+    def _context_from_chunk_text(self, text: str) -> str:
+        candidates = self._extract_context_lines(text[:900])
+        return "\n".join(candidates[:2]).strip()
+
+    def _extract_context_lines(self, text: str) -> List[str]:
+        candidates: List[str] = []
+        for raw_line in (text or '').splitlines():
+            line = re.sub(r'\s+', ' ', raw_line).strip()
+            if self._is_context_prefix_line(line) and line not in candidates:
+                candidates.append(line)
+        inline_patterns = [
+            r'(?i)\b(chương\s+[IVXLCDM\d]+(?:\s+[^.;:\n]{0,80})?)',
+            r'(?i)\b(điều\s+\d+[.:]?\s+[^.;:\n]{0,120})',
+            r'\b(\d+\.\d+(?:\.\d+)*[.)]?\s+[^.;:\n]{0,120})',
+        ]
+        compact = re.sub(r'\s+', ' ', text or '')
+        for pattern in inline_patterns:
+            for match in re.finditer(pattern, compact):
+                candidate = match.group(1).strip()
+                if self._is_context_prefix_line(candidate) and candidate not in candidates:
+                    candidates.append(candidate)
+        return candidates
 
     def _chunk_structured_table_block(
         self,
@@ -765,7 +1410,7 @@ class DocumentChunker:
             if not page_text or len(page_text.strip()) == 0:
                 return []
             
-            word_spans = self._build_word_spans(page_text)
+            word_spans = self._build_word_spans(page_text, metadata)
             page_aware_metadata = metadata.get('page_aware_metadata') or {}
             toc_pages = {
                 int(page)
@@ -788,9 +1433,17 @@ class DocumentChunker:
             
             page_chunks = []
             for seq, (start_token, end_token) in enumerate(window_indices):
-                start_char = word_spans[start_token][0]
+                raw_start_char = word_spans[start_token][0]
+                start_char = self._clean_chunk_start(page_text, raw_start_char) if seq > 0 else raw_start_char
                 end_char = word_spans[end_token - 1][1]
                 chunk_text = page_text[start_char:end_char]
+                if (
+                    seq > 0
+                    and start_char < raw_start_char
+                    and self._estimate_token_count(chunk_text) > self._max_clean_chunk_tokens()
+                ):
+                    start_char = raw_start_char
+                    chunk_text = page_text[start_char:end_char]
                 token_count = self._estimate_token_count(chunk_text)
                 
                 chunk_dict = {
@@ -841,8 +1494,16 @@ class DocumentChunker:
         seq = 0
         
         while start_char < len(page_text):
+            clean_start = self._clean_chunk_start(page_text, start_char) if seq > 0 else start_char
             end_char = min(start_char + self.chunk_size, len(page_text))
-            chunk_text = page_text[start_char:end_char]
+            chunk_text = page_text[clean_start:end_char]
+            if (
+                seq > 0
+                and clean_start < start_char
+                and self._estimate_token_count(chunk_text) > self._max_clean_chunk_tokens()
+            ):
+                clean_start = start_char
+                chunk_text = page_text[clean_start:end_char]
             page_aware_metadata = metadata.get('page_aware_metadata') or {}
             toc_pages = {
                 int(page)
@@ -854,9 +1515,9 @@ class DocumentChunker:
             if chunk_text.strip():
                 page_chunks.append({
                     'text': chunk_text,
-                    'start_char': page_char_offset + start_char,
+                    'start_char': page_char_offset + clean_start,
                     'end_char': page_char_offset + end_char,
-                    'token_start': start_char,
+                    'token_start': clean_start,
                     'token_end': end_char,
                     'token_count': self._estimate_token_count(chunk_text),
                     'page_number': page_number,
@@ -1004,11 +1665,26 @@ class DocumentChunker:
     # INTERNAL - TOKEN WINDOW CHUNKING
     # ============================================================================
 
-    def _apply_chunk_profile(self, file_type: str) -> None:
-        """Select a file-type-aware chunk profile, keeping a safe default for unknown inputs."""
+    def _apply_chunk_profile(self, file_type: str, doc_text: str = None) -> None:
+        """Select a file-type-aware chunk profile, with optional document-type
+        detection for Vietnamese internal documents.
+
+        Document-type profiles optimize chunk size and overlap for:
+        - regulations (quy định, nghị định): larger chunks, higher overlap
+        - contracts (hợp đồng): medium chunks, high overlap for clause linking
+        - handbooks (sổ tay, hướng dẫn): standard chunks
+        - reports (báo cáo): larger chunks
+        - technical (kỹ thuật): smaller chunks for precise retrieval
+        """
         normalized = (file_type or '').lower().strip()
         ext = self._normalize_file_extension(normalized)
 
+        # Detect document type from text content if available
+        doc_type = None
+        if doc_text and self._is_vietnamese_text(doc_text):
+            doc_type = self._detect_document_type(doc_text)
+
+        # Select base profile by file extension
         if ext == 'pdf':
             self.chunk_size = getattr(settings, 'CHUNK_TOKEN_SIZE_PDF', 320)
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP_PDF', 64)
@@ -1030,12 +1706,42 @@ class DocumentChunker:
             self.chunk_overlap = getattr(settings, 'CHUNK_TOKEN_OVERLAP', self.chunk_overlap)
             profile = 'default'
 
+        # Apply document-type override for Vietnamese internal documents
+        if doc_type:
+            type_profiles = {
+                'regulation': {
+                    'size': getattr(settings, 'CHUNK_TOKEN_SIZE_REGULATION', 480),
+                    'overlap': getattr(settings, 'CHUNK_TOKEN_OVERLAP_REGULATION', 96),
+                },
+                'contract': {
+                    'size': getattr(settings, 'CHUNK_TOKEN_SIZE_CONTRACT', 400),
+                    'overlap': getattr(settings, 'CHUNK_TOKEN_OVERLAP_CONTRACT', 100),
+                },
+                'handbook': {
+                    'size': getattr(settings, 'CHUNK_TOKEN_SIZE_HANDBOOK', 360),
+                    'overlap': getattr(settings, 'CHUNK_TOKEN_OVERLAP_HANDBOOK', 72),
+                },
+                'report': {
+                    'size': getattr(settings, 'CHUNK_TOKEN_SIZE_REPORT', 500),
+                    'overlap': getattr(settings, 'CHUNK_TOKEN_OVERLAP_REPORT', 80),
+                },
+                'technical': {
+                    'size': getattr(settings, 'CHUNK_TOKEN_SIZE_TECHNICAL', 280),
+                    'overlap': getattr(settings, 'CHUNK_TOKEN_OVERLAP_TECHNICAL', 56),
+                },
+            }
+            override = type_profiles.get(doc_type)
+            if override:
+                self.chunk_size = override['size']
+                self.chunk_overlap = override['overlap']
+                profile = f'{profile}_{doc_type}'
+
         # Safeguard: BGE-M3 has max_length=8192, ensure chunk_size < 6000 for safety
         MAX_SAFE_CHUNK_SIZE = 6000
         if self.chunk_size > MAX_SAFE_CHUNK_SIZE:
             logger.warning(
-                f'Chunk size {self.chunk_size} exceeds safe maximum {MAX_SAFE_CHUNK_SIZE} for BGE-M3 (max_length=8192). '
-                f'Reducing to {MAX_SAFE_CHUNK_SIZE}'
+                f'Chunk size {self.chunk_size} exceeds safe maximum {MAX_SAFE_CHUNK_SIZE} '
+                f'for BGE-M3 (max_length=8192). Reducing to {MAX_SAFE_CHUNK_SIZE}'
             )
             self.chunk_size = MAX_SAFE_CHUNK_SIZE
 
@@ -1044,8 +1750,24 @@ class DocumentChunker:
 
         self.strategy_name = f"hybrid_structural_{profile}_{self.chunk_size}_{self.chunk_overlap}"
         logger.info(
-            f"Chunk profile selected: file_type={normalized} (ext={ext}), strategy={self.strategy_name}"
+            f"Chunk profile selected: file_type={normalized} (ext={ext}), "
+            f"doc_type={doc_type or 'generic'}, strategy={self.strategy_name}"
         )
+
+    def _detect_document_type(self, text: str) -> Optional[str]:
+        """Detect Vietnamese document type from content keywords.
+
+        Returns one of: 'regulation', 'contract', 'handbook', 'report',
+        'technical', or None if no match.
+
+        Checks the first 5000 chars which typically contain title and
+        introductory sections where document type indicators appear.
+        """
+        sample = text[:5000]
+        for doc_type, pattern in _DOC_TYPE_PATTERNS:
+            if pattern.search(sample):
+                return doc_type
+        return None
 
     def _normalize_file_extension(self, file_type: str) -> str:
         """Normalize a MIME type or extension into a short extension label."""
@@ -1217,16 +1939,120 @@ class DocumentChunker:
         match = re.match(r'^\|\s*(\d+)\s*\|', line or '')
         return int(match.group(1)) if match else None
     
-    def _build_word_spans(self, text: str) -> List[tuple[int, int]]:
-        """Return exact character spans for token-like units (non-whitespace sequences)."""
+    def _build_word_spans(self, text: str, metadata: Dict[str, Any] = None) -> List[tuple[int, int]]:
+        """Return exact character spans for token-like units.
+
+        Enhanced with Vietnamese-aware tokenization: when the document language
+        is detected as Vietnamese, applies word segmentation (via underthesea or
+        syllable-based fallback) to avoid breaking compound words mid-chunk.
+
+        For non-Vietnamese text, the original regex-based tokenization is used.
+        """
+        merged_metadata = metadata or {}
+        force_vi = merged_metadata.get('language') == 'vi'
+
+        regex_spans = self._regex_word_spans(text)
+
+        # Try Vietnamese word segmentation if applicable
+        if force_vi or self._is_vietnamese_text(text):
+            try:
+                from services.document.vietnamese_nlp import segment_words
+                tokens = segment_words(text)
+                if tokens:
+                    spans = []
+                    cursor = 0
+                    misses = 0
+                    for token in tokens:
+                        search_token = token.replace('_', ' ')
+                        pos = text.find(search_token, cursor)
+                        if pos >= 0:
+                            actual_end = pos + len(search_token)
+                            spans.append((pos, actual_end))
+                            cursor = actual_end
+                        else:
+                            misses += 1
+                            if misses > max(3, int(len(tokens) * 0.03)):
+                                return regex_spans
+
+                    if spans and self._word_spans_are_safe(text, spans):
+                        return spans
+            except Exception as e:
+                logger.debug(f"Vietnamese word segmentation fallback: {e}")
+
+        return regex_spans
+
+    @staticmethod
+    def _regex_word_spans(text: str) -> List[tuple[int, int]]:
+        """Safe non-whitespace token spans anchored to the original text."""
         return [(m.start(), m.end()) for m in re.finditer(r'\S+', text)]
+
+    @staticmethod
+    def _word_spans_are_safe(text: str, spans: List[tuple[int, int]]) -> bool:
+        if not spans:
+            return False
+
+        last_end = -1
+        for start, end in spans:
+            if start < 0 or end <= start or end > len(text) or start < last_end:
+                return False
+            if text[start:end].strip() != text[start:end]:
+                return False
+            last_end = end
+        return True
+
+    def _max_clean_chunk_tokens(self) -> int:
+        configured = int(getattr(settings, 'RAG_MAX_CLEAN_CHUNK_TOKENS', 0) or 0)
+        if configured > 0:
+            return configured
+        return max(self.chunk_size + self.chunk_overlap, int(self.chunk_size * 1.35))
+
+    @staticmethod
+    def _clean_chunk_start(text: str, start_char: int, search_back_chars: int = 360) -> int:
+        """Move overlap starts back to a nearby paragraph/sentence boundary.
+
+        This prevents persisted chunk content from starting in the middle of a
+        word or thought while preserving the intentional overlap.
+        """
+        if start_char <= 0:
+            return 0
+
+        start_char = min(max(0, start_char), len(text))
+        window_start = max(0, start_char - search_back_chars)
+        prefix = text[window_start:start_char]
+
+        paragraph_matches = list(re.finditer(r'\n\s*\n+', prefix))
+        if paragraph_matches:
+            return window_start + paragraph_matches[-1].end()
+
+        sentence_matches = list(re.finditer(r'[.!?…;:]\s+', prefix))
+        if sentence_matches:
+            return window_start + sentence_matches[-1].end()
+
+        while start_char > 0 and not text[start_char - 1].isspace():
+            start_char -= 1
+        return start_char
+
+    @staticmethod
+    def _is_vietnamese_text(text: str, sample_chars: int = 1000) -> bool:
+        """Quick heuristic: does this text contain significant Vietnamese diacritics?"""
+        sample = text[:sample_chars]
+        alpha_chars = [c for c in sample if c.isalpha()]
+        if not alpha_chars:
+            return False
+        vi_specific = sum(
+            1 for c in alpha_chars
+            if (c in 'àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ'
+                or c in 'ÀÁẢÃẠÂẦẤẨẪẬĂẰẮẲẴẶÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ')
+        )
+        return (vi_specific / max(1, len(alpha_chars))) >= 0.08
 
     def _char_to_word_index(self, char_pos: int, word_ends: List[int]) -> int:
         """Convert a character offset to the number of words that end before or at that position."""
         return bisect_right(word_ends, char_pos)
 
     def _build_structural_breakpoints(self, text: str, word_spans: List[tuple[int, int]]) -> List[int]:
-        """Collect stable breakpoint indices from paragraph and sentence boundaries."""
+        """Collect stable breakpoint indices from paragraph, sentence, and
+        Vietnamese document structure boundaries (Chương, Điều, Mục, etc.)."""
         if not word_spans:
             return [0]
 
@@ -1253,8 +2079,17 @@ class DocumentChunker:
             if 0 < breakpoint_index < len(word_spans):
                 breakpoints.add(breakpoint_index)
 
+            # Vietnamese document structure: Chương, Điều, Mục, Phần, Khoản
+            first_line = paragraph.split('\n')[0].strip() if paragraph else ''
+            if first_line:
+                for pattern in _VI_HEADING_PATTERNS:
+                    if pattern.match(first_line):
+                        breakpoints.add(breakpoint_index)
+                        break
+
+            # Standard sentence boundaries
             if len(paragraph.split()) > self.chunk_size:
-                for sentence_match in re.finditer(r'[.!?]+(?:\s+|$)', paragraph):
+                for sentence_match in re.finditer(r'[.!?…]+(?:\s+|$)', paragraph):
                     sentence_end = paragraph_start + sentence_match.end()
                     sentence_breakpoint = self._char_to_word_index(sentence_end, word_ends)
                     if 0 < sentence_breakpoint < len(word_spans):
@@ -1287,6 +2122,12 @@ class DocumentChunker:
                 break
 
             next_start = end - self.chunk_overlap
+            start_candidates = [
+                bp for bp in breakpoint_set
+                if next_start <= bp < end and bp > start
+            ]
+            if start_candidates:
+                next_start = start_candidates[0]
             # Guard against non-progress due to unusual configuration
             if next_start <= start:
                 next_start = start + stride
@@ -1302,14 +2143,22 @@ class DocumentChunker:
         seq = 0
 
         while start_char < len(text):
+            clean_start = self._clean_chunk_start(text, start_char) if seq > 0 else start_char
             end_char = min(start_char + self.chunk_size, len(text))
-            chunk_text = text[start_char:end_char]
+            chunk_text = text[clean_start:end_char]
+            if (
+                seq > 0
+                and clean_start < start_char
+                and self._estimate_token_count(chunk_text) > self._max_clean_chunk_tokens()
+            ):
+                clean_start = start_char
+                chunk_text = text[clean_start:end_char]
             if chunk_text.strip():
                 result_chunks.append({
                     'text': chunk_text,
-                    'start_char': start_char,
+                    'start_char': clean_start,
                     'end_char': end_char,
-                    'token_start': start_char,
+                    'token_start': clean_start,
                     'token_end': end_char,
                     'token_count': self._estimate_token_count(chunk_text),
                     'metadata': metadata,

@@ -607,6 +607,15 @@ class DocumentParser:
         # Drop any remaining HTML comments.
         normalized = re.sub(r'<!--.*?-->', ' ', normalized, flags=re.DOTALL)
 
+        # Normalize line endings: \r\n or \r → \n.
+        normalized = normalized.replace('\r\n', '\n').replace('\r', '\n')
+
+        # Merge single line breaks within paragraphs into spaces,
+        # preserving paragraph separators (\n\n+). This fixes
+        # « t\nrực thuộc » → « trực thuộc » and prevents
+        # broken-word tokens from degrading BM25 and vector search.
+        normalized = re.sub(r'(?<!\n)\n(?!\n)', ' ', normalized)
+
         # Keep paragraph structure but avoid excessive blank lines/noisy spaces.
         normalized = re.sub(r'[ \t]+', ' ', normalized)
         normalized = re.sub(r'\n{3,}', '\n\n', normalized)

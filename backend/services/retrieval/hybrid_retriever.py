@@ -32,6 +32,7 @@ class HybridRetriever:
     def retrieve(
         self, query: str, top_k: int = 10, sparse_k: int = 10,
         document_ids: List[str] = None,
+        qdrant_filter: Optional[Dict[str, Any]] = None,
         query_embedding: Optional[List[float]] = None,
         dense_weight: float = 0.5,
     ) -> List[Dict[str, Any]]:
@@ -40,10 +41,20 @@ class HybridRetriever:
         dense_weight = max(0.0, min(1.0, float(dense_weight)))
         sparse_weight = 1.0 - dense_weight
 
+        def _freeze_filter(value: Any) -> Any:
+            if isinstance(value, dict):
+                return tuple((key, _freeze_filter(value[key])) for key in sorted(value))
+            if isinstance(value, list):
+                return tuple(_freeze_filter(item) for item in value)
+            if isinstance(value, tuple):
+                return tuple(_freeze_filter(item) for item in value)
+            return value
+
         doc_hash = hashlib.md5(
             ','.join(sorted(document_ids or [])).encode()
         ).hexdigest()[:12]
-        cache_key = f"hybrid_retrieval:v6:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:{doc_hash}"
+        filter_hash = hashlib.md5(repr(_freeze_filter(qdrant_filter or {})).encode()).hexdigest()[:12]
+        cache_key = f"hybrid_retrieval:v8:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:{doc_hash}:{filter_hash}"
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -164,6 +175,8 @@ class HybridRetriever:
                                 'page': result.get('page'),
                                 'chunk_index': result.get('chunk_index'),
                                 'metadata': result.get('metadata') or {},
+                                '_bm25_score': result.get('_bm25_score'),
+                                '_lexical_score': result.get('_lexical_score'),
                             }
                             sparse_scores[cid] = score
                         local_max = max(local_max, score)
@@ -199,21 +212,36 @@ class HybridRetriever:
             try:
                 emb = query_embedding  # pre-computed in main thread
 
-                qdrant_filter = {'node_type': 'detail'}
+                qdrant_filter_local = {'node_type': 'detail'}
                 if document_ids:
-                    qdrant_filter['document_id'] = document_ids
+                    qdrant_filter_local['document_id'] = document_ids
+                if qdrant_filter:
+                    for key, value in qdrant_filter.items():
+                        if value is not None:
+                            qdrant_filter_local[key] = value
 
                 t_q = time.monotonic()
                 dense_results = self.qdrant.search_similar(
-                    embedding=emb, limit=top_k, filter_payload=qdrant_filter,
+                    embedding=emb, limit=top_k, filter_payload=qdrant_filter_local,
                 )
                 # Backward compatibility: older ingestion code did not store
                 # node_type in Qdrant payloads, so node_type='detail' can filter
                 # out valid document vectors. Retry with only document scope.
                 if not dense_results and document_ids:
-                    legacy_filter = {'document_id': document_ids}
+                    legacy_filter = {k: v for k, v in qdrant_filter_local.items() if k != 'node_type'}
                     dense_results = self.qdrant.search_similar(
                         embedding=emb, limit=top_k, filter_payload=legacy_filter,
+                    )
+                # Older vectors may not carry folder_id yet. If a strict folder
+                # filter removes everything, relax only the folder constraint and
+                # keep the document/page scope intact.
+                if not dense_results and qdrant_filter_local.get('folder_id'):
+                    relaxed_filter = {
+                        k: v for k, v in qdrant_filter_local.items()
+                        if k not in {'folder_id'}
+                    }
+                    dense_results = self.qdrant.search_similar(
+                        embedding=emb, limit=top_k, filter_payload=relaxed_filter,
                     )
                 timing['qdrant_ms'] = (time.monotonic() - t_q) * 1000
 

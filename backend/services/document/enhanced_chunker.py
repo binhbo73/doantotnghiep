@@ -499,37 +499,51 @@ class EnhancedDocumentChunker:
         chunk_dict: Dict[str, Any],
         document_metadata: Dict[str, Any],
     ) -> str:
-        """Add stable document/page context to the embedding input only."""
+        """Add stable document/page context to the embedding input only.
+
+        Language-aware: uses Vietnamese labels for Vietnamese documents
+        to keep the embedding space consistent with document content.
+        """
         if not getattr(settings, 'RAG_CONTEXTUAL_EMBEDDING_PREFIX_ENABLED', True):
             return chunk_text
 
         chunk_metadata = chunk_dict.get('metadata') or {}
+        source_name = (document_metadata or {}).get('source_name') or ''
+
+        # Detect language: check if document or chunk text is Vietnamese
+        use_vi = self._is_vietnamese_context(source_name, chunk_text)
+
         parts = []
-        source_name = (document_metadata or {}).get('source_name')
         if source_name:
-            parts.append(f"File: {source_name}")
+            label = "Tài liệu" if use_vi else "File"
+            parts.append(f"{label}: {source_name}")
         page = chunk_dict.get('page_number') or chunk_metadata.get('page_number')
         if page:
-            parts.append(f"Page: {page}")
+            label = "Trang" if use_vi else "Page"
+            parts.append(f"{label}: {page}")
         sheet_name = chunk_metadata.get('sheet_name')
         if sheet_name:
-            parts.append(f"Sheet: {sheet_name}")
+            label = "Sheet" if use_vi else "Sheet"
+            parts.append(f"{label}: {sheet_name}")
         row_start = chunk_metadata.get('row_start')
         row_end = chunk_metadata.get('row_end')
         if row_start:
-            row_text = f"Rows: {row_start}"
+            label = "Dòng" if use_vi else "Rows"
+            row_text = f"{label}: {row_start}"
             if row_end and row_end != row_start:
                 row_text += f"-{row_end}"
             parts.append(row_text)
         heading_path = chunk_metadata.get('heading_path') or []
         if heading_path:
+            label = "Mục" if use_vi else "Section"
             if isinstance(heading_path, (list, tuple)):
-                parts.append("Section: " + " > ".join(str(item) for item in heading_path if item))
+                parts.append(f"{label}: " + " > ".join(str(item) for item in heading_path if item))
             else:
-                parts.append(f"Section: {heading_path}")
+                parts.append(f"{label}: {heading_path}")
         block_type = chunk_metadata.get('block_type')
         if block_type:
-            parts.append(f"Block: {block_type}")
+            label = "Khối" if use_vi else "Block"
+            parts.append(f"{label}: {block_type}")
 
         if not parts:
             return chunk_text
@@ -537,7 +551,17 @@ class EnhancedDocumentChunker:
         max_prefix_chars = int(getattr(settings, 'RAG_CONTEXTUAL_EMBEDDING_PREFIX_CHARS', 360))
         prefix = " | ".join(parts)[:max_prefix_chars]
         return f"{prefix}\n\n{chunk_text}"
-    
+
+    @staticmethod
+    def _is_vietnamese_context(source_name: str, chunk_text: str) -> bool:
+        """Determine if this chunk belongs to a Vietnamese document."""
+        sample = (source_name + ' ' + chunk_text[:500]).lower()
+        vi_chars = sum(
+            1 for c in sample
+            if c in 'àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ'
+        )
+        alpha_chars = sum(1 for c in sample if c.isalpha())
+        return (vi_chars / max(1, alpha_chars)) >= 0.06
     def _enrich_chunks_with_pages(
         self,
         chunks: List[Dict[str, Any]],

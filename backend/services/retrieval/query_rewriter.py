@@ -33,9 +33,11 @@ class QueryRewriter:
 
     FOLLOW_UP_MARKERS = (
         'xem kĩ', 'xem kỹ', 'xem lại', 'như trên', 'như đã nói', 'ở trên',
-        'ở đây', 'chỗ này', 'phần này', 'phần đó', 'đoạn này', 'đoạn đó',
+        'ở đây', 'chỗ này', 'phần này', 'phần đó', 'đoạn này', 'đoạn đó','điều','phần',
         'cái này', 'cái đó', 'nó', 'đó', 'đây', 'tiếp theo', 'theo đó',
         'trang', 'mục', 'phần', 'mục lục', 'bảng', 'hình', 'đã hỏi',
+        'cho tôi biết thêm', 'chi tiết hơn', 'nói rõ hơn', 'giải thích thêm',
+        'là gì', 'như thế nào', 'làm sao', 'cách nào', 'bao nhiêu',
     )
 
     HISTORY_STOPWORDS = {
@@ -194,6 +196,33 @@ class QueryRewriter:
 
         return False
 
+    def _get_vi_processor(self):
+        """Lazy-load Vietnamese NLP processor."""
+        if not hasattr(self, '_vi_processor'):
+            try:
+                from services.document.vietnamese_nlp import get_processor
+                self._vi_processor = get_processor()
+            except Exception:
+                self._vi_processor = None
+        return self._vi_processor
+
+    def _get_vi_keywords(self, text: str, max_terms: int = 8) -> List[str]:
+        """Extract Vietnamese keywords using NLP when available."""
+        processor = self._get_vi_processor()
+        if not processor or not processor.is_vietnamese(text):
+            return self._extract_focus_terms(text, max_terms)
+
+        try:
+            tokens = processor.segment_words(text)
+            tokens = processor.remove_stopwords(tokens)
+            return [
+                token.replace('_', ' ')
+                for token in tokens[:max_terms]
+                if len(token) >= 2 and token.replace('_', ' ') not in self.HISTORY_STOPWORDS
+            ]
+        except Exception:
+            return self._extract_focus_terms(text, max_terms)
+
     def _get_previous_user_message(self, conversation_history: Optional[List[Dict[str, Any]]]) -> str:
         if not conversation_history:
             return ''
@@ -222,7 +251,7 @@ class QueryRewriter:
         previous_user = self._get_previous_user_message(conversation_history)
         previous_assistant = self._get_previous_assistant_message(conversation_history)
         seed_text = previous_user or previous_assistant
-        focus_terms = self._extract_focus_terms(seed_text)
+        focus_terms = self._get_vi_keywords(seed_text)
         return ' '.join(focus_terms)
 
     def _normalize_text(self, text: str) -> str:

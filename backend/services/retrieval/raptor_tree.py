@@ -941,7 +941,8 @@ class RaptorTreeBuilder:
         combined = ' '.join(parts).strip()
         
         # P1#6: LLM synthesis cho level >= 2 section/document summaries
-        if use_llm and len(combined) > 500:
+        llm_synthesis_enabled = getattr(settings, 'RAG_RAPTOR_LLM_SUMMARIES', True)
+        if use_llm and llm_synthesis_enabled and len(combined) > 500:
             try:
                 synthesized = self._llm_synthesize_summary(combined)
                 if synthesized:
@@ -1036,29 +1037,29 @@ class RaptorTreeBuilder:
     
     def _llm_synthesize_summary(self, text: str) -> str:
         """Goi LLM de synthesize summary tu concatenated child summaries.
-        
-        Fix: Tang timeout len 300s (tuong thich voi Qwen3-4B tren CPU)
-        va giam prompt text xuong 1500 chars de tranh timeout.
+
+        Optimized: prompt 400 chars, timeout 45s, fast-fail on error.
+        Falls back to concatenation when LLM is unavailable or times out.
         """
         try:
             from services.ai.llama_client import LlamaClient
-            
-            llama = LlamaClient(timeout=300)
+
+            # Use shorter timeout - RAPTOR summaries are non-blocking background work
+            llama = LlamaClient(timeout=45)
             prompt = (
-                "Tong hop cac tom tat sau thanh 1-3 cau tieng Viet, toi da 250 ky tu. "
-                "Chi giu y chinh, ten rieng, ngay thang, so lieu, dieu kien va hanh dong quan trong. "
-                "Khong suy dien, khong them thong tin ngoai noi dung.\n\n"
-                + text[:900] + "\n\n"
-                "Tom tat tong hop:"
+                "Tom tat ngan gon sau thanh 1-2 cau tieng Viet (toi da 200 ky tu), "
+                "chi giu y chinh:\n\n"
+                + text[:400] + "\n\n"
+                "Tom tat:"
             )
             summary = llama.complete(
                 prompt=prompt,
-                max_tokens=96,
+                max_tokens=64,
                 temperature=0.2,
-                timeout=300,
+                timeout=45,
             )
-            if summary and len(summary.strip()) > 20:
+            if summary and len(summary.strip()) > 15:
                 return summary.strip()[:4000]
         except Exception as e:
-            logger.warning(f'LLM synthesis error: {e}')
+            logger.debug(f'LLM synthesis skipped (non-critical): {e}')
         return None

@@ -517,16 +517,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Đính kèm từ hệ thống</h3>
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Chọn tài liệu hoặc thư mục có sẵn trong kho tri thức, không phải file từ máy.</p>
                             </div>
-                            {activeTab !== 'documents' && (
-                                <button
-                                    type="button"
-                                    onClick={() => setShowSystemPicker(false)}
-                                    className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-                                    title="Đóng"
-                                >
-                                    <X size={18} />
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                onClick={() => setShowSystemPicker(false)}
+                                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                                title="Đóng"
+                            >
+                                <X size={18} />
+                            </button>
                         </div>
 
                         <div className="p-5 space-y-4 flex-1 overflow-hidden flex flex-col">

@@ -216,10 +216,11 @@ class QueryIntentClassifier:
             (r"\b(so sanh|khac biet|phan biet|doi chieu)\b", 3),
             (r"\b(giong va khac|uu diem|nhuoc diem)\b", 2),
             (r"\b(giua\s+.+\s+va\s+.+|.+\s+voi\s+.+|hon|kem|vs)\b", 1),
+            (r"\b(khac nhau|khac\s+nhau\s+the nao|diem khac)\b", 2),
         ],
         QueryIntent.PROCEDURAL: [
             (r"^\s*(?:cau|cau hoi)\s+\d+\s*[:.]?\s*(?:cach|lam the nao|huong dan|quy trinh|cac buoc)\b", 4),
-            (r"\b(cach|lam the nao|huong dan|thuc hien nhu the nao)\b", 2),
+            (r"\b(cach|lam the nao|huong dan|thuc hien nhu the nao|lam sao de|huong dan cach)\b", 2),
             (r"\b(quy trinh|cac buoc|tung buoc|thu tuc|workflow)\b", 3),
             (r"\b(bat dau|thuc hien|trien khai|cai dat|thiet lap|cau hinh)\b", 1),
         ],
@@ -228,6 +229,9 @@ class QueryIntentClassifier:
             (r"\b(tom tat|tong quan|khai quat|noi dung chinh|y chinh|chu de chinh)\b", 5),
             (r"\b(xem|cho xem|lay|trich|in)\s+(noi dung|muc|phan|section|chuong)\b", 6),
             (r"\bnoi dung\s+(?:cua\s+)?(?:muc|phan|section|chuong|cac|nhung)\b", 5),
+            (r"\b(chuc nang|nhiem vu|quyen han|trach nhiem|vai tro|chuc trach)\b.*\b(cua|cho|ve)\b", 5),
+            (r"\b(cua|cho|ve)\b.*\b(chuc nang|nhiem vu|quyen han|trach nhiem|vai tro|chuc trach)\b", 5),
+            (r"\b(chi tiet ve|noi dung chi tiet|thong tin chi tiet)\b", 4),
             (r"\b(file|tai lieu|van ban)\s+(nay\s+)?(noi ve gi|viet ve gi|trinh bay gi|co noi dung gi)\b", 5),
             (r"\btrinh bay\b", 2),
             (r"\b(tat ca|toan bo|day du|chi tiet)\b", 2),
@@ -251,7 +255,8 @@ class QueryIntentClassifier:
         ],
         QueryIntent.DEFINITIONAL: [
             (r"\b(la gi|dinh nghia|khai niem)\b", 3),
-            (r"\b(duoc hieu|hieu nhu the nao|nghia la gi)\b", 2),
+            (r"\b(duoc hieu|hieu nhu the nao|nghia la gi|cho toi biet|cho toi hoi)\b", 2),
+            (r"\b(y nghia cua|the nao la|gioi thieu ve)\b", 2),
         ],
         QueryIntent.SPREADSHEET_CELL: [
             # Accept both upper and lower-case column letters (A-Z or a-z)
@@ -303,6 +308,11 @@ class QueryIntentClassifier:
             return QueryIntent.FACTUAL
 
         normalized = self._normalize(query)
+        spreadsheet_markers = re.search(
+            r"\b(excel|spreadsheet|sheet|worksheet|bang tinh|bang|table|cell|row|column|cot\s+[a-z]{1,3}|dong\s+\d+|hang\s+\d+|o\s*[a-z]{1,3}\d{1,5})\b",
+            normalized,
+            re.IGNORECASE,
+        )
         scored: List[Tuple[QueryIntent, int, int]] = []
 
         for intent, patterns in self.PATTERNS.items():
@@ -313,11 +323,16 @@ class QueryIntentClassifier:
         if scored:
             image_score = next((score for intent, score, _ in scored if intent == QueryIntent.IMAGE), 0)
             list_score = next((score for intent, score, _ in scored if intent == QueryIntent.LIST), 0)
-            spreadsheet_markers = re.search(
-                r"\b(excel|spreadsheet|sheet|bang tinh|worksheet|cell|row|column|cot\s+[a-z]{1,3}|dong\s+\d+|hang\s+\d+|o\s*[a-z]{1,3}\d{1,5})\b",
-                normalized,
-                re.IGNORECASE,
-            )
+            if not spreadsheet_markers:
+                scored = [
+                    item for item in scored
+                    if item[0] not in {
+                        QueryIntent.SPREADSHEET_CELL,
+                        QueryIntent.SPREADSHEET_ROW,
+                        QueryIntent.SPREADSHEET_COLUMN,
+                        QueryIntent.SPREADSHEET_LOOKUP,
+                    }
+                ]
             if image_score > 0 and not spreadsheet_markers:
                 scored = [
                     item for item in scored
@@ -338,6 +353,8 @@ class QueryIntentClassifier:
                         QueryIntent.SPREADSHEET_LOOKUP,
                     }
                 ]
+            if not scored:
+                return QueryIntent.FACTUAL
             scored.sort(key=lambda item: (item[1], item[2]), reverse=True)
             best_intent, best_score, _priority = scored[0]
             if best_score >= 2:

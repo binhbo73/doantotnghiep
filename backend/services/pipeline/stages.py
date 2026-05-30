@@ -455,6 +455,8 @@ class ChunkingStage(PipelineStage):
                                             'token_count': persisted_meta.get('token_count', 0),
                                             'sheet_name': persisted_meta.get('sheet_name'),
                                             'row_number': persisted_meta.get('row_number') or persisted_meta.get('row_start') or persisted_meta.get('row_idx'),
+                                            'folder_id': str(getattr(doc_obj, 'folder_id', None)) if getattr(doc_obj, 'folder_id', None) else None,
+                                            'department_id': str(getattr(doc_obj, 'department_id', None)) if getattr(doc_obj, 'department_id', None) else None,
                                             'access_scope': getattr(doc_obj, 'access_scope', 'company'),
                                         }
                                         try:
@@ -544,6 +546,39 @@ class ChunkingStage(PipelineStage):
                 raise StageExecutionError("No chunks generated")
             
             context.chunks = chunks
+
+            # ── Chunk Quality Validation ──────────────────────────
+            if getattr(settings, 'CHUNK_VALIDATOR_ENABLED', True):
+                try:
+                    from services.document.chunk_validator import validate_chunks
+                    t_val_start = time.monotonic()
+                    report = validate_chunks(
+                        chunks=chunks,
+                        source_text=text,
+                        document_id=context.document_id,
+                        strict=False,  # Log warnings but don't block
+                    )
+                    val_ms = (time.monotonic() - t_val_start) * 1000
+                    if not report.valid:
+                        self.logger.warning(
+                            f"⚠️ [CHUNK_VALIDATION] {report.critical_count} critical, "
+                            f"{report.warning_count} warnings in {val_ms:.0f}ms"
+                        )
+                        for issue in report.issues:
+                            self.logger.warning(f"  [{issue.severity.value}] {issue.message}")
+                    else:
+                        self.logger.info(
+                            f"✅ [CHUNK_VALIDATION] All checks passed "
+                            f"({report.total_chunks} chunks, {val_ms:.0f}ms)"
+                        )
+                    context.metadata['chunk_validation'] = {
+                        'valid': report.valid,
+                        'critical_count': report.critical_count,
+                        'warning_count': report.warning_count,
+                        'stats': report.stats,
+                    }
+                except Exception as val_err:
+                    self.logger.warning(f"Chunk validation skipped (non-fatal): {val_err}")
             context.metadata['chunk_count'] = len(chunks)
             context.metadata['avg_chunk_size'] = (
                 len(text) // len(chunks) if chunks else 0

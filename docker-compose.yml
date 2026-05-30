@@ -82,7 +82,7 @@ services:
       EMBEDDING_MODEL: /app/models/bge-m3
       EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
       EMBEDDING_PRELOAD_ENABLED: "true"
-      EMBEDDING_PRELOAD_TEST_EMBED: "true"
+      EMBEDDING_PRELOAD_TEST_EMBED: "false"
       EMBEDDING_PRELOAD_FAIL_FAST: "false"
       CHUNK_TOKEN_SIZE_PDF: "320"
       CHUNK_TOKEN_OVERLAP_PDF: "64"
@@ -97,6 +97,7 @@ services:
       RAG_RAPTOR_PAGE_WINDOW_SIZE: "3"
       RAG_RAPTOR_GMM_MEMBERSHIP_THRESHOLD: "0.10"
       RAG_RAPTOR_MAX_MEMBERSHIPS_PER_NODE: "3"
+      RAG_RAPTOR_LLM_SUMMARIES: "false"
       RAG_UPLOAD_FAST_MODE: "true"
       RAG_DEFER_SUMMARY_ON_UPLOAD: "true"
       RAG_BUILD_RAPTOR_ON_UPLOAD: "true"
@@ -181,7 +182,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
       interval: 30s
       timeout: 15s
-      retries: 5
+      retries: 10
+      start_period: 120s
     networks:
       - rag_network
 
@@ -212,7 +214,7 @@ services:
       EMBEDDING_MODEL: /app/models/bge-m3
       EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cuda}
       EMBEDDING_PRELOAD_ENABLED: "true"
-      EMBEDDING_PRELOAD_TEST_EMBED: "true"
+      EMBEDDING_PRELOAD_TEST_EMBED: "false"
       EMBEDDING_PRELOAD_FAIL_FAST: "false"
       CHUNK_TOKEN_SIZE_PDF: "320"
       CHUNK_TOKEN_OVERLAP_PDF: "64"
@@ -227,6 +229,7 @@ services:
       RAG_RAPTOR_PAGE_WINDOW_SIZE: "3"
       RAG_RAPTOR_GMM_MEMBERSHIP_THRESHOLD: "0.10"
       RAG_RAPTOR_MAX_MEMBERSHIPS_PER_NODE: "3"
+      RAG_RAPTOR_LLM_SUMMARIES: "false"
       RAG_PDF_EXACT_PAGE_TEXT: "true"
       RAG_QDRANT_TEXT_PREVIEW_CHARS: "1000"
       RAG_RERANK_SNIPPET_CHARS: "1800"

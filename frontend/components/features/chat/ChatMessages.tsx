@@ -752,6 +752,11 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                 <button
                     type="button"
                     onMouseEnter={(event) => showCitation(occurrenceKey, citation, event.currentTarget)}
+                    onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        showCitation(occurrenceKey, citation, event.currentTarget)
+                    }}
                     onFocus={(event) => showCitation(occurrenceKey, citation, event.currentTarget)}
                     onMouseLeave={scheduleHideCitation}
                     onBlur={scheduleHideCitation}

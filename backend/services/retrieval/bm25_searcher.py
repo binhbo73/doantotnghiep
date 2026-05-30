@@ -91,8 +91,13 @@ class BM25Searcher:
                 else:
                     queryset = queryset.filter(document_id=document_ids)
 
-            # Order by BM25 rank and execute query
-            queryset = queryset.order_by('-rank')[:top_k]
+            candidate_limit = self._candidate_limit(top_k)
+
+            # Fetch a wider candidate set, then apply Vietnamese-aware lexical
+            # reranking. PostgreSQL FTS rank can tie on common terms such as
+            # "phòng", "tổng", "giám", so a deterministic second pass is
+            # needed to lift exact headings/phrases.
+            queryset = queryset.order_by('-rank')[:candidate_limit]
 
             # Fallback: if strict phrase/AND returns too few, retry with OR.
             # This is important for Vietnamese because the same concept often
@@ -115,22 +120,37 @@ class BM25Searcher:
                 )
                 if document_ids:
                     fallback_qs = fallback_qs.filter(document_id__in=document_ids if isinstance(document_ids, list) else [document_ids])
-                queryset = fallback_qs.order_by('-rank')[:top_k]
+                queryset = fallback_qs.order_by('-rank')[:candidate_limit]
                 strategy = 'OR (fallback)'
             
             # Execute query and fetch results
             results = []
             for chunk in queryset:
+                bm25_score = float(chunk.rank or 0.0)
+                lexical_score = self._lexical_relevance_score(query, chunk.content or '')
+                final_score = self._combine_scores(bm25_score, lexical_score)
                 results.append({
                     'chunk_id': str(chunk.id),
                     'document_id': str(chunk.document_id),
-                    'score': float(chunk.rank or 0.0),  # BM25 score (typically 0-1 after normalization)
+                    'score': final_score,
+                    '_bm25_score': bm25_score,
+                    '_lexical_score': lexical_score,
                     'content': chunk.content[:300] if chunk.content else '',
                     'page': chunk.page_number,
                     'chunk_index': chunk.chunk_index,
                     'metadata': chunk.metadata or {},
                     'source': 'bm25'
                 })
+            results.sort(
+                key=lambda item: (
+                    float(item.get('score') or 0.0),
+                    float(item.get('_lexical_score') or 0.0),
+                    float(item.get('_bm25_score') or 0.0),
+                    -int(item.get('chunk_index') or 0),
+                ),
+                reverse=True,
+            )
+            results = results[:top_k]
             
             t_db_ms = (time.monotonic() - t_db_start) * 1000
             t_bm25_total = (time.monotonic() - t_bm25_start) * 1000
@@ -196,22 +216,36 @@ class BM25Searcher:
             if page_number:
                 queryset = queryset.filter(page_number=page_number)
 
-            queryset = queryset.order_by('-rank')[:top_k]
+            queryset = queryset.order_by('-rank')[:self._candidate_limit(top_k)]
 
             results = []
             for chunk in queryset:
+                bm25_score = float(chunk.rank or 0.0)
+                lexical_score = self._lexical_relevance_score(query, chunk.content or '')
+                final_score = self._combine_scores(bm25_score, lexical_score)
                 results.append({
                     'chunk_id': str(chunk.id),
                     'document_id': str(chunk.document_id),
-                    'score': float(chunk.rank or 0.0),
+                    'score': final_score,
+                    '_bm25_score': bm25_score,
+                    '_lexical_score': lexical_score,
                     'content': chunk.content[:300] if chunk.content else '',
                     'page': chunk.page_number,
                     'chunk_index': chunk.chunk_index,
                     'metadata': chunk.metadata or {},
                     'source': 'bm25'
                 })
+            results.sort(
+                key=lambda item: (
+                    float(item.get('score') or 0.0),
+                    float(item.get('_lexical_score') or 0.0),
+                    float(item.get('_bm25_score') or 0.0),
+                    -int(item.get('chunk_index') or 0),
+                ),
+                reverse=True,
+            )
 
-            return results
+            return results[:top_k]
 
         except Exception as e:
             logger.error(f"Filtered BM25 search error: {str(e)}", exc_info=True)
@@ -254,10 +288,135 @@ class BM25Searcher:
 
         return valid_terms
 
+    @staticmethod
+    def _candidate_limit(top_k: int) -> int:
+        return max(top_k, min(max(top_k * 5, 40), 120))
+
+    def _combine_scores(self, bm25_score: float, lexical_score: float) -> float:
+        bm25_score = max(0.0, float(bm25_score or 0.0))
+        lexical_score = max(0.0, min(2.0, float(lexical_score or 0.0)))
+        return round((0.55 * bm25_score) + (0.45 * lexical_score), 6)
+
     def _normalize_term(self, term: str) -> str:
         normalized = unicodedata.normalize('NFD', (term or '').lower())
         normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
         return normalized.replace('đ', 'd').replace('Đ', 'd')
+
+    def _normalize_text(self, text: str) -> str:
+        normalized = unicodedata.normalize('NFD', (text or '').lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        normalized = normalized.replace('đ', 'd').replace('Đ', 'd')
+        normalized = re.sub(r'[^\w\s]+', ' ', normalized, flags=re.UNICODE)
+        return re.sub(r'\s+', ' ', normalized).strip()
+
+    def _lexical_relevance_score(self, query: str, text: str) -> float:
+        query_norm = self._normalize_text(query)
+        text_norm = self._normalize_text(text)
+        if not query_norm or not text_norm:
+            return 0.0
+
+        query_tokens = self._meaningful_tokens(query_norm)
+        if not query_tokens:
+            return 0.0
+
+        text_tokens = re.findall(r'\w+', text_norm, flags=re.UNICODE)
+        text_token_set = set(text_tokens)
+        overlap = sum(1 for token in query_tokens if token in text_token_set)
+        coverage = overlap / max(1, len(query_tokens))
+
+        score = 0.55 * coverage
+
+        query_phrase = ' '.join(query_tokens)
+        if query_phrase and query_phrase in text_norm:
+            score += 0.85
+
+        ordered_score = self._ordered_token_score(query_tokens, text_tokens)
+        score += 0.35 * ordered_score
+
+        ngram_score = self._ngram_overlap_score(query_tokens, text_norm)
+        score += 0.35 * ngram_score
+
+        first_text = text_norm[:500]
+        if query_phrase and query_phrase in first_text:
+            score += 0.25
+
+        heading_bonus = self._heading_match_bonus(query_tokens, text_norm)
+        score += heading_bonus
+
+        # Down-rank broad glossary/definition chunks that match only generic
+        # terms but miss the distinctive query phrase.
+        if coverage < 0.75 and ngram_score == 0:
+            score -= 0.20
+
+        return max(0.0, min(2.0, score))
+
+    @staticmethod
+    def _meaningful_tokens(normalized_text: str) -> List[str]:
+        stop_terms = {
+            'cua', 'cac', 'cho', 'theo', 'trong', 'voi', 'va', 'la', 'co',
+            'duoc', 've', 'den', 'tu', 'mot', 'nhung', 'nay', 'do', 'thi',
+        }
+        tokens = re.findall(r'\w+', normalized_text or '', flags=re.UNICODE)
+        kept = []
+        for token in tokens:
+            if len(token) < 2:
+                continue
+            if token in stop_terms:
+                continue
+            if token not in kept:
+                kept.append(token)
+        return kept
+
+    @staticmethod
+    def _ordered_token_score(query_tokens: List[str], text_tokens: List[str]) -> float:
+        if not query_tokens or not text_tokens:
+            return 0.0
+        pos = 0
+        matched = 0
+        for query_token in query_tokens:
+            try:
+                found = text_tokens.index(query_token, pos)
+            except ValueError:
+                continue
+            matched += 1
+            pos = found + 1
+        return matched / max(1, len(query_tokens))
+
+    @staticmethod
+    def _ngram_overlap_score(query_tokens: List[str], text_norm: str) -> float:
+        grams = []
+        for size in (2, 3, 4):
+            grams.extend(
+                ' '.join(query_tokens[index:index + size])
+                for index in range(0, max(0, len(query_tokens) - size + 1))
+            )
+        grams = [gram for gram in grams if gram]
+        if not grams:
+            return 0.0
+        hits = sum(1 for gram in grams if gram in text_norm)
+        return hits / len(grams)
+
+    @staticmethod
+    def _heading_match_bonus(query_tokens: List[str], text_norm: str) -> float:
+        if not query_tokens:
+            return 0.0
+        first_lines = [
+            line.strip()
+            for line in text_norm.splitlines()[:6]
+            if line.strip()
+        ]
+        if not first_lines:
+            first_lines = [text_norm[:300]]
+        heading_text = ' '.join(first_lines)
+        heading_hits = sum(1 for token in query_tokens if token in heading_text)
+        bonus = 0.0
+        if heading_hits >= max(2, int(len(query_tokens) * 0.6)):
+            bonus += 0.25
+        if len(query_tokens) >= 2:
+            leading_bigram = ' '.join(query_tokens[:2])
+            if leading_bigram in heading_text:
+                bonus += 0.25
+        return bonus
 
     def _term_variants(self, term: str) -> List[str]:
         variants = []

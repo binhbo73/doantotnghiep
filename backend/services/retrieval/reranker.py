@@ -72,7 +72,7 @@ class Reranker:
 
         query_lower = query.lower()
         query_norm = self._normalize_text(query)
-        q_tokens = {t.lower() for t in re.findall(r'\w+', query_norm) if len(t) >= 2}
+        q_tokens = self._tokenize_for_scoring(query)
 
         # Intent detection
         asks_reason = any(m in query_lower for m in (
@@ -105,7 +105,7 @@ class Reranker:
             snippet = (c.get('snippet') or '')
             snippet_lower = snippet.lower()
             snippet_norm = self._normalize_text(snippet)
-            s_tokens = {t.lower() for t in re.findall(r'\w+', snippet_norm) if len(t) >= 2}
+            s_tokens = self._tokenize_for_scoring(snippet)
 
             base_score = float(c.get('score', 0.0) or 0.0)
             asset_bonus = 0.5 if c.get('source') == 'asset' else 0.0
@@ -138,6 +138,7 @@ class Reranker:
                     glossary_bonus -= 0.35
 
             toc_penalty = 0.0 if asks_toc else self._toc_penalty(c, snippet, snippet_norm)
+            precision_bonus = self._lexical_precision_bonus(query_norm, snippet_norm, q_tokens)
 
             if semantic_score > 0:
                 combined = (
@@ -148,9 +149,10 @@ class Reranker:
             else:
                 combined = 0.4 * base_score + 0.5 * lexical_score + 0.1 * asset_bonus
 
-            c['score'] = combined + asset_bonus + intent_bonus + glossary_bonus - toc_penalty
+            c['score'] = combined + asset_bonus + intent_bonus + glossary_bonus + precision_bonus - toc_penalty
             c['_semantic_score'] = round(semantic_score, 4)
             c['_lexical_score'] = round(lexical_score, 4)
+            c['_precision_bonus'] = round(precision_bonus, 4)
 
         ranked = sorted(candidates, key=lambda x: float(x.get('score', 0) or 0), reverse=True)[:top_k]
 
@@ -342,6 +344,95 @@ class Reranker:
     def _normalize_text(self, text: str) -> str:
         normalized = unicodedata.normalize('NFD', (text or '').lower())
         return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+
+    def _tokenize_for_scoring(self, text: str) -> set:
+        """Tokenize text for lexical scoring with Vietnamese compound-word awareness.
+
+        Uses Vietnamese NLP word segmentation when available, falling back
+        to regex word extraction. Compound words are treated as single tokens
+        for more accurate Jaccard similarity.
+        """
+        if not text:
+            return set()
+
+        # Try Vietnamese word segmentation for better compound word matching
+        try:
+            from services.document.vietnamese_nlp import segment_words, get_processor
+            processor = get_processor()
+            if processor.is_vietnamese(text):
+                tokens = segment_words(text)
+                if tokens:
+                    # Normalize and filter
+                    normalized = {
+                        self._normalize_text(token)
+                        for token in tokens
+                        if len(token) >= 2
+                    }
+                    return {t for t in normalized if t}
+        except Exception:
+            pass
+
+        # Fallback: regex word extraction
+        normalized = self._normalize_text(text)
+        return {
+            t.lower() for t in re.findall(r'\w+', normalized)
+            if len(t) >= 2
+        }
+
+    def _lexical_precision_bonus(self, query_norm: str, snippet_norm: str, q_tokens: set) -> float:
+        query_clean = self._clean_for_phrase(query_norm)
+        snippet_clean = self._clean_for_phrase(snippet_norm)
+        if not query_clean or not snippet_clean or not q_tokens:
+            return 0.0
+
+        bonus = 0.0
+        if query_clean in snippet_clean:
+            bonus += 0.45
+
+        query_terms = [
+            token for token in re.findall(r'\w+', query_clean)
+            if len(token) >= 2 and token not in self._generic_terms()
+        ]
+        if query_terms:
+            phrase = ' '.join(query_terms)
+            if phrase and phrase in snippet_clean:
+                bonus += 0.35
+
+            first_lines = ' '.join(
+                line.strip()
+                for line in snippet_clean.splitlines()[:6]
+                if line.strip()
+            ) or snippet_clean[:500]
+            if phrase and phrase in first_lines:
+                bonus += 0.25
+            else:
+                heading_hits = sum(1 for term in query_terms if term in first_lines)
+                if heading_hits >= max(2, int(len(query_terms) * 0.65)):
+                    bonus += 0.18
+
+            grams = []
+            for size in (2, 3, 4):
+                grams.extend(
+                    ' '.join(query_terms[index:index + size])
+                    for index in range(0, max(0, len(query_terms) - size + 1))
+                )
+            grams = [gram for gram in grams if gram]
+            if grams:
+                bonus += 0.25 * (sum(1 for gram in grams if gram in snippet_clean) / len(grams))
+
+        return min(0.8, bonus)
+
+    @staticmethod
+    def _clean_for_phrase(text: str) -> str:
+        text = re.sub(r'[^\w\s]+', ' ', text or '', flags=re.UNICODE)
+        return re.sub(r'\s+', ' ', text).strip()
+
+    @staticmethod
+    def _generic_terms() -> set:
+        return {
+            'cua', 'cac', 'cho', 'theo', 'trong', 'voi', 'va', 'la', 'co',
+            'duoc', 've', 'den', 'tu', 'mot', 'nhung', 'nay', 'do', 'thi',
+        }
 
     # ── TOC penalty ──────────────────────────────────────────
 

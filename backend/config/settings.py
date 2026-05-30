@@ -138,6 +138,9 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
             "hosts": [(REDIS_HOST, int(REDIS_PORT))],
+            "capacity": 200,
+            "expiry": 30,
+            "group_expiry": 60,
         },
     },
 }
@@ -252,8 +255,38 @@ CHUNK_TOKEN_SIZE_TEXT = int(os.environ.get("CHUNK_TOKEN_SIZE_TEXT", "360"))
 CHUNK_TOKEN_OVERLAP_TEXT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TEXT", "72"))
 CHUNK_TOKEN_SIZE_SPREADSHEET = int(os.environ.get("CHUNK_TOKEN_SIZE_SPREADSHEET", "520"))
 CHUNK_TOKEN_OVERLAP_SPREADSHEET = int(os.environ.get("CHUNK_TOKEN_OVERLAP_SPREADSHEET", "80"))
+
+# -- Vietnamese document-type chunk profiles ---------------------------------
+# These override base profiles when document type is auto-detected.
+# Regulations (nghị định, thông tư): larger chunks with high overlap for legal context
+CHUNK_TOKEN_SIZE_REGULATION = int(os.environ.get("CHUNK_TOKEN_SIZE_REGULATION", "480"))
+CHUNK_TOKEN_OVERLAP_REGULATION = int(os.environ.get("CHUNK_TOKEN_OVERLAP_REGULATION", "96"))
+# Contracts (hợp đồng): medium chunks, high overlap for clause linking
+CHUNK_TOKEN_SIZE_CONTRACT = int(os.environ.get("CHUNK_TOKEN_SIZE_CONTRACT", "400"))
+CHUNK_TOKEN_OVERLAP_CONTRACT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_CONTRACT", "100"))
+# Handbooks (sổ tay, hướng dẫn): standard chunks
+CHUNK_TOKEN_SIZE_HANDBOOK = int(os.environ.get("CHUNK_TOKEN_SIZE_HANDBOOK", "360"))
+CHUNK_TOKEN_OVERLAP_HANDBOOK = int(os.environ.get("CHUNK_TOKEN_OVERLAP_HANDBOOK", "72"))
+# Reports (báo cáo): larger chunks for comprehensive context
+CHUNK_TOKEN_SIZE_REPORT = int(os.environ.get("CHUNK_TOKEN_SIZE_REPORT", "500"))
+CHUNK_TOKEN_OVERLAP_REPORT = int(os.environ.get("CHUNK_TOKEN_OVERLAP_REPORT", "80"))
+# Technical docs: smaller chunks for precise retrieval
+CHUNK_TOKEN_SIZE_TECHNICAL = int(os.environ.get("CHUNK_TOKEN_SIZE_TECHNICAL", "280"))
+CHUNK_TOKEN_OVERLAP_TECHNICAL = int(os.environ.get("CHUNK_TOKEN_OVERLAP_TECHNICAL", "56"))
+
 CHUNK_SIZE = CHUNK_TOKEN_SIZE
 CHUNK_OVERLAP = CHUNK_TOKEN_OVERLAP
+
+# -- Chunk Quality Validation ------------------------------------------------
+CHUNK_VALIDATOR_ENABLED = os.environ.get("CHUNK_VALIDATOR_ENABLED", "true").lower() in ["true", "1", "yes"]
+CHUNK_VALIDATOR_MIN_CHARS = int(os.environ.get("CHUNK_VALIDATOR_MIN_CHARS", "50"))
+CHUNK_VALIDATOR_MAX_CHARS = int(os.environ.get("CHUNK_VALIDATOR_MAX_CHARS", "6000"))
+CHUNK_VALIDATOR_MIN_TOKENS = int(os.environ.get("CHUNK_VALIDATOR_MIN_TOKENS", "20"))
+CHUNK_VALIDATOR_MAX_TOKENS = int(os.environ.get("CHUNK_VALIDATOR_MAX_TOKENS", "5000"))
+CHUNK_VALIDATOR_MIN_OVERLAP = float(os.environ.get("CHUNK_VALIDATOR_MIN_OVERLAP", "0.0"))
+CHUNK_VALIDATOR_MAX_OVERLAP = float(os.environ.get("CHUNK_VALIDATOR_MAX_OVERLAP", "0.80"))
+CHUNK_VALIDATOR_DUPE_SIMILARITY = float(os.environ.get("CHUNK_VALIDATOR_DUPE_SIMILARITY", "0.92"))
+
 POSTGRES_FTS_CONFIG = os.environ.get("POSTGRES_FTS_CONFIG", "simple")
 
 # ============================================================
@@ -360,6 +393,7 @@ RAG_RAPTOR_UMAP_COMPONENTS = int(os.environ.get("RAG_RAPTOR_UMAP_COMPONENTS", "5
 RAG_RAPTOR_GMM_MEMBERSHIP_THRESHOLD = float(os.environ.get("RAG_RAPTOR_GMM_MEMBERSHIP_THRESHOLD", "0.10"))
 RAG_RAPTOR_MAX_MEMBERSHIPS_PER_NODE = int(os.environ.get("RAG_RAPTOR_MAX_MEMBERSHIPS_PER_NODE", "3"))
 RAG_RAPTOR_RANDOM_STATE = int(os.environ.get("RAG_RAPTOR_RANDOM_STATE", "42"))
+RAG_RAPTOR_LLM_SUMMARIES = os.environ.get("RAG_RAPTOR_LLM_SUMMARIES", "false").lower() in ["true", "1", "yes"]
 RAG_UPLOAD_FAST_MODE = os.environ.get("RAG_UPLOAD_FAST_MODE", "false").lower() in ["true", "1", "yes"]
 RAG_DEFER_SUMMARY_ON_UPLOAD = os.environ.get("RAG_DEFER_SUMMARY_ON_UPLOAD", "false").lower() in ["true", "1", "yes"]
 RAG_BUILD_RAPTOR_ON_UPLOAD = os.environ.get("RAG_BUILD_RAPTOR_ON_UPLOAD", "true").lower() in ["true", "1", "yes"]

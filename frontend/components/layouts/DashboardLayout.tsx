@@ -6,7 +6,6 @@ import { useLogout } from '@/hooks/useLogout'
 import { useTokenRefresh } from '@/hooks/useTokenRefresh'
 import { usePermissionRefreshHandler } from '@/hooks/usePermissionRefreshHandler'
 import { usePeriodicPermissionCheck } from '@/hooks/usePeriodicPermissionCheck'
-import { useWebSocketPermissions } from '@/hooks/useWebSocketPermissions'
 import { useCacheInvalidationOnAuthChange } from '@/hooks/useCacheInvalidationOnAuthChange'
 import { useRefreshUserPermissions } from '@/hooks/useRefreshUserPermissions'
 import { logger } from '@/services/logger'
@@ -31,9 +30,6 @@ export function DashboardLayout({
 
     // Activate periodic permission check (every 5 minutes)
     usePeriodicPermissionCheck()
-
-    // Activate real-time permission updates via WebSocket
-    useWebSocketPermissions()
 
     // Activate cache invalidation when user changes (account switching)
     useCacheInvalidationOnAuthChange()

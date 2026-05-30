@@ -33,19 +33,18 @@ class DocumentIngestPipeline:
         if include_assets is None:
             include_assets = getattr(settings, 'ASSET_PROCESS_INLINE_ON_UPLOAD', False)
 
+        # Core pipeline: validation -> parsing -> chunking -> summarization -> persistence
         self.stages = [
             ValidationStage(name="validation"),
             ParsingStage(name="parsing"),
             ChunkingStage(name="chunking"),
-        ]
-
-        if include_assets:
-            self.stages.append(AssetPipelineStage(name="asset_extraction"))
-
-        self.stages.extend([
             SummarizationStage(name="summarization"),
             PersistenceStage(name="persistence"),
-        ])
+        ]
+
+        # Optionally run asset/image extraction as the final stage (moved to the end)
+        if include_assets:
+            self.stages.append(AssetPipelineStage(name="asset_extraction"))
         self.orchestrator = PipelineOrchestrator(self.stages)
         self.logger = logging.getLogger("pipeline.document_ingest")
         self.include_assets = include_assets

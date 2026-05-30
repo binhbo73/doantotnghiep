@@ -55,7 +55,7 @@ class ChatService:
     """
 
     # Universal RAG prompt: strict grounding, complete extraction when asked, compact otherwise.
-    RAG_SYSTEM_PROMPT = """Bạn là trợ lý RAG. Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp.
+    RAG_SYSTEM_PROMPT = """Bạn là trợ lý RAG. Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp.Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp hoặc tài liệu thuộc phạm vi của người.
 
 Nguyên tắc bắt buộc:
 1. Chỉ dùng "NỘI DUNG TÀI LIỆU THAM KHẢO" để trả lời. Không dùng kiến thức bên ngoài, không suy đoán.
@@ -132,9 +132,72 @@ Cách làm việc:
             ch for ch in normalized
             if unicodedata.category(ch) != 'Mn'
         )
-        without_marks = without_marks.replace('đ', 'd').replace('Đ', 'd')
+        without_marks = (
+            without_marks
+            .replace('đ', 'd').replace('Đ', 'D')
+            .replace('Ä‘', 'd').replace('Ä', 'd')
+        )
         without_punctuation = re.sub(r'[^\w\s]+', ' ', without_marks.lower())
         return re.sub(r'\s+', ' ', without_punctuation).strip()
+
+    def _extract_attribute_section_request(self, query: str) -> Dict[str, str]:
+        """Detect generic "attribute of subject" section requests.
+
+        Examples: "chuc nang nhiem vu cua phong X", "quyen han cua ban Y".
+        The subject is used as the anchor; the attribute terms help classify the
+        query as a section/list request without hardcoding a specific document.
+        """
+        query_norm = self._normalize_query_text(query)
+        if not query_norm:
+            return {}
+
+        attribute_pattern = (
+            r'\b(chuc nang|nhiem vu|quyen han|trach nhiem|vai tro|'
+            r'chuc trach|nhiem quyen|moi quan he)\b'
+        )
+        if not re.search(attribute_pattern, query_norm):
+            return {}
+
+        subject = ''
+        attribute_matches = list(re.finditer(attribute_pattern, query_norm))
+        first_attribute = attribute_matches[0] if attribute_matches else None
+        if first_attribute:
+            # Prefer a relation that appears after the requested attribute.
+            # In "cho toi noi dung cua Chuc nang, nhiem vu cua phong X",
+            # the first "cho" is only the command prefix, not the subject.
+            tail = query_norm[first_attribute.end():]
+            relation_match = re.search(r'\b(?:cua|cho|ve)\s+(.+)$', tail)
+            if relation_match:
+                subject = relation_match.group(1)
+
+        if not subject:
+            relation_matches = list(re.finditer(r'\b(?:cua|cho|ve)\s+(.+)$', query_norm))
+            if relation_matches:
+                subject = relation_matches[-1].group(1)
+
+        if not subject:
+            subject_match = re.search(
+                rf'(.+?)\s+(?:co\s+|gom\s+|bao\s+gom\s+)?{attribute_pattern}',
+                query_norm,
+            )
+            if subject_match:
+                subject = subject_match.group(1)
+
+        subject = re.sub(
+            r'\b(toi|minh|hay|cho|biet|cho toi biet|muon|can|xem|lay|trich|'
+            r'noi dung|la gi|nhu the nao|gom|bao gom|gom nhung gi|'
+            r'nhung gi|gi|nao|cac|nhung|cua|ve)\b',
+            ' ',
+            subject,
+        )
+        subject = re.sub(attribute_pattern, ' ', subject)
+        subject = re.sub(r'\s+', ' ', subject).strip(' .:-')
+        if len(subject) < 4:
+            return {}
+
+        attributes = ' '.join(dict.fromkeys(re.findall(attribute_pattern, query_norm)))
+        heading = re.sub(r'\s+', ' ', f"{attributes} {subject}").strip()
+        return {'subject': subject, 'attributes': attributes, 'heading': heading}
 
     def _extract_requested_heading(self, query: str) -> str:
         """Extract a likely section heading from queries asking for full section content."""
@@ -152,6 +215,10 @@ Cách làm việc:
             )
             heading = re.sub(r'\s+', ' ', heading).strip(' .:-')
             return heading if len(heading) >= 8 else ''
+
+        attribute_request = self._extract_attribute_section_request(query)
+        if attribute_request.get('subject'):
+            return attribute_request.get('heading') or attribute_request['subject']
 
         if not any(marker in query_norm for marker in ('noi dung', 'toan bo', 'day du', 'muc', 'phan', 'bang', 'danh sach', 'xem', 'lay', 'trich', 'section', 'chuong')):
             return ''
@@ -408,6 +475,10 @@ Cách làm việc:
             match = re.search(pattern, text_norm)
             if match:
                 result = text[original_positions[match.start()]:]
+            else:
+                fuzzy_start = self._find_fuzzy_heading_original_start(text, heading_norm)
+                if fuzzy_start is not None:
+                    result = text[fuzzy_start:]
 
         stop_patterns = [
             r'\n\s*TÀI LIỆU THAM KHẢO\b',
@@ -428,14 +499,247 @@ Cách làm việc:
                 break
         return result.strip()
 
+    def _heading_terms(self, heading_norm: str) -> Tuple[set, set, set]:
+        """Return important, attribute, and subject terms for fuzzy section matching."""
+        tokens = [
+            token for token in re.findall(r'\w+', heading_norm or '')
+            if len(token) >= 3
+        ]
+        attribute_terms = {
+            'chuc', 'nang', 'nhiem', 'quyen', 'han', 'trach',
+            'vai', 'tro', 'chuc', 'trach',
+        }
+        stop_terms = {
+            'noi', 'dung', 'cua', 'cho', 've', 'cac', 'nhung',
+            'xem', 'lay', 'trich', 'toi', 'minh',
+        }
+        important = {token for token in tokens if token not in stop_terms}
+        attrs = {token for token in important if token in attribute_terms or token == 'vu'}
+        subject = important - attrs
+        return important, attrs, subject
+
+    def _fuzzy_heading_line_score(self, line_norm: str, heading_norm: str) -> int:
+        """Score attribute-style headings when exact substring matching is too brittle."""
+        important, attrs, subject = self._heading_terms(heading_norm)
+        if len(important) < 4 or not attrs or len(subject) < 2:
+            return 0
+
+        line_terms = set(re.findall(r'\w+', line_norm or ''))
+        attr_hits = len(attrs & line_terms)
+        subject_hits = len(subject & line_terms)
+        has_attribute_phrase = any(
+            phrase in line_norm
+            for phrase in ('chuc nang', 'nhiem vu', 'quyen han', 'trach nhiem', 'vai tro')
+        )
+        if attr_hits < 2 and not has_attribute_phrase:
+            return 0
+        if subject_hits < min(2, len(subject)):
+            return 0
+
+        score = (attr_hits * 3) + (subject_hits * 2)
+        if re.match(r'^\s*(?:dieu|article)\s+\d+', line_norm) or re.match(r'^\s*\d+(?:\.\d+)*\.?\s+', line_norm):
+            score += 6
+        first_attr_positions = [
+            pos for pos in (
+                line_norm.find('chuc nang'),
+                line_norm.find('nhiem vu'),
+                line_norm.find('quyen han'),
+                line_norm.find('trach nhiem'),
+                line_norm.find('vai tro'),
+            )
+            if pos >= 0
+        ]
+        if first_attr_positions:
+            attr_pos = min(first_attr_positions)
+            if attr_pos <= 40:
+                score += 5
+            elif attr_pos <= 100:
+                score += 2
+        if 'truong phong' in line_norm:
+            score -= 4
+        if 'thuc hien cac chuc nang nhiem vu theo su phan cong' in line_norm:
+            score -= 5
+        return max(0, score)
+
+    def _find_fuzzy_heading_original_start(self, text: str, heading_norm: str) -> Optional[int]:
+        """Find the original offset of a fuzzy-matched heading line."""
+        best: Optional[Tuple[int, int]] = None
+        offset = 0
+        for raw_line in (text or '').splitlines(keepends=True):
+            line_norm = self._normalize_query_text(raw_line)
+            score = self._fuzzy_heading_line_score(line_norm, heading_norm)
+            if score and (best is None or score > best[0]):
+                best = (score, offset)
+            offset += len(raw_line)
+        if best and best[0] >= 12:
+            return best[1]
+        return None
+
+    def _subject_terms(self, subject: str) -> set:
+        """Extract meaningful subject terms from a normalized section subject."""
+        stop_terms = {
+            'va', 'cua', 've', 'cho', 'cac', 'nhung', 'noi', 'dung',
+            'muc', 'phan', 'chuong', 'dieu', 'section', 'article',
+        }
+        return {
+            token for token in re.findall(r'\w+', subject or '')
+            if len(token) >= 2 and token not in stop_terms
+        }
+
+    def _subject_match_score(self, text_norm: str, subject_terms: set) -> int:
+        """Score how well normalized text matches a requested subject."""
+        if not text_norm or not subject_terms:
+            return 0
+        text_terms = set(re.findall(r'\w+', text_norm))
+        hits = len(subject_terms & text_terms)
+        required = max(1, min(len(subject_terms), (len(subject_terms) * 2 + 2) // 3))
+        if hits < required:
+            return 0
+        return hits * 3
+
+    def _attribute_terms(self, attributes: str) -> set:
+        """Extract terms that describe the requested attribute/section type."""
+        return {
+            token for token in re.findall(r'\w+', attributes or '')
+            if len(token) >= 2
+        }
+
+    def _segment_starts_like_heading(self, segment_norm: str) -> bool:
+        """Detect generic section-like starts without assuming document domain."""
+        return bool(
+            re.match(r'^\s*(?:dieu|article|section|muc|phan|chuong|chapter)\s+\d+', segment_norm or '')
+            or re.match(r'^\s*\d+(?:\.\d+)*[.)]?\s+\S+', segment_norm or '')
+        )
+
+    def _looks_like_short_heading(self, segment: str, segment_norm: str) -> bool:
+        """Generic short heading detector for OCR/PDF text."""
+        clean = re.sub(r'\s+', ' ', segment or '').strip()
+        if not clean:
+            return False
+        if self._segment_starts_like_heading(segment_norm):
+            return True
+        if len(clean) > 140:
+            return False
+        if clean.endswith(('.', ';', ',')):
+            return False
+        letters = [ch for ch in clean if ch.isalpha()]
+        uppercase_ratio = (
+            sum(1 for ch in letters if ch.upper() == ch and ch.lower() != ch) / max(1, len(letters))
+            if letters else 0.0
+        )
+        return uppercase_ratio >= 0.65 or clean.istitle()
+
+    def _attribute_heading_line_score(
+        self,
+        segment: str,
+        line_norm: str,
+        attribute_terms: set,
+        subject_terms: set,
+        subject_anchor_score: int = 0,
+    ) -> int:
+        """Score a generic heading/section candidate for the requested attribute."""
+        if not line_norm:
+            return 0
+        line_terms = set(re.findall(r'\w+', line_norm))
+        attr_hits = len(attribute_terms & line_terms)
+        if attribute_terms and attr_hits < max(1, min(len(attribute_terms), 2)):
+            return 0
+
+        heading_like = self._looks_like_short_heading(segment, line_norm)
+        if not heading_like:
+            return 0
+        if re.search(r'\bthuc hien\s+(?:cac\s+)?(?:chuc nang|nhiem vu|quyen han|trach nhiem)\b', line_norm):
+            return 0
+        if re.search(r'\btheo su phan cong\b', line_norm):
+            return 0
+
+        subject_score = self._subject_match_score(line_norm, subject_terms)
+        if not subject_score and not subject_anchor_score:
+            return 0
+
+        score = attr_hits * 5 + subject_score + min(12, subject_anchor_score)
+        if self._segment_starts_like_heading(line_norm):
+            score += 10
+        if subject_score:
+            score += 4
+        return max(0, score)
+
+    def _subject_anchor_line_score(self, segment: str, segment_norm: str, subject_terms: set) -> int:
+        """Score generic headings that introduce the requested subject."""
+        subject_score = self._subject_match_score(segment_norm, subject_terms)
+        if not subject_score:
+            return 0
+        if not self._looks_like_short_heading(segment, segment_norm):
+            return 0
+        heading_bonus = 6 if self._segment_starts_like_heading(segment_norm) else 3
+        return subject_score + heading_bonus
+
+    def _find_attribute_heading_in_row(
+        self,
+        row_text: str,
+        attribute_terms: set,
+        subject_terms: set,
+        subject_anchor_score: int = 0,
+    ) -> Tuple[int, int, str]:
+        """Return best attribute heading line as (score, offset, line)."""
+        best = (0, 0, '')
+        offset = 0
+        for raw_line in (row_text or '').splitlines(keepends=True):
+            segments = re.split(
+                r'(?=\b(?:Điều|Article)\s+\d+(?:\.\d+)*\.?\s+|\b\d+(?:\.\d+)*[.)]\s+)',
+                raw_line,
+                flags=re.IGNORECASE,
+            )
+            segment_offset = 0
+            for segment in segments:
+                if not segment:
+                    continue
+                line_norm = self._normalize_query_text(segment)
+                score = self._attribute_heading_line_score(
+                    segment,
+                    line_norm,
+                    attribute_terms,
+                    subject_terms,
+                    subject_anchor_score=subject_anchor_score,
+                )
+                if score > best[0]:
+                    best = (score, offset + segment_offset, segment)
+                segment_offset += len(segment)
+            offset += len(raw_line)
+        return best
+
     def _starts_new_numbered_section(self, text: str) -> bool:
         """Detect the next section heading when collecting contiguous chunks."""
         return bool(re.match(r'^\s*\d+(?:\.\d+)*\.\s+\S+', text or ''))
 
     def _first_numbered_section_id(self, text: str) -> str:
-        """Return the leading section number from a chunk, e.g. '3' or '3.1'."""
-        match = re.match(r'^\s*(\d+(?:\.\d+)*)\.\s+\S+', text or '')
-        return match.group(1) if match else ''
+        """Return the first section number from a chunk, e.g. '3', '3.1', or 'Dieu 29'."""
+        for raw_line in (text or '').splitlines():
+            raw_line = raw_line or ''
+            raw_stripped = raw_line.strip()
+            if not raw_stripped:
+                continue
+
+            numbered_match = re.match(r'^\s*(\d+(?:\.\d+)*)[.)]\s+\S+', raw_line)
+            if numbered_match:
+                return numbered_match.group(1)
+
+            line_norm = unicodedata.normalize('NFD', raw_line.lower())
+            line_norm = ''.join(
+                ch for ch in line_norm
+                if unicodedata.category(ch) != 'Mn'
+            )
+            line_norm = (
+                line_norm
+                .replace('đ', 'd').replace('Đ', 'D')
+                .replace('Ä‘', 'd').replace('Ä', 'd')
+            )
+            line_norm = re.sub(r'\s+', ' ', line_norm).strip()
+
+            article_match = re.match(r'^(?:dieu|article)\s+(\d+(?:\.\d+)*)\b', line_norm)
+            if article_match:
+                return article_match.group(1)
+        return ''
 
     def _is_child_section_id(self, current_id: str, candidate_id: str) -> bool:
         """True if candidate section belongs under current section."""
@@ -470,6 +774,8 @@ Cách làm việc:
         for raw_line in (text or '').splitlines():
             line_norm = self._normalize_query_text(raw_line)
             if not line_norm or heading_norm not in line_norm:
+                if self._fuzzy_heading_line_score(line_norm, heading_norm) >= 12:
+                    return True
                 continue
             prefix = line_norm.split(heading_norm, 1)[0].strip()
             suffix = line_norm.split(heading_norm, 1)[1].strip()
@@ -483,14 +789,23 @@ Cách làm việc:
 
     def _heading_section_id(self, text: str, heading_norm: str) -> str:
         """Return section number for the heading line that matched heading_norm."""
-        for raw_line in (text or '').splitlines():
+        lines = (text or '').splitlines()
+        for raw_line in lines:
             line_norm = self._normalize_query_text(raw_line)
-            if not line_norm or heading_norm not in line_norm:
+            fuzzy_match = bool(line_norm and self._fuzzy_heading_line_score(line_norm, heading_norm) >= 12)
+            if not line_norm or (heading_norm not in line_norm and not fuzzy_match):
                 continue
-            prefix = line_norm.split(heading_norm, 1)[0].strip()
-            match = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(?:cac|nhung|phan)?$', prefix)
-            if match:
-                return match.group(1)
+            if heading_norm in line_norm:
+                prefix = line_norm.split(heading_norm, 1)[0].strip()
+                match = re.match(r'^(\d+(?:\.\d+)*)\.?\s*(?:cac|nhung|phan)?$', prefix)
+                if match:
+                    return match.group(1)
+            local_section = self._first_numbered_section_id(raw_line)
+            if local_section:
+                return local_section
+
+        if heading_norm and heading_norm in self._normalize_query_text(text or ''):
+            return self._first_numbered_section_id(text)
         return ''
 
     def _looks_like_toc_chunk(self, row: Dict[str, Any]) -> bool:
@@ -520,7 +835,10 @@ Cách làm việc:
         matches = [
             idx
             for idx, row in enumerate(rows)
-            if heading_norm in self._normalize_query_text(row.get('content') or '')
+            if (
+                heading_norm in self._normalize_query_text(row.get('content') or '')
+                or self._fuzzy_heading_line_score(self._normalize_query_text(row.get('content') or ''), heading_norm) >= 12
+            )
         ]
         if not matches:
             return None
@@ -538,6 +856,15 @@ Cách làm việc:
 
             if self._has_heading_line(text, heading_norm):
                 score += 4
+
+            fuzzy_score = 0
+            for raw_line in (text or '').splitlines():
+                fuzzy_score = max(
+                    fuzzy_score,
+                    self._fuzzy_heading_line_score(self._normalize_query_text(raw_line), heading_norm),
+                )
+            if fuzzy_score:
+                score += min(10, fuzzy_score)
 
             heading_pos = text_norm.find(heading_norm)
             heading_tail = text_norm[heading_pos + len(heading_norm):] if heading_pos >= 0 else ''
@@ -649,6 +976,156 @@ Cách làm việc:
             return candidates
         except Exception as e:
             logger.warning(f"[_retrieve_exact_heading_section_candidates] failed: {e}")
+            return []
+
+    def _retrieve_attribute_section_candidates(
+        self,
+        query: str,
+        resolved_doc_ids: List[str],
+        max_chunks: int = 6,
+    ) -> List[Dict[str, Any]]:
+        """Fetch a requested attribute section using subject/heading structure."""
+        attribute_request = self._extract_attribute_section_request(query)
+        subject = attribute_request.get('subject') or ''
+        attributes = attribute_request.get('attributes') or ''
+        subject_terms = self._subject_terms(subject)
+        attribute_terms = self._attribute_terms(attributes)
+        if not subject_terms or not attribute_terms or not resolved_doc_ids:
+            return []
+
+        try:
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            rows = list(
+                DocumentChunk.objects.filter(
+                    document_id__in=resolved_doc_ids,
+                    node_type='detail',
+                    is_deleted=False,
+                )
+                .order_by('document_id', 'chunk_index')
+                .values('id', 'document_id', 'content', 'page_number', 'chunk_index', 'metadata')
+            )
+
+            direct_matches: List[Tuple[int, int, int, str]] = []
+            subject_anchors: List[Tuple[int, int]] = []
+            for idx, row in enumerate(rows):
+                row_text = row.get('content') or ''
+                score, offset, line = self._find_attribute_heading_in_row(
+                    row_text,
+                    attribute_terms,
+                    subject_terms,
+                )
+                if score:
+                    direct_matches.append((score, idx, offset, line))
+
+                offset_cursor = 0
+                for raw_line in row_text.splitlines(keepends=True):
+                    segments = re.split(
+                        r'(?=\b(?:Điều|Article|Section|Mục|Phần|Chương|Chapter)\s+\d+(?:\.\d+)*\.?\s+|\b\d+(?:\.\d+)*[.)]\s+)',
+                        raw_line,
+                        flags=re.IGNORECASE,
+                    )
+                    segment_offset = 0
+                    for segment in segments:
+                        if segment:
+                            segment_norm = self._normalize_query_text(segment)
+                            anchor_score = self._subject_anchor_line_score(
+                                segment,
+                                segment_norm,
+                                subject_terms,
+                            )
+                            if anchor_score:
+                                subject_anchors.append((anchor_score, idx))
+                        segment_offset += len(segment)
+                    offset_cursor += len(raw_line)
+
+                heading_path = (row.get('metadata') or {}).get('heading_path') or []
+                if heading_path:
+                    heading_text = (
+                        ' '.join(str(item) for item in heading_path if item)
+                        if isinstance(heading_path, (list, tuple))
+                        else str(heading_path)
+                    )
+                    heading_norm = self._normalize_query_text(heading_text)
+                    anchor_score = self._subject_match_score(heading_norm, subject_terms)
+                    if anchor_score:
+                        subject_anchors.append((anchor_score + 4, idx))
+
+            best_match: Optional[Tuple[int, int, int, str]] = None
+            if direct_matches:
+                direct_matches.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+                best_match = direct_matches[0]
+
+            for subject_score, anchor_idx in subject_anchors:
+                scan_end = min(len(rows), anchor_idx + max(max_chunks * 2, 10))
+                for idx in range(anchor_idx, scan_end):
+                    row_text = rows[idx].get('content') or ''
+                    score, offset, line = self._find_attribute_heading_in_row(
+                        row_text,
+                        attribute_terms,
+                        subject_terms,
+                        subject_anchor_score=subject_score,
+                    )
+                    if not score:
+                        continue
+                    distance_penalty = max(0, idx - anchor_idx)
+                    total_score = score + min(8, subject_score) - distance_penalty
+                    if best_match is None or total_score > best_match[0]:
+                        best_match = (total_score, idx, offset, line)
+
+            if best_match:
+                # Prefer direct headings with both subject and attribute when
+                # their score is close to anchor-derived matches.
+                strong_direct = [
+                    item for item in direct_matches
+                    if self._subject_match_score(
+                        self._normalize_query_text(item[3]),
+                        subject_terms,
+                    )
+                ]
+                if strong_direct:
+                    strong_direct.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+                    if strong_direct[0][0] >= best_match[0] - 5:
+                        best_match = strong_direct[0]
+
+            if not best_match:
+                return []
+
+            _score, start_pos, start_offset, heading_line = best_match
+            start_row = rows[start_pos]
+            start_text = start_row.get('content') or ''
+            current_section_id = (
+                self._first_numbered_section_id(heading_line)
+                or self._first_numbered_section_id(start_text[start_offset:])
+            )
+            candidates = []
+            for offset, row in enumerate(rows[start_pos:start_pos + max_chunks]):
+                row_text = row.get('content') or ''
+                if offset > 0 and current_section_id:
+                    if self._starts_new_outside_section(row_text, current_section_id):
+                        break
+
+                snippet = row_text[start_offset:] if offset == 0 else row_text
+                snippet = self._trim_to_section_scope(snippet, current_section_id)
+                if not snippet:
+                    continue
+                candidates.append({
+                    'chunk_id': str(row['id']),
+                    'document_id': str(row['document_id']),
+                    'score': 2.0 - (offset * 0.03),
+                    'source': 'attribute_section',
+                    'snippet': snippet,
+                    'page': row.get('page_number'),
+                    'chunk_index': row.get('chunk_index'),
+                    'metadata': row.get('metadata') or {},
+                    '_attribute_subject': subject,
+                    '_attribute_heading': self._normalize_query_text(heading_line),
+                })
+                if offset > 0 and len(snippet) < len(row_text):
+                    break
+
+            return candidates
+        except Exception as e:
+            logger.warning(f"[_retrieve_attribute_section_candidates] failed: {e}")
             return []
 
     def _retrieve_exact_table_candidates(
@@ -1450,6 +1927,25 @@ Cách làm việc:
         )
         return f"{(answer_text or '').rstrip()}{warning}"
 
+    def _ensure_visible_citation_marker(
+        self,
+        answer_text: str,
+        citations: List[Dict[str, Any]],
+    ) -> str:
+        """Ensure the UI has at least one inline marker to attach a citation popup."""
+        if not citations or self._extract_referenced_citation_numbers(answer_text):
+            return answer_text
+
+        first_citation = next(
+            (citation for citation in citations if not any(str(key).startswith('_') for key in citation.keys())),
+            None,
+        )
+        if not first_citation:
+            return answer_text
+
+        number = first_citation.get('number') or 1
+        return f"{(answer_text or '').rstrip()} [{number}]"
+
     def _finalize_rag_answer(
         self,
         query: str,
@@ -1478,6 +1974,7 @@ Cách làm việc:
                 grounding = self._verify_answer_grounding_v2(final_answer, candidates)
 
         citations = self._build_citation_payload(candidates, final_answer, query)
+        final_answer = self._ensure_visible_citation_marker(final_answer, citations)
         grounding['revised'] = revised
         final_answer = self._append_grounding_warning(final_answer, grounding)
         citations.append({'_grounding': grounding})
@@ -1498,6 +1995,8 @@ Cách làm việc:
             r'\b(day du|chi tiet|tat ca|toan bo)\b',
             r'\b(la gi|nhu the nao)\b',
             r'\b(dac diem|dac trung|thanh phan|noi dung|nguyen tac|yeu cau)\b',
+            r'\b(chuc nang|nhiem vu|quyen han|trach nhiem|vai tro|chuc trach)\b.*\b(cua|cho|ve)\b',
+            r'\b(cua|cho|ve)\b.*\b(chuc nang|nhiem vu|quyen han|trach nhiem|vai tro|chuc trach)\b',
             r'^\s*\d+\s*[/.)-]\s*',
         ]
         return any(re.search(pattern, q) for pattern in comprehensive_patterns)
@@ -1507,6 +2006,8 @@ Cách làm việc:
         q = self._normalize_query_text(query)
         if not q:
             return False
+        if self._extract_attribute_section_request(query).get('subject'):
+            return True
         if not self._extract_requested_heading(query):
             return False
         section_markers = (
@@ -2418,18 +2919,14 @@ Cách làm việc:
             except Exception as e:
                 logger.warning(f"[_resolve_document_ids] Lỗi đọc DB attachments: {e}")
         
-        # FINAL FALLBACK: Nếu vẫn không có IDs nào (không truyền từ request, không có trong DB)
-        # -> Tự động tìm kiếm trong toàn bộ tài liệu và folder mà user có quyền truy cập.
-        # Default no-selection scope: use all accessible system attachments.
-        # This includes directly accessible documents and documents inside
-        # accessible folders, matching both tabs in the system attachment picker.
-        if not final_ids and user_id:
+        # FINAL FALLBACK: if nothing is explicitly attached, use accessible
+        # system documents/folders so document chat still produces real
+        # citations instead of falling back to plain LLM output.
+        if not final_ids and user_id and getattr(settings, 'AUTO_USE_ACCESSIBLE_ATTACHMENTS', True):
             logger.info(
                 f"[_resolve_document_ids] No explicit attachments, fetching accessible documents/folders for user {user_id}"
             )
             try:
-                # Sử dụng đúng logic mà giao diện "Đính kèm từ hệ thống" đang dùng.
-                # Bao gồm cả tài liệu trực tiếp và tài liệu nằm trong folder user được phép truy cập.
                 attachments = self.chat_attachment_service.get_accessible_attachments(user_id)
 
                 accessible_doc_ids = [
@@ -2478,6 +2975,8 @@ Cách làm việc:
         self,
         query: str,
         resolved_doc_ids: List[str],
+        explicit_doc_ids: List[str] = None,
+        folder_ids: List[str] = None,
         conversation_history: List[Dict[str, Any]] = None,
         top_k: int = 4,  # Fix E: Giam tu 5 -> 4 de nhanh hon, it noise hon
         snippet_chars: int = 900,
@@ -2504,8 +3003,15 @@ Cách làm việc:
         try:
             t_route_start = time.monotonic()
             exact_table_candidates = self._retrieve_exact_table_candidates(query, resolved_doc_ids)
-            exact_heading_candidates: List[Dict[str, Any]] = []
+            attribute_section_candidates: List[Dict[str, Any]] = []
             if not exact_table_candidates:
+                attribute_section_candidates = self._retrieve_attribute_section_candidates(
+                    query,
+                    resolved_doc_ids,
+                    max_chunks=int(getattr(settings, 'RAG_ATTRIBUTE_SECTION_MAX_CHUNKS', 16)),
+                )
+            exact_heading_candidates: List[Dict[str, Any]] = []
+            if not exact_table_candidates and not attribute_section_candidates:
                 exact_heading_candidates = self._retrieve_exact_heading_section_candidates(
                     query,
                     resolved_doc_ids,
@@ -2517,6 +3023,13 @@ Cách làm việc:
                     int(getattr(settings, 'RAG_EXACT_TABLE_SNIPPET_CHARS', 5000)),
                 )
                 candidates = exact_table_candidates
+                t_route_done = (time.monotonic() - t_route_start) * 1000
+            elif attribute_section_candidates:
+                snippet_chars = max(
+                    snippet_chars,
+                    int(getattr(settings, 'RAG_ATTRIBUTE_SECTION_SNIPPET_CHARS', 5000)),
+                )
+                candidates = attribute_section_candidates
                 t_route_done = (time.monotonic() - t_route_start) * 1000
             elif exact_heading_candidates:
                 snippet_chars = max(
@@ -2530,7 +3043,12 @@ Cách làm việc:
                 router = self._get_router()
 
                 # Truyền document_ids vào user_context để HybridRetriever / RAPTOR biết giới hạn
-                user_context = {'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'}
+                user_context = {
+                    'document_ids': resolved_doc_ids,
+                    'explicit_document_ids': explicit_doc_ids or [],
+                    'folder_ids': folder_ids or [],
+                    'rag_mode': rag_mode or 'fast',
+                }
                 if current_page:
                     user_context['current_page'] = current_page
 
@@ -2563,6 +3081,8 @@ Cách làm việc:
             chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
             if exact_table_candidates:
                 chunk_candidates_ctx = exact_table_candidates
+            elif attribute_section_candidates:
+                chunk_candidates_ctx = attribute_section_candidates
             elif exact_heading_candidates:
                 chunk_candidates_ctx = exact_heading_candidates
             elif not is_spreadsheet_retrieval:
@@ -2572,8 +3092,8 @@ Cách làm việc:
             if not is_spreadsheet_retrieval:
                 candidates = self._stitch_sequential_chunks(candidates)
             # Self-RAG: relevance check, re-retrieve if too few relevant
-            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_table_candidates or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
-            if not exact_table_candidates and not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
+            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_table_candidates or attribute_section_candidates or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
+            if not exact_table_candidates and not attribute_section_candidates and not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
                 logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
                 try:
                     router = self._get_router()
@@ -2646,6 +3166,13 @@ Cách làm việc:
                     page_info = f"Trang: {page}\n" if page else ""
                     line_info = f"Dong: {line_start}-{line_end}\n" if line_start and line_end and line_end != line_start else (f"Dong: {line_start}\n" if line_start else "")
                     chunk_info = f"Doan/Chunk: {chunk_index}\n" if chunk_index is not None else ""
+                    heading_path = metadata.get('heading_path') or []
+                    heading_info = ""
+                    if heading_path:
+                        if isinstance(heading_path, (list, tuple)):
+                            heading_info = f"Muc: {' > '.join(str(h) for h in heading_path if h)}\n"
+                        else:
+                            heading_info = f"Muc: {heading_path}\n"
                     source_label = self._build_source_label(
                         title=doc_name,
                         page=page,
@@ -2657,6 +3184,7 @@ Cách làm việc:
                         f"--- NGUON [{i}] ---\n"
                         f"Tai lieu: {doc_name}\n"
                         f"{page_info}"
+                        f"{heading_info}"
                         f"{line_info}"
                         f"{chunk_info}"
                         f"Cach trich dan bat buoc: {source_label}\n"
@@ -2810,6 +3338,8 @@ Cách làm việc:
             context_str, rag_candidates = self._retrieve_context(
                 query=query,
                 resolved_doc_ids=resolved_ids,
+                explicit_doc_ids=(filters or {}).get('document_ids') or [],
+                folder_ids=(filters or {}).get('folder_ids') or [],
                 conversation_history=messages_for_llm,
                 top_k=self._get_rag_top_k(query, default_top_k=3),
                 snippet_chars=self._get_context_snippet_chars(query),
@@ -2964,6 +3494,8 @@ Cách làm việc:
                 context_str, rag_candidates = self._retrieve_context(
                     query=query,
                     resolved_doc_ids=resolved_ids,
+                    explicit_doc_ids=document_ids or [],
+                    folder_ids=folder_ids or [],
                     conversation_history=messages_for_llm,
                     top_k=self._get_rag_top_k(query, default_top_k=4),
                     snippet_chars=self._get_context_snippet_chars(query),

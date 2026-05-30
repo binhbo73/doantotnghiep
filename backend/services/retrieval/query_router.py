@@ -62,11 +62,32 @@ class QueryRouter:
 
         # Lấy danh sách document IDs để filter (ưu tiên 'document_ids' list)
         document_ids: List[str] = []
+        explicit_document_ids: List[str] = []
+        folder_ids: List[str] = []
         if user_context:
             if user_context.get('document_ids'):
                 document_ids = [str(d) for d in user_context['document_ids'] if d]
+            if user_context.get('explicit_document_ids'):
+                explicit_document_ids = [str(d) for d in user_context['explicit_document_ids'] if d]
+            if user_context.get('folder_ids'):
+                folder_ids = [str(d) for d in user_context['folder_ids'] if d]
             elif user_context.get('document_id'):
                 document_ids = [str(user_context['document_id'])]
+
+        qdrant_filter: Dict[str, Any] = {'node_type': 'detail'}
+        if explicit_document_ids:
+            qdrant_filter['document_id'] = explicit_document_ids
+        elif folder_ids:
+            qdrant_filter['folder_id'] = folder_ids
+
+        page_numbers = (user_context or {}).get('page_numbers') or []
+        if not page_numbers and (user_context or {}).get('current_page') is not None:
+            page_numbers = [user_context.get('current_page')]
+        if len(page_numbers) == 1:
+            try:
+                qdrant_filter['page_number'] = [int(page_numbers[0])]
+            except (TypeError, ValueError):
+                pass
 
         spreadsheet_intents = {
             QueryIntent.SPREADSHEET_CELL,
@@ -195,6 +216,11 @@ class QueryRouter:
                 logger.debug(f"[PAGE_HINT] Invalid current_page in user_context: {current_page!r}")
         if page_hints['has_page_ref']:
             logger.debug(f"[PAGE_HINT] Found page refs: {page_hints}")
+            if len(page_hints.get('page_numbers') or []) == 1:
+                try:
+                    qdrant_filter['page_number'] = [int(page_hints['page_numbers'][0])]
+                except (TypeError, ValueError):
+                    pass
             # Boost top_k to reach deep pages
             effective_top_k = max(effective_top_k, 15)
             effective_sparse_k = max(effective_sparse_k, 30)
@@ -228,6 +254,7 @@ class QueryRouter:
                     top_k=effective_top_k,
                     sparse_k=effective_sparse_k,
                     document_ids=document_ids,
+                    qdrant_filter=qdrant_filter,
                     dense_weight=intent_config.dense_weight,
                 )
                 for variant in retrieval_variants[:2]
@@ -240,6 +267,7 @@ class QueryRouter:
                         top_k=effective_top_k,
                         sparse_k=0,
                         document_ids=document_ids,
+                        qdrant_filter=qdrant_filter,
                         dense_weight=1.0,
                     )
                     candidate_lists.append(hyde_results)
@@ -255,6 +283,7 @@ class QueryRouter:
                             top_k=max(3, effective_top_k // 2),
                             sparse_k=effective_sparse_k,
                             document_ids=document_ids,
+                            qdrant_filter=qdrant_filter,
                             dense_weight=intent_config.dense_weight,
                         )
                         candidate_lists.append(sq_results)
@@ -320,6 +349,7 @@ class QueryRouter:
                         top_k=effective_top_k,
                         sparse_k=effective_sparse_k,
                         document_ids=document_ids,
+                        qdrant_filter=qdrant_filter,
                         dense_weight=intent_config.dense_weight,
                     )
                     for variant in retrieval_variants[:2]
@@ -332,6 +362,7 @@ class QueryRouter:
                             top_k=effective_top_k,
                             sparse_k=0,
                             document_ids=document_ids,
+                            qdrant_filter=qdrant_filter,
                             dense_weight=1.0,
                         )
                         candidate_lists.append(hyde_results)
@@ -345,6 +376,7 @@ class QueryRouter:
                                 top_k=max(3, effective_top_k // 2),
                                 sparse_k=effective_sparse_k,
                                 document_ids=document_ids,
+                                qdrant_filter=qdrant_filter,
                                 dense_weight=intent_config.dense_weight,
                             )
                             candidate_lists.append(sq_results)
@@ -650,14 +682,14 @@ class QueryRouter:
             
             if not summary_chunks.exists():
                 logger.debug(f"No summary nodes for document {document_id}, falling back to hybrid")
-                return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id])
+                return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id], qdrant_filter={'node_type': 'detail'})
             
             # Step 2: Generate query embedding
             try:
                 query_embedding = self.hybrid.embedding_client.create_embedding(query)
             except Exception as e:
                 logger.warning(f"Failed to embed query for RAPTOR: {e}")
-                return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id])
+                return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id], qdrant_filter={'node_type': 'detail'})
 
             page_summary_candidates = self._page_summary_candidates(
                 DocumentChunk=DocumentChunk,
@@ -700,7 +732,7 @@ class QueryRouter:
             
             if not top_summaries:
                 logger.debug(f"No summary nodes found via Qdrant for document {document_id}")
-                return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id])
+                return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id], qdrant_filter={'node_type': 'detail'})
             
             logger.debug(f"RAPTOR: Found {len(top_summaries)} summary nodes for document {document_id}")
             
@@ -862,6 +894,7 @@ class QueryRouter:
                 query,
                 top_k=top_k,
                 document_ids=[document_id],
+                qdrant_filter={'node_type': 'detail'},
                 query_embedding=query_embedding,
             )
             
@@ -888,4 +921,4 @@ class QueryRouter:
         except Exception as e:
             logger.error(f"RAPTOR retrieval failed: {e}", exc_info=True)
             logger.info("Falling back to standard hybrid retrieval")
-            return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id])
+            return self.hybrid.retrieve(query, top_k=top_k, document_ids=[document_id], qdrant_filter={'node_type': 'detail'})
