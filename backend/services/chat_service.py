@@ -3140,6 +3140,11 @@ Cách làm việc:
             context_parts = []
             max_context_chars = self._get_context_max_chars(query)
             max_context_tokens = self._get_context_token_budget(query)
+            is_image_intent = self._is_image_query(query)
+            asset_token_reserve = int(max_context_tokens * 0.35) if is_image_intent else 0
+            asset_char_reserve = int(max_context_chars * 0.35) if is_image_intent else 0
+            chunk_token_limit = max(256, max_context_tokens - asset_token_reserve)
+            chunk_char_limit = max(1200, max_context_chars - asset_char_reserve)
             context_chars_used = 0
             context_tokens_used = 0
             for i, c in enumerate(candidates, start=1):
@@ -3155,7 +3160,7 @@ Cách làm việc:
                 line_end = self._metadata_value(metadata, 'row_end', 'line_end', 'end_line')
                 snippet = (c.get('snippet') or '').strip()[:snippet_chars]
                 if snippet:
-                    remaining_chars = max_context_chars - context_chars_used
+                    remaining_chars = chunk_char_limit - context_chars_used
                     if remaining_chars <= 0:
                         break
                     snippet = snippet[:remaining_chars]
@@ -3191,7 +3196,7 @@ Cách làm việc:
                         "Doan trich:\n"
                     )
                     part_tokens = self._estimate_tokens(header + snippet)
-                    remaining_tokens = max_context_tokens - context_tokens_used
+                    remaining_tokens = chunk_token_limit - context_tokens_used
                     if remaining_tokens <= 0:
                         break
                     if part_tokens > remaining_tokens:
@@ -3218,7 +3223,7 @@ Cách làm việc:
                 if c.get('source') == 'asset' and c.get('asset_caption'):
                     # Assign citation_id to asset so LLM can reference it
                     c['citation_id'] = i
-                    cap = self._clean_asset_caption(c['asset_caption'])[:300]
+                    cap = self._clean_asset_caption(c['asset_caption'])[:220]
                     loc = ''
                     if c.get('asset_sheet_name'):
                         loc += f"Sheet {c['asset_sheet_name']}"
@@ -3241,14 +3246,42 @@ Cách làm việc:
                     details = [f"{prefix}Mo ta: {cap}"]
                     context_text = (c.get('asset_context_text') or '').strip()
                     if context_text:
-                        details.append(f"Ngu canh gan anh: {context_text[:700]}")
+                        details.append(f"Ngu canh gan anh: {context_text[:260]}")
                     linked_chunk_text = (c.get('asset_linked_chunk_text') or '').strip()
                     if linked_chunk_text:
-                        details.append(f"Doan tai lieu gan nhat: {linked_chunk_text[:900]}")
+                        details.append(f"Doan tai lieu gan nhat: {linked_chunk_text[:320]}")
                     ocr_text = (c.get('asset_ocr_text') or '').strip()
                     if ocr_text:
-                        details.append(f"Chu/OCR trong anh: {ocr_text[:500]}")
-                    asset_parts.append("\n".join(details))
+                        details.append(f"Chu/OCR trong anh: {ocr_text[:260]}")
+
+                    asset_text = "\n".join(details)
+                    remaining_tokens = max_context_tokens - context_tokens_used
+                    remaining_chars = max_context_chars - context_chars_used
+                    if remaining_tokens <= 0 or remaining_chars <= 0:
+                        break
+
+                    asset_token_estimate = self._estimate_tokens(asset_text)
+                    if asset_token_estimate > remaining_tokens or len(asset_text) > remaining_chars:
+                        trimmed_details = [f"{prefix}Mo ta: {cap}"]
+                        for label, text, limit in (
+                            ("Ngu canh gan anh", context_text, 120),
+                            ("Doan tai lieu gan nhat", linked_chunk_text, 180),
+                            ("Chu/OCR trong anh", ocr_text, 120),
+                        ):
+                            if not text:
+                                continue
+                            candidate_text = "\n".join(trimmed_details + [f"{label}: {text[:limit]}"])
+                            if self._estimate_tokens(candidate_text) <= remaining_tokens and len(candidate_text) <= remaining_chars:
+                                trimmed_details.append(f"{label}: {text[:limit]}")
+                        asset_text = "\n".join(trimmed_details)
+                        asset_token_estimate = self._estimate_tokens(asset_text)
+
+                    if asset_token_estimate > remaining_tokens or len(asset_text) > remaining_chars:
+                        continue
+
+                    asset_parts.append(asset_text)
+                    context_tokens_used += asset_token_estimate
+                    context_chars_used += len(asset_text)
 
             if asset_parts:
                 asset_context = "=== THONG TIN HINH ANH TRONG TAI LIEU (CHI TRICH DAN KHI THUC SU LIEN QUAN) ===\n" + "\n\n".join(asset_parts) + "\n=== HET HINH ANH ==="
