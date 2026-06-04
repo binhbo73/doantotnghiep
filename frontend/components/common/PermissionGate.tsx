@@ -5,12 +5,6 @@ import { useRBAC } from '@/hooks/useRBAC'
 import { SkeletonLoader } from './SkeletonLoader'
 
 interface PermissionGateProps {
-    /** 
-     * Required roles (OR logic: user must have at least one of these) 
-     * If empty, anyone (authenticated) can see.
-     */
-    roles?: string[]
-
     /**
      * Required object-level permission (if checking against a specific resource)
      */
@@ -61,22 +55,16 @@ interface PermissionGateProps {
 }
 
 /**
- * PermissionGate - A wrapper component to conditionally render UI based on RBAC.
+ * PermissionGate - conditionally render UI from backend permission codes.
  * 
  * Features:
- * - Global role checks (ADMIN, MANAGER, EMPLOYEE)
- * - Object-level permission checks (admin, write, read, none)
+ * - Object-level permission checks (delete, write, read, none)
  * - Backend permission string checks (e.g., "document_create")
  * - Action-based permission checks (create, read, update, delete)
  * - Loading states with skeleton loader
  * - Consistent fallback UI
  * 
  * Usage Examples:
- * // Role-based
- * <PermissionGate roles={['admin']}>
- *    <AdminPanel />
- * </PermissionGate>
- * 
  * // Exact permission string
  * <PermissionGate permission_string="document_create">
  *    <CreateDocumentButton />
@@ -88,7 +76,6 @@ interface PermissionGateProps {
  * </PermissionGate>
  */
 export function PermissionGate({
-    roles,
     permission,
     actualPermission,
     action,
@@ -99,7 +86,7 @@ export function PermissionGate({
     isLoading = false,
     loadingFallback = <SkeletonLoader lines={3} />,
 }: PermissionGateProps) {
-    const { hasRole, isAdmin, can, hasActionPermission, hasPermissionString } = useRBAC()
+    const { can, hasActionPermission, hasPermissionString } = useRBAC()
     const [mounted, setMounted] = useState(false)
 
     // Prevent hydration mismatch
@@ -116,8 +103,8 @@ export function PermissionGate({
         return <>{loadingFallback}</>
     }
 
-    // 1. Admin always has access
-    if (isAdmin()) return <>{children}</>
+    // 1. system_admin permission always has access
+    if (hasPermissionString('system_admin')) return <>{children}</>
 
     // 2. Check exact permission string (NEW)
     if (permission_string) {
@@ -137,13 +124,7 @@ export function PermissionGate({
         return <>{children}</>
     }
 
-    // 4. Check Roles (if provided)
-    if (roles && roles.length > 0) {
-        const hasAnyRole = roles.some(role => hasRole(role))
-        if (!hasAnyRole) return <>{fallback}</>
-    }
-
-    // 5. Check Object Permission (if provided)
+    // 4. Check Object Permission (if provided)
     if (permission && actualPermission) {
         if (!can(permission, actualPermission)) {
             return <>{fallback}</>

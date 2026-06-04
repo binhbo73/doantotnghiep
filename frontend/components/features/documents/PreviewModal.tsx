@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react'
 import { PDFViewer } from './PDFViewer'
 import { ExcelViewer } from './ExcelViewer'
 import { buildApiUrl } from '@/config/api'
+import { getAuthToken } from '@/services/auth'
+import { logger } from '@/services/logger'
 
 interface PreviewModalProps {
     isOpen: boolean
@@ -67,7 +69,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
 
     // Detect file types - handle both MIME types and extensions
     const fileTypeNorm = fileType.toLowerCase().trim()
-    console.log('Preview file type:', fileTypeNorm, 'from fileType:', fileType)
+    logger.debug('Preview file type detection', { fileTypeNorm, fileType })
 
     // MIME type detection
     const isPDF = fileTypeNorm === 'pdf' || fileTypeNorm === 'application/pdf'
@@ -101,7 +103,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
 
     const isSupported = isPDF || isWord || isExcel || isImage || isText
 
-    console.log('File detection:', { isPDF, isWord, isExcel, isImage, isText, isSupported, error, fileUrl })
+    logger.debug('PreviewModal file detection', { isPDF, isWord, isExcel, isImage, isText, isSupported, error, fileUrl })
 
     useEffect(() => {
         if (!isOpen || !isExcel || !documentId) {
@@ -114,7 +116,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
 
         const loadExcelAssets = async () => {
             try {
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const token = getAuthToken()
                 const response = await fetch(buildApiUrl(`/documents/${documentId}/assets`), {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -123,6 +125,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
                 })
 
                 if (!response.ok) {
+                    logger.warn('PreviewModal failed to load Excel assets', { status: response.status })
                     if (!cancelled) setExcelAssetImages([])
                     return
                 }
@@ -158,7 +161,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
     if (!isOpen) return null
 
     const handleLoadSuccess = () => {
-        console.log('✅ Document loaded successfully')
+        logger.debug('PreviewModal document loaded successfully')
     }
 
     const handlePdfLoadSuccess = (pages: number) => {
@@ -181,7 +184,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
     }
 
     const handleLoadError = (error: Error) => {
-        console.error('❌ Document load error:', error)
+        logger.error('Document load error', error)
         setError('Không thể tải file. Vui lòng thử lại.')
     }
 

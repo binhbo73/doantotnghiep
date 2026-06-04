@@ -14,6 +14,7 @@ Flow: View → Service → Repository → ORM
 import logging
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
+
 from uuid import UUID
 from django.db import transaction, models
 from django.utils import timezone
@@ -27,7 +28,8 @@ from core.exceptions import (
     BusinessLogicError,
     PermissionDeniedError,
 )
-from core.constants import RoleIds
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import user_has_any_permission, user_has_permission
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,51 @@ class FolderService(BaseService):
         self.Account = apps.get_model('users', 'Account')
         self.UserProfile = apps.get_model('users', 'UserProfile')
         self.AuditLog = apps.get_model('operations', 'AuditLog')
+
+    def _user_can_manage_department(self, user_id: str, target_department_id: str) -> bool:
+        """
+        Check if user has management rights over a department.
+        A user can manage a department if:
+        1. They are the direct manager (manager_id) of the department
+        2. They are in the managers M2M relation of the department
+        3. They manage an ancestor department (transitive: manager of parent
+           also manages all sub-departments)
+
+        This check does NOT rely on hardcoded roles - it uses the actual
+        Department.manager_id / Department.managers M2M fields set in the
+        data model.  Callers should already have verified the user has the
+        FOLDER_CREATE permission before calling this helper.
+        """
+        try:
+            Department = apps.get_model('users', 'Department')
+            # Collect all departments the user directly manages
+            directly_managed = set(
+                Department.objects.filter(
+                    is_deleted=False
+                ).filter(
+                    models.Q(manager_id=user_id) |
+                    models.Q(managers__id=user_id)
+                ).values_list('id', flat=True)
+            )
+            if not directly_managed:
+                return False
+
+            # Walk up the target department's ancestor chain and check for overlap
+            visited = set()
+            current_id = str(target_department_id)
+            while current_id and current_id not in visited:
+                visited.add(current_id)
+                # If the current ancestor (or target itself) is managed by user → allow
+                if UUID(current_id) in directly_managed or current_id in {str(d) for d in directly_managed}:
+                    return True
+                dept = Department.objects.filter(id=current_id, is_deleted=False).first()
+                if not dept or not dept.parent_id:
+                    break
+                current_id = str(dept.parent_id)
+            return False
+        except Exception as e:
+            logger.debug(f"_user_can_manage_department error: {e}")
+            return False
     
     # ============================================================
     # FOLDER TREE RETRIEVAL
@@ -90,8 +137,8 @@ class FolderService(BaseService):
             except self.UserProfile.DoesNotExist:
                 user_department_id = None
             
-            # Determine if user is Admin
-            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            # Determine if user has system-level bypass
+            is_admin = user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
             
             # Get all accessible folders using unified PermissionManager
             from core.permissions.permission_manager import get_permission_manager
@@ -244,7 +291,7 @@ class FolderService(BaseService):
             if not user:
                 return False
             
-            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            is_admin = user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
             if is_admin:
                 return True
             
@@ -378,19 +425,31 @@ class FolderService(BaseService):
             if not user:
                 raise ValidationError(f"Account {user_id} not found")
 
-            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
-            is_manager = user.has_role(RoleIds.MANAGER)
+            is_admin = user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
             user_department_id = self._get_user_department_id(user_id)
 
-            if not is_admin and access_scope != 'department':
-                raise ValidationError("Bạn chỉ có thể tạo thư mục với phạm vi phòng ban.")
-
             if not is_admin:
-                if not user_department_id:
-                    raise ValidationError("Người dùng chưa có phòng ban, không thể tạo thư mục phòng ban.")
-                if department_id and str(department_id) != str(user_department_id):
-                    raise ValidationError("Bạn chỉ có thể tạo thư mục trong phòng ban của mình.")
-                department_id = user_department_id
+                if access_scope == 'company':
+                    # Only users with FOLDER_CREATE + system_admin can create company-wide folders
+                    raise ValidationError("Only system administrators can create company folders.")
+
+                if access_scope == 'department':
+                    effective_dept_id = department_id or user_department_id
+                    if not effective_dept_id:
+                        raise ValidationError("User has no department, cannot create a department folder.")
+
+                    # Allow if user is a member of the target department OR manages it
+                    is_own_dept = user_department_id and str(effective_dept_id) == str(user_department_id)
+                    is_manager_of_dept = self._user_can_manage_department(user_id, effective_dept_id)
+
+                    if not is_own_dept and not is_manager_of_dept:
+                        raise ValidationError(
+                            "You can only create folders in your own department or departments you manage."
+                        )
+                    department_id = effective_dept_id
+
+                if access_scope == 'personal':
+                    department_id = None
             
             # Resolve scope based on parent (similar to document upload logic)
             parent = None
@@ -399,65 +458,78 @@ class FolderService(BaseService):
                 if not parent:
                     raise NotFoundError(f"Parent folder {parent_id} not found")
 
-                if not is_admin and not is_manager:
-                    if parent.access_scope != 'department':
-                        raise ValidationError("Bạn chỉ có thể tạo thư mục con trong phòng ban của mình.")
-                    if not parent.department_id or str(parent.department_id) != str(user_department_id):
-                        raise ValidationError("Bạn chỉ có thể tạo thư mục trong phòng ban của mình.")
-                
-                # ✅ VALIDATION: Subfolder cannot have different scope than parent
-                if access_scope != parent.access_scope:
-                    raise ValidationError(
-                        f"Subfolder cannot have different access_scope than parent. "
-                        f"Parent has access_scope='{parent.access_scope}', "
-                        f"but you requested '{access_scope}'. "
-                        f"Subfolder will inherit parent's scope."
-                    )
-                
-                # CASE A: Parent has department → inherit parent's scope + department
-                if parent.department_id:
-                    access_scope = parent.access_scope
-                    # ✅ VALIDATION: Subfolder cannot have different department than parent
-                    if department_id and str(department_id) != str(parent.department_id):
+                if not is_admin:
+                    if parent.access_scope == 'company':
+                        raise ValidationError("Only system administrators can create folders under company folders.")
+                    if parent.access_scope == 'department':
+                        parent_dept_id = parent.department_id
+                        if not parent_dept_id:
+                            raise ValidationError("Parent folder has no department set.")
+                        is_own_dept = user_department_id and str(parent_dept_id) == str(user_department_id)
+                        is_manager_of_dept = self._user_can_manage_department(user_id, str(parent_dept_id))
+                        if not is_own_dept and not is_manager_of_dept:
+                            raise ValidationError(
+                                "You can only create sub-folders in your own department or departments you manage."
+                            )
+                    if parent.access_scope == 'personal':
+                        if str(parent.created_by_id) != str(user_id):
+                            raise ValidationError("You can only create subfolders under your own personal folders.")
+
+                    # Subfolder inherits parent's scope
+                    if access_scope != parent.access_scope:
                         raise ValidationError(
-                            f"Subfolder cannot belong to different department than parent. "
-                            f"Parent department: {parent.department_id}, "
-                            f"you requested: {department_id}"
+                            f"Subfolder cannot have different access_scope than parent. "
+                            f"Parent has access_scope='{parent.access_scope}', "
+                            f"but you requested '{access_scope}'. "
+                            f"Subfolder will inherit parent's scope."
                         )
-                    if not department_id:
-                        department_id = parent.department_id
-                    
-                    logger.info(
-                        f"Subfolder '{name}' inheriting scope='{access_scope}' "
-                        f"and department='{department_id}' from parent {parent_id}"
-                    )
+
+                    # CASE A: Parent has department → inherit parent's scope + department
+                    if parent.department_id:
+                        access_scope = parent.access_scope
+                        if department_id and str(department_id) != str(parent.department_id):
+                            raise ValidationError(
+                                f"Subfolder cannot belong to different department than parent. "
+                                f"Parent department: {parent.department_id}, "
+                                f"you requested: {department_id}"
+                            )
+                        if not department_id:
+                            department_id = parent.department_id
+
+                        logger.info(
+                            f"Subfolder '{name}' inheriting scope='{access_scope}' "
+                            f"and department='{department_id}' from parent {parent_id}"
+                        )
+                    else:
+                        # CASE B: Parent is company-wide or personal (no dept) → inherit parent scope
+                        if parent.access_scope == 'personal':
+                            access_scope = 'personal'
+                            department_id = None
+                        else:
+                            access_scope = 'company'
+                            department_id = None
                 else:
-                    # CASE B: Parent is company-wide (no dept) → force company scope
-                    if access_scope != 'company':
-                        logger.warning(
-                            f"Subfolder scope '{access_scope}' forced to 'company' "
-                            f"because parent {parent_id} is company-wide"
-                        )
-                    access_scope = 'company'
-                    department_id = None
+                    # is_admin=True: inherit parent scope
+                    if parent.access_scope == 'personal':
+                        access_scope = 'personal'
+                        department_id = None
+                    elif parent.access_scope == 'department':
+                        access_scope = 'department'
+                        if not department_id:
+                            department_id = parent.department_id
+                    else:
+                        access_scope = 'company'
+                        department_id = None
             else:
-                # No parent folder
-                # CASE C/D: Apply access_scope logic
+                # No parent folder - CASE C/D
                 if access_scope == 'department':
                     # CASE C: Department scope requires department_id
                     if not department_id:
-                        # Try to get user's department as fallback
-                        if not user_department_id:
-                            try:
-                                user_profile = self.UserProfile.objects.get(account_id=user_id)
-                                user_department_id = user_profile.department_id
-                            except self.UserProfile.DoesNotExist:
-                                pass
                         department_id = user_department_id
                         if not department_id:
                             raise ValidationError("Department folder must have department_id")
-                # CASE D: Company or personal scope - keep department_id as provided (optional)
-            
+                # CASE D: Company or personal scope - keep department_id as provided
+
             # Create folder
             folder = self.Folder(
                 name=name,
@@ -467,9 +539,9 @@ class FolderService(BaseService):
                 department_id=department_id,
                 created_by_id=user_id,
             )
-            
+
             folder.save()
-            
+
             # Log audit
             try:
                 user_account = self.Account.objects.get(id=user_id)
@@ -531,11 +603,9 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Permission check: Only creator can update
-            # TODO: In future, allow admin or users with write permission
-            if str(folder.created_by_id) != str(user_id):
+            if not self.check_folder_permission(folder_id, user_id, 'write'):
                 logger.warning(f"User {user_id} attempted to update folder {folder_id} created by {folder.created_by_id}")
-                raise PermissionDeniedError("Only folder creator can update this folder")
+                raise PermissionDeniedError("You don't have write permission on this folder")
             
             # Validate and apply updates
             allowed_fields = {'name', 'description', 'access_scope', 'department_id'}
@@ -569,7 +639,7 @@ class FolderService(BaseService):
             logger.info(f"Folder updated: {folder_id} by user {user_id}")
             return folder
             
-        except (ValidationError, NotFoundError):
+        except (ValidationError, NotFoundError, PermissionDeniedError):
             raise
         except Exception as e:
             logger.error(f"Error updating folder: {str(e)}")
@@ -609,11 +679,9 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Permission check: Only creator can delete
-            # TODO: In future, allow admin or users with delete permission
-            if str(folder.created_by_id) != str(user_id):
+            if not self.check_folder_permission(folder_id, user_id, 'delete'):
                 logger.warning(f"User {user_id} attempted to delete folder {folder_id} created by {folder.created_by_id}")
-                raise PermissionDeniedError("Only folder creator can delete this folder")
+                raise PermissionDeniedError("You don't have delete permission on this folder")
             
             # Get all descendant folder IDs
             folder_ids_to_delete = self.repository.get_all_folder_ids_for_cascade_delete(folder_id)
@@ -690,11 +758,9 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Permission check: Only creator can move
-            # TODO: In future, allow admin or users with write permission
-            if str(folder.created_by_id) != str(user_id):
+            if not self.check_folder_permission(folder_id, user_id, 'write'):
                 logger.warning(f"User {user_id} attempted to move folder {folder_id} created by {folder.created_by_id}")
-                raise PermissionDeniedError("Only folder creator can move this folder")
+                raise PermissionDeniedError("You don't have write permission on this folder")
             
             # Check circular reference
             if self.repository.check_circular_reference(folder_id, new_parent_id):
@@ -785,15 +851,9 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Check permission - creator or admin can grant
-            from services.user_service import UserService
-            user_service = UserService()
-            user_permissions = user_service.get_user_permissions(user_id)
-            is_admin = 'system_admin' in user_permissions or 'permission_manage' in user_permissions
-            
-            if str(folder.created_by_id) != str(user_id) and not is_admin:
+            if not self.check_folder_permission(folder_id, user_id, 'delete'):
                 raise PermissionDeniedError(
-                    f"Only folder creator or admin can grant permissions. "
+                    f"Only users with delete permission can grant permissions. "
                     f"Folder creator: {folder.created_by_id}, Current user: {user_id}"
                 )
             
@@ -909,10 +969,9 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Check permission - only creator can revoke
-            if str(folder.created_by_id) != str(user_id):
+            if not self.check_folder_permission(folder_id, user_id, 'delete'):
                 raise PermissionDeniedError(
-                    f"Only folder creator can revoke permissions. "
+                    f"Only users with delete permission can revoke permissions. "
                     f"Folder creator: {folder.created_by_id}, Current user: {user_id}"
                 )
             
@@ -1213,10 +1272,9 @@ class FolderService(BaseService):
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
-            # Check permission - only creator can revoke
-            if str(folder.created_by_id) != str(user_id):
+            if not self.check_folder_permission(folder_id, user_id, 'delete'):
                 raise PermissionDeniedError(
-                    f"Only folder creator can revoke permissions. "
+                    f"Only users with delete permission can revoke permissions. "
                     f"Folder creator: {folder.created_by_id}, Current user: {user_id}"
                 )
             

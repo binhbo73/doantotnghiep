@@ -1,12 +1,12 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { env } from '@/config/environment'
-import { authService } from '@/services/auth'
+import { useEffect, useState } from 'react'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useDepartments } from '@/hooks/useDepartments'
 import { useRBAC } from '@/hooks/useRBAC'
 import { useAuthContext } from '@/context'
+import { createFolder } from '@/services/document'
+import { filterVisibleDepartments } from '@/lib/departmentAccess'
 
 interface CreateFolderModalProps {
     isOpen: boolean
@@ -16,6 +16,12 @@ interface CreateFolderModalProps {
     allowedScopes?: Array<'company' | 'department' | 'personal'>
 }
 
+const ACCESS_SCOPE_LABELS = {
+    company: 'Toàn công ty',
+    department: 'Theo phòng ban',
+    personal: 'Cá nhân',
+} as const
+
 export function CreateFolderModal({
     isOpen,
     onClose,
@@ -23,80 +29,99 @@ export function CreateFolderModal({
     defaultAccessScope,
     allowedScopes: allowedScopesProp,
 }: CreateFolderModalProps) {
-    const { tree, refetch } = useDocumentStore()
-    const { departments } = useDepartments()
     const { user } = useAuthContext()
-    const { isAdmin, isTruongPhong } = useRBAC()
+    const { hasPermission } = useRBAC()
 
-    const isAdminUser = isAdmin()
-    const isTruongPhongUser = isTruongPhong()
-    const isDepartmentUser = !isAdminUser && !isTruongPhongUser
+    const canUseGlobalFolderScopes = hasPermission('system_admin')
+    const canReadFolders = hasPermission('folder_read')
+    const canReadDocuments = hasPermission('document_read')
+    const { tree, refetch } = useDocumentStore({
+        enabled: isOpen && (canReadFolders || canReadDocuments),
+        canReadFolders,
+        canReadDocuments,
+    })
+    const canReadDepartments = hasPermission('department_read')
+    const isDepartmentUser = !canUseGlobalFolderScopes
     const userDepartmentId = user?.department_id ?? ''
-    const userDepartment = departments.find((dept) => dept.id === userDepartmentId)
+    const allowedScopes = allowedScopesProp ?? (canUseGlobalFolderScopes ? ['company', 'department', 'personal'] : ['department'])
+    const shouldLoadDepartments = isOpen && allowedScopes.includes('department') && canReadDepartments
+    const { departments } = useDepartments(undefined, shouldLoadDepartments)
 
-    const allowedScopes = allowedScopesProp ?? (isAdminUser ? ['company', 'department', 'personal'] : ['department'])
+    const isManager = departments.some(d => d.manager_id === user?.id || (Array.isArray(d.manager_ids) && d.manager_ids.includes(user?.id || '')))
+    const visibleDepartments = filterVisibleDepartments({
+        user,
+        departments,
+        isAdmin: hasPermission('system_admin'),
+        isTruongPhong: isManager
+    })
 
     const [folderName, setFolderName] = useState('')
     const [description, setDescription] = useState('')
     const [accessScope, setAccessScope] = useState<'company' | 'department' | 'personal'>(
-        defaultAccessScope ?? (isAdminUser ? 'company' : 'department')
+        defaultAccessScope ?? (canUseGlobalFolderScopes ? 'company' : 'department')
     )
-    const [departmentId, setDepartmentId] = useState<string>(isAdminUser ? '' : userDepartmentId)
+    const [departmentId, setDepartmentId] = useState<string>(canUseGlobalFolderScopes ? '' : userDepartmentId)
     const [parentFolderId, setParentFolderId] = useState<string>('')
-
     const [isCreating, setIsCreating] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
-    // Reset state when modal opens
     useEffect(() => {
         if (isOpen) {
             setFolderName('')
             setDescription('')
-            setAccessScope(defaultAccessScope ?? (isAdminUser ? 'company' : 'department'))
-            setDepartmentId(isAdminUser ? '' : userDepartmentId)
+            setAccessScope(defaultAccessScope ?? (canUseGlobalFolderScopes ? 'company' : 'department'))
+            setDepartmentId(canUseGlobalFolderScopes ? '' : userDepartmentId)
             setParentFolderId('')
             setError(null)
             setIsCreating(false)
         }
-    }, [isOpen, defaultAccessScope, isAdminUser, userDepartmentId])
+    }, [isOpen, defaultAccessScope, canUseGlobalFolderScopes, userDepartmentId])
 
     useEffect(() => {
         if (accessScope !== 'department' && !isDepartmentUser) {
             setDepartmentId('')
+        } else if (accessScope === 'department') {
+            if (visibleDepartments.length === 1 && !departmentId) {
+                setDepartmentId(visibleDepartments[0].id)
+            } else if (!departmentId && userDepartmentId && visibleDepartments.some(d => d.id === userDepartmentId)) {
+                setDepartmentId(userDepartmentId)
+            }
         }
-    }, [accessScope, isDepartmentUser])
+    }, [accessScope, isDepartmentUser, visibleDepartments, departmentId, userDepartmentId])
 
-    // Flatten folder tree for select options
-    const flattenTree = (nodes: typeof tree, depth = 0): { id: string, name: string, depth: number, department_id: string | null, access_scope: string }[] => {
+    const flattenTree = (
+        nodes: typeof tree,
+        depth = 0
+    ): { id: string, name: string, depth: number, department_id: string | null, access_scope: string }[] => {
         let result: { id: string, name: string, depth: number, department_id: string | null, access_scope: string }[] = []
+
         for (const node of nodes) {
             result.push({
                 id: node.folder.id,
                 name: node.folder.name,
                 depth,
                 department_id: node.folder.department_id,
-                access_scope: node.folder.access_scope
+                access_scope: node.folder.access_scope,
             })
+
             if (node.children && node.children.length > 0) {
                 result = result.concat(flattenTree(node.children, depth + 1))
             }
         }
+
         return result
     }
 
     const foldersList = flattenTree(tree)
-    // Filter parent folders to show only those with matching access_scope
-    const displayFoldersList = foldersList.filter(f => {
+    const displayFoldersList = foldersList.filter((folder) => {
         if (allowedScopes.length === 1 && allowedScopes[0] === 'personal') {
-            return f.access_scope === 'personal'
+            return folder.access_scope === 'personal'
         }
 
-        // Must have matching access_scope
-        if (f.access_scope !== accessScope) return false
+        if (folder.access_scope !== accessScope) return false
 
-        // If department scope, also filter by department_id
         if (accessScope === 'department' && departmentId) {
-            return f.department_id === departmentId
+            return folder.department_id === departmentId
         }
 
         return true
@@ -113,7 +138,6 @@ export function CreateFolderModal({
             return
         }
 
-        // Enforce department requirement when scope is 'department'
         if (accessScope === 'department' && !departmentId) {
             setError('Vui lòng chọn phòng ban.')
             return
@@ -123,7 +147,7 @@ export function CreateFolderModal({
         setError(null)
 
         try {
-            const payload: any = {
+            const payload: Parameters<typeof createFolder>[0] = {
                 name: folderName.trim(),
                 access_scope: accessScope,
             }
@@ -137,39 +161,17 @@ export function CreateFolderModal({
                 payload.parent_id = parentFolderId
             }
 
-            // Send department_id only if access_scope is 'department' and department is selected
             if (accessScope === 'department' && departmentId) {
                 payload.department_id = departmentId
             }
 
-            const token = authService.getAuthToken()
-            if (!token) {
-                throw new Error('Bạn chưa đăng nhập hoặc phiên đã hết hạn. Vui lòng đăng nhập lại.')
-            }
-
-            const response = await fetch(`${env.apiUrl}/folders`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`,
-                },
-                body: JSON.stringify(payload),
-            })
-
-            if (!response.ok) {
-                const data = await response.json()
-                throw new Error(data.message || 'Tạo thư mục thất bại.')
-            }
-
-            // Refresh data
-            if (refetch) {
-                await refetch()
-            }
-
-            if (onSuccess) onSuccess()
+            await createFolder(payload)
+            await refetch?.()
+            onSuccess?.()
             onClose()
-        } catch (err: any) {
-            setError(err.message || 'Tạo thư mục thất bại.')
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Tạo thư mục thất bại.'
+            setError(message)
         } finally {
             setIsCreating(false)
         }
@@ -180,10 +182,9 @@ export function CreateFolderModal({
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
-                {/* Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
                     <div>
-                        <h2 className="text-lg font-bold text-slate-800">Tạo Thư Mục</h2>
+                        <h2 className="text-lg font-bold text-slate-800">Tạo thư mục</h2>
                         <p className="text-xs text-slate-500 mt-1">Tạo thư mục mới để lưu trữ tài liệu</p>
                     </div>
                     <button
@@ -195,7 +196,6 @@ export function CreateFolderModal({
                     </button>
                 </div>
 
-                {/* Body */}
                 <div className="p-6 overflow-y-auto flex-1 space-y-5">
                     {error && (
                         <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm border border-red-100 flex items-start gap-2">
@@ -204,15 +204,14 @@ export function CreateFolderModal({
                         </div>
                     )}
 
-                    {/* Folder Name */}
                     <div>
                         <label className="block text-sm font-semibold text-slate-700 mb-2">
-                            Tên Thư Mục <span className="text-red-500">*</span>
+                            Tên thư mục <span className="text-red-500">*</span>
                         </label>
                         <input
                             type="text"
                             value={folderName}
-                            onChange={(e) => setFolderName(e.target.value)}
+                            onChange={(event) => setFolderName(event.target.value)}
                             placeholder="Nhập tên thư mục..."
                             disabled={isCreating}
                             className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
@@ -220,14 +219,13 @@ export function CreateFolderModal({
                         <p className="text-xs text-slate-500 mt-1">{folderName.length}/100</p>
                     </div>
 
-                    {/* Description */}
                     <div>
                         <label className="block text-sm font-semibold text-slate-700 mb-2">
-                            Mô Tả
+                            Mô tả
                         </label>
                         <textarea
                             value={description}
-                            onChange={(e) => setDescription(e.target.value)}
+                            onChange={(event) => setDescription(event.target.value)}
                             placeholder="Nhập mô tả thư mục (tùy chọn)..."
                             disabled={isCreating}
                             rows={3}
@@ -235,51 +233,49 @@ export function CreateFolderModal({
                         />
                     </div>
 
-                    {/* Access Scope */}
                     <div>
                         <label className="block text-sm font-semibold text-slate-700 mb-2">
-                            Phạm Vi Truy Cập <span className="text-red-500">*</span>
+                            Phạm vi truy cập <span className="text-red-500">*</span>
                         </label>
                         {allowedScopes.length === 1 ? (
                             <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-sm text-slate-700">
-                                {allowedScopes[0] === 'company' && 'Toàn Công Ty'}
-                                {allowedScopes[0] === 'department' && 'Theo Phòng Ban'}
-                                {allowedScopes[0] === 'personal' && 'Cá Nhân'}
+                                {ACCESS_SCOPE_LABELS[allowedScopes[0]]}
                             </div>
                         ) : (
                             <select
                                 value={accessScope}
-                                onChange={(e) => setAccessScope(e.target.value as any)}
+                                onChange={(event) => setAccessScope(event.target.value as typeof accessScope)}
                                 disabled={isCreating}
                                 className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
                             >
-                                {allowedScopes.includes('company') && <option value="company">Toàn Công Ty</option>}
-                                {allowedScopes.includes('department') && <option value="department">Theo Phòng Ban</option>}
-                                {allowedScopes.includes('personal') && <option value="personal">Cá Nhân</option>}
+                                {allowedScopes.map((scope) => (
+                                    <option key={scope} value={scope}>
+                                        {ACCESS_SCOPE_LABELS[scope]}
+                                    </option>
+                                ))}
                             </select>
                         )}
                     </div>
 
-                    {/* Department (only shown when scope is 'department') */}
                     {accessScope === 'department' && (
                         <div>
                             <label className="block text-sm font-semibold text-slate-700 mb-2">
-                                Phòng Ban <span className="text-red-500">*</span>
+                                Phòng ban <span className="text-red-500">*</span>
                             </label>
-                            {!isAdminUser && userDepartment ? (
+                            {visibleDepartments.length === 1 ? (
                                 <div className="px-4 py-3 rounded-2xl bg-slate-50 border border-slate-200 text-slate-700">
-                                    {userDepartment.name}
+                                    {visibleDepartments[0].name}
                                 </div>
                             ) : (
                                 <select
                                     value={departmentId}
-                                    onChange={(e) => setDepartmentId(e.target.value)}
+                                    onChange={(event) => setDepartmentId(event.target.value)}
                                     disabled={isCreating}
                                     className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
                                 >
-                                    <option value="">-- Chọn Phòng Ban --</option>
-                                    {departments.map((dept) => (
-                                        <option key={dept.id} value={dept.id}>{dept.name}</option>
+                                    <option value="">-- Chọn phòng ban --</option>
+                                    {visibleDepartments.map((department) => (
+                                        <option key={department.id} value={department.id}>{department.name}</option>
                                     ))}
                                 </select>
                             )}
@@ -287,28 +283,26 @@ export function CreateFolderModal({
                         </div>
                     )}
 
-                    {/* Parent Folder */}
                     <div>
                         <label className="block text-sm font-semibold text-slate-700 mb-2">
-                            Thư Mục Cha
+                            Thư mục cha
                         </label>
                         <select
                             value={parentFolderId}
-                            onChange={(e) => setParentFolderId(e.target.value)}
+                            onChange={(event) => setParentFolderId(event.target.value)}
                             disabled={isCreating}
                             className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20 focus:border-[#9d4300]/40 transition-all disabled:bg-slate-50 disabled:text-slate-500"
                         >
-                            <option value="">-- Không có Thư Mục Cha --</option>
+                            <option value="">-- Không có thư mục cha --</option>
                             {displayFoldersList.map((folder) => (
                                 <option key={folder.id} value={folder.id}>
-                                    {'─'.repeat(folder.depth * 2)} {folder.name}
+                                    {'-'.repeat(folder.depth * 2)} {folder.name}
                                 </option>
                             ))}
                         </select>
                     </div>
                 </div>
 
-                {/* Footer */}
                 <div className="border-t border-slate-100 px-6 py-4 bg-slate-50 flex items-center justify-end gap-3">
                     <button
                         onClick={onClose}
@@ -330,7 +324,7 @@ export function CreateFolderModal({
                         ) : (
                             <>
                                 <span className="material-symbols-outlined text-base">add</span>
-                                Tạo Thư Mục
+                                Tạo thư mục
                             </>
                         )}
                     </button>

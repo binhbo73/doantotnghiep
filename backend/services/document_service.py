@@ -872,8 +872,7 @@ class DocumentService(BaseService):
             self._log_document_audit(
                 action='MOVE',
                 document_id=doc_id,
-                user_id=user_id,
-                details=f"Moved to folder {new_folder_id or 'root'}"
+                user_id=user_id
             )
 
             return document

@@ -214,7 +214,7 @@ export async function getRecentActivities(params?: {
     try {
         return await api.get(`/audit-logs/recent-activity?${queryParams.toString()}`)
     } catch (error) {
-        if (error instanceof ApiError && error.status === 404) {
+        if (error instanceof ApiError && error.statusCode === 404) {
             const listResponse = await getAuditLogs({
                 page: 1,
                 page_size: params?.limit || 10,

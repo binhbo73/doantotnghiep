@@ -29,12 +29,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from django.http import FileResponse
 from django.db import transaction
 import logging
 import io
 
-from core.permissions.drf_permissions import IsAuthenticatedUser
+from core.permissions.drf_permissions import IsAuthenticatedUser, user_has_any_permission, user_has_permission
+from core.constants import PermissionCodes
 from core.utils.response_builder import ResponseBuilder
 from core.exceptions import (
     ValidationError,
@@ -58,6 +60,20 @@ from api.serializers.document_serializers import (
 from api.serializers.folder_serializers import FolderPermissionSerializer
 
 logger = logging.getLogger(__name__)
+
+
+def _forbidden(message="You don't have the required document permission"):
+    return Response(
+        ResponseBuilder.error(message, status_code=403),
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+DOCUMENT_MANAGE_PERMISSIONS = [
+    PermissionCodes.DOCUMENT_SHARE,
+    PermissionCodes.DOCUMENT_UPDATE,
+    PermissionCodes.DOCUMENT_DELETE,
+]
 
 
 # ============================================================
@@ -113,6 +129,9 @@ class DocumentListView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view documents")
+
             # Validate pagination params
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
@@ -201,6 +220,9 @@ class SharedWithMeDocumentsView(APIView):
 
     def get(self, request):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view shared documents")
+
             service = DocumentService()
             shared_data = service.get_shared_with_me_documents(user_id=str(request.user.id))
 
@@ -293,6 +315,9 @@ class DocumentUploadView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_CREATE):
+                return _forbidden("You need document_create permission to upload documents")
+
             # ── Validate input ────────────────────────────────────────────────
             serializer = DocumentUploadSerializer(data={
                 **request.POST.dict(),
@@ -335,7 +360,7 @@ class DocumentUploadView(APIView):
             if folder_id:
                 folder_service = FolderService()
                 try:
-                    is_admin = request.user.is_superuser or request.user.has_role(RoleIds.ADMIN)
+                    is_admin = user_has_permission(request.user, PermissionCodes.SYSTEM_ADMIN)
 
                     has_perm = folder_service.check_folder_permission(
                         folder_id=folder_id,
@@ -443,6 +468,12 @@ class DocumentUploadView(APIView):
                 ResponseBuilder.error(str(e), status_code=400),
                 status=status.HTTP_400_BAD_REQUEST
             )
+        except (ParseError, UnsupportedMediaType) as e:
+            logger.warning(f"Invalid upload request payload: {e}")
+            return Response(
+                ResponseBuilder.error(str(e), status_code=400),
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             logger.error(f"Error uploading document: {e}", exc_info=True)
             return Response(
@@ -491,6 +522,9 @@ class DocumentDetailView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view documents")
+
             service = DocumentService()
             
             # Get document with permission check
@@ -557,6 +591,12 @@ class DocumentUpdateView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(
+                request.user,
+                [PermissionCodes.DOCUMENT_UPDATE, PermissionCodes.DOCUMENT_WRITE],
+            ):
+                return _forbidden("You need document_update permission to update documents")
+
             # Validate input
             serializer = DocumentCreateSerializer(data=request.data, partial=True)
             if not serializer.is_valid():
@@ -655,6 +695,12 @@ class DocumentMoveView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(
+                request.user,
+                [PermissionCodes.DOCUMENT_UPDATE, PermissionCodes.DOCUMENT_WRITE],
+            ):
+                return _forbidden("You need document_update permission to move documents")
+
             # Get folder_id from request (can be null to move to root)
             new_folder_id = request.data.get('folder_id', None)
             
@@ -733,6 +779,9 @@ class DocumentDeleteView(APIView):
         Soft delete document (mark as deleted, don't remove from DB).
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_DELETE):
+                return _forbidden("You need document_delete permission to delete documents")
+
             service = DocumentService()
             
             # Delete with transaction
@@ -795,6 +844,9 @@ class DocumentDownloadView(APIView):
         - Binary file data with proper Content-Type headers
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_DOWNLOAD):
+                return _forbidden("You need document_download permission to download documents")
+
             service = DocumentService()
             
             # Get document with permission check
@@ -859,6 +911,9 @@ class DocumentPreviewView(APIView):
 
     def get(self, request, doc_id):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to preview documents")
+
             service = DocumentService()
 
             if request.query_params.get('format') == 'html':
@@ -926,6 +981,9 @@ class DocumentChunkSourceView(APIView):
 
     def get(self, request, doc_id, chunk_id):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view document chunks")
+
             service = DocumentService()
             chunk = service.get_document_chunk_source(
                 doc_id=doc_id,
@@ -977,6 +1035,9 @@ class DocumentPermissionsListView(APIView):
 
     def get(self, request):
         try:
+            if not user_has_any_permission(request.user, DOCUMENT_MANAGE_PERMISSIONS):
+                return _forbidden("You need document management permission to view document permissions")
+
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
             search = request.query_params.get('search')
@@ -1059,6 +1120,9 @@ class DocumentPermissionsView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(request.user, DOCUMENT_MANAGE_PERMISSIONS):
+                return _forbidden("You need document management permission to view document permissions")
+
             service = DocumentService()
             granted_by_id = request.query_params.get('granted_by_id')
             
@@ -1110,6 +1174,9 @@ class DocumentPermissionsView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_SHARE):
+                return _forbidden("You need document_share permission to grant document permissions")
+
             # Validate input
             serializer = FolderPermissionSerializer(data=request.data)
             if not serializer.is_valid():
@@ -1200,6 +1267,9 @@ class DocumentPermissionDetailView(APIView):
         - permission: "read", "write", or "delete"
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_SHARE):
+                return _forbidden("You need document_share permission to revoke document permissions")
+
             service = DocumentService()
             
             # Revoke permission with transaction
@@ -1284,6 +1354,9 @@ class DocumentStatusView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view document status")
+
             service = DocumentService()
             
             status_info = service.get_document_processing_status(
@@ -1360,6 +1433,14 @@ class DocumentReprocessView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(
+                request.user,
+                [PermissionCodes.DOCUMENT_UPDATE, PermissionCodes.DOCUMENT_WRITE],
+            ):
+                return _forbidden("You need document_update permission to reprocess documents")
+            if not user_has_permission(request.user, PermissionCodes.EMBEDDING_GENERATE):
+                return _forbidden("You need embedding_generate permission to reprocess documents")
+
             # Get optional parameters
             chunking_strategy = request.data.get('chunking_strategy')
             embedding_model = request.data.get('embedding_model')

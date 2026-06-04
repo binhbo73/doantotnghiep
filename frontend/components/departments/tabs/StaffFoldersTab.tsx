@@ -9,14 +9,32 @@ import React from 'react';
 import { useDepartmentFolders, FolderTreeNode } from '@/hooks/departments/useDepartmentFolders';
 import TabLoading from '@/components/departments/loading/TabLoading';
 import Link from 'next/link';
+import { useRBAC } from '@/hooks/useRBAC';
 
 interface StaffFoldersTabProps {
     deptId: string;
 }
 
 export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
+    const { hasPermission } = useRBAC();
+    const canReadFolders = hasPermission('folder_read');
+    const canReadDocuments = hasPermission('document_read');
+    const canAccess = canReadFolders && canReadDocuments;
+
     // API Hook: Fetch folders in tree structure
-    const { folders, loading, error, toggleFolder } = useDepartmentFolders(deptId);
+    const { folders, loading, error, toggleFolder } = useDepartmentFolders(deptId, {
+        enabled: canAccess,
+        canReadFolders,
+        canReadDocuments,
+    });
+
+    if (!canAccess) {
+        return (
+            <div className="p-6 bg-amber-50 rounded-lg text-amber-700 border border-amber-200">
+                Bạn cần quyền folder_read và document_read để xem cây thư mục phòng ban.
+            </div>
+        );
+    }
 
     if (loading) {
         return <TabLoading />;

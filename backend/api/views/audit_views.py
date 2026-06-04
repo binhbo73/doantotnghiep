@@ -32,6 +32,8 @@ from rest_framework.views import APIView
 from apps.operations.models import AuditLog
 from repositories.audit_log_repository import AuditLogRepository
 from services.audit_service import AuditService
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import HasAnyPermission
 
 from api.views.base import BaseReadOnlyViewSet
 from api.serializers.base import ResponseBuilder
@@ -67,7 +69,8 @@ class AuditLogListView(BaseReadOnlyViewSet):
     """
     queryset = AuditLog.objects.select_related('account').order_by('-created_at')
     serializer_class = AuditLogSimpleSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.AUDIT_LOG_VIEW]
     pagination_class = AuditLogPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['query_text', 'account__username']
@@ -148,7 +151,8 @@ class AuditLogDetailView(BaseReadOnlyViewSet):
     """GET /api/v1/audit-logs/{id} - Get audit log details"""
     queryset = AuditLog.objects.select_related('account')
     serializer_class = AuditLogDetailSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.AUDIT_LOG_VIEW]
     lookup_field = 'id'
     
     def retrieve(self, request: Request, id=None) -> Response:
@@ -185,7 +189,8 @@ class AuditLogDetailView(BaseReadOnlyViewSet):
 
 class RecentActivityView(APIView):
     """GET /api/v1/audit-logs/recent-activity - Get recent activities for dashboard"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.AUDIT_LOG_VIEW]
     
     def get(self, request: Request) -> Response:
         """Get recent activities"""
@@ -225,7 +230,8 @@ class RecentActivityView(APIView):
 
 class AuditLogStatisticsView(APIView):
     """GET /api/v1/audit-logs/statistics - Get audit log statistics"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.AUDIT_LOG_VIEW]
     
     def get(self, request: Request) -> Response:
         """Get audit log statistics"""
@@ -298,7 +304,8 @@ class AuditLogStatisticsView(APIView):
 
 class AuditLogExportView(APIView):
     """GET /api/v1/audit-logs/export - Export audit logs as CSV/JSON"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.AUDIT_LOG_VIEW]
     
     def get(self, request: Request) -> Response:
         """Export audit logs"""

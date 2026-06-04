@@ -13,6 +13,7 @@ import type { ChatAttachmentState } from '@/components/features/chat/ChatInput'
 import { useChat } from '@/hooks/useChat'
 import { useAuthContext } from '@/context'
 import { useToast } from '@/hooks/useToast'
+import { useRBAC } from '@/hooks/useRBAC'
 
 const emptyAttachmentState: ChatAttachmentState = {
     uploads: [],
@@ -24,9 +25,16 @@ const emptyAttachmentState: ChatAttachmentState = {
 export default function ChatPage() {
     const router = useRouter()
     const { user, logout, isLoading: authLoading } = useAuthContext()
+    const { hasPermission } = useRBAC()
     const { showError } = useToast()
     const [mobileFileDrawerOpen, setMobileFileDrawerOpen] = useState(false)
     const [attachmentState, setAttachmentState] = useState<ChatAttachmentState>(emptyAttachmentState)
+
+    const canReadChats = hasPermission('chat_read')
+    const canCreateChats = hasPermission('chat_create')
+    const canSendChats = hasPermission('chat_send')
+    const canComposeChats = canSendChats && (canReadChats || canCreateChats)
+    const canUseChatPage = canReadChats || canCreateChats
 
     // Chat hook for managing chat state
     const {
@@ -43,7 +51,8 @@ export default function ChatPage() {
         sendFeedback,
         selectConversation,
     } = useChat({
-        autoFetchConversations: !!user, // Only fetch when user is authenticated
+        autoFetchConversations: !!user && canReadChats, // Only fetch if user may read chats
+        canCreateConversations: canCreateChats,
         onConversationCreated: (conversation) => {
             console.log('New conversation created:', conversation.id)
         },
@@ -90,6 +99,19 @@ export default function ChatPage() {
                 <div className="text-center">
                     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
                     <p className="text-slate-600 dark:text-slate-400">Đang tải...</p>
+                </div>
+            </div>
+        )
+    }
+
+    if (!canUseChatPage) {
+        return (
+            <div className="flex items-center justify-center h-screen bg-surface dark:bg-slate-950 px-4">
+                <div className="max-w-lg text-center rounded-3xl border border-slate-200 bg-white p-10 shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                    <p className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Không có quyền truy cập Chat</p>
+                    <p className="mt-4 text-sm leading-6 text-slate-600 dark:text-slate-400">
+                        Bạn không có quyền xem hoặc sử dụng tính năng Chat. Vui lòng liên hệ quản trị viên để được cấp quyền.
+                    </p>
                 </div>
             </div>
         )
@@ -147,6 +169,7 @@ export default function ChatPage() {
                     <ChatInput
                         key={currentConversationId || 'new-chat'}
                         isLoading={isLoading}
+                        disabled={!canComposeChats}
                         onAttachmentStateChange={setAttachmentState}
                         onSendMessage={(content, attachments) => {
                             sendMessage(content, attachments)

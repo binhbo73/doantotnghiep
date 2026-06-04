@@ -39,15 +39,32 @@ interface UseDepartmentFoldersResult {
     refresh: () => Promise<void>;
 }
 
-export function useDepartmentFolders(deptId: string): UseDepartmentFoldersResult {
+interface UseDepartmentFoldersOptions {
+    enabled?: boolean;
+    canReadFolders?: boolean;
+    canReadDocuments?: boolean;
+}
+
+export function useDepartmentFolders(
+    deptId: string,
+    options: UseDepartmentFoldersOptions = {}
+): UseDepartmentFoldersResult {
+    const enabled = options.enabled ?? true;
+    const canReadFolders = options.canReadFolders ?? true;
+    const canReadDocuments = options.canReadDocuments ?? true;
     const [folders, setFolders] = useState<FolderTreeNode[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(enabled && !!deptId && canReadFolders && canReadDocuments);
     const [error, setError] = useState<string | null>(null);
     const [selectedFolder, setSelectedFolder] = useState<FolderTreeNode | null>(null);
     const [selectedDocument, setSelectedDocument] = useState<DocumentNode | null>(null);
 
     const fetchFolders = useCallback(async () => {
-        if (!deptId) return;
+        if (!enabled || !deptId || !canReadFolders || !canReadDocuments) {
+            setFolders([]);
+            setError(null);
+            setLoading(false);
+            return;
+        }
 
         try {
             setLoading(true);
@@ -120,7 +137,7 @@ export function useDepartmentFolders(deptId: string): UseDepartmentFoldersResult
         } finally {
             setLoading(false);
         }
-    }, [deptId]);
+    }, [deptId, enabled, canReadFolders, canReadDocuments]);
 
     const toggleFolder = useCallback((folderId: string) => {
         const toggleInTree = (nodes: FolderTreeNode[]): FolderTreeNode[] => {

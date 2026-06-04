@@ -355,17 +355,25 @@ def require_manager_or_above():
                 )
             
             perm_mgr = get_permission_manager()
-            has_admin = perm_mgr.check_user_has_role(request.user.id, RoleIds.ADMIN)
-            has_manager = perm_mgr.check_user_has_role(request.user.id, RoleIds.MANAGER)
+            has_management_permission = perm_mgr.check_user_has_any_permission(
+                request.user.id,
+                [
+                    PermissionCodes.SYSTEM_ADMIN,
+                    PermissionCodes.USER_UPDATE,
+                    PermissionCodes.USER_CHANGE_ROLE,
+                    PermissionCodes.DEPARTMENT_READ,
+                    PermissionCodes.DEPARTMENT_UPDATE,
+                ],
+            )
             
-            if not (has_admin or has_manager):
+            if not has_management_permission:
                 logger.warning(
-                    f"User {request.user.id} denied - requires Manager or Admin role "
+                    f"User {request.user.id} denied - requires management permission "
                     f"on {request.method} {request.path}"
                 )
                 return Response(
                     ResponseBuilder.error(
-                        "This action requires Manager or Admin role",
+                        "This action requires management permission",
                         status_code=http_status.HTTP_403_FORBIDDEN,
                         request_id=getattr(request, 'request_id', None)
                     ),

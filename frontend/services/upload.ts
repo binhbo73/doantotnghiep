@@ -6,6 +6,7 @@ import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { logger } from '@/services/logger'
 import { buildDirectApiUrl } from '@/config/api'
+import { getAuthToken } from '@/services/auth'
 import type { Document, UploadDocumentRequest } from '@/types/api'
 
 interface UploadProgress {
@@ -62,15 +63,12 @@ export async function uploadFile(
 
         // Handle completion
         xhr.addEventListener('load', () => {
-            console.log(`📡 XHR Load: status=${xhr.status}`)
+            logger.debug(`XHR Load: status=${xhr.status}`)
 
             if (xhr.status >= 200 && xhr.status < 300) {
                 try {
-                    console.log(`📝 Response text:`, xhr.responseText.substring(0, 500))
                     const response = JSON.parse(xhr.responseText)
-                    console.log(`📊 Parsed response:`, JSON.stringify(response, null, 2).substring(0, 500))
                     const document = response.data || response
-                    console.log(`📄 Extracted document:`, JSON.stringify(document, null, 2).substring(0, 300))
                     logger.info('File uploaded successfully', { filename: file.name })
 
                     // Dispatch real-time notification event
@@ -80,12 +78,11 @@ export async function uploadFile(
 
                     resolve(document)
                 } catch (err) {
-                    console.error('❌ Response parse error:', err)
+                    logger.error('Response parse error during upload', { error: err })
                     reject(new Error('Invalid response from server'))
                 }
             } else {
-                console.log(`❌ Upload failed with status ${xhr.status}`)
-                console.log(`Response:`, xhr.responseText.substring(0, 500))
+                logger.warn(`Upload failed with status ${xhr.status}`, { filename: file.name })
                 try {
                     const error = JSON.parse(xhr.responseText)
                     const apiError = new ApiError(
@@ -127,9 +124,10 @@ export async function uploadFile(
 
         // Open first, then set headers, then send
         xhr.open('POST', buildDirectApiUrl('/documents/upload'))
+        xhr.withCredentials = true
 
-        // Set auth header after open() to avoid INVALID_STATE_ERR
-        const token = localStorage.getItem('auth_token')
+        // Fallback auth header only if a token is available in legacy setups
+        const token = getAuthToken()
         if (token) {
             xhr.setRequestHeader('Authorization', `Bearer ${token}`)
         }

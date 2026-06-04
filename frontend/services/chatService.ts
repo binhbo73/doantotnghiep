@@ -1,6 +1,8 @@
 import { apiClient } from '@/lib/api-client'
 import { API_ENDPOINTS } from '@/config/api-endpoints'
-import { buildApiUrl } from '@/config/api'
+import { buildDirectApiUrl } from '@/config/api'
+import { logger } from '@/services/logger'
+import { getAuthToken } from '@/services/auth'
 
 export interface ConversationDTO {
     id: string
@@ -125,19 +127,22 @@ export class ChatService {
                 params.append('search', search)
             }
 
-            console.log('📤 Calling API:', `${API_ENDPOINTS.CHAT.CONVERSATIONS}/?${params.toString()}`)
+            logger.debug('Calling API', {
+                url: `${API_ENDPOINTS.CHAT.CONVERSATIONS}/?${params.toString()}`,
+            })
             const response = await apiClient.get(
                 `${API_ENDPOINTS.CHAT.CONVERSATIONS}/?${params.toString()}`
             )
 
-            console.log('📥 Full API response:', response.data)
+            logger.debug('Chat conversations response received', {
+                data: response.data,
+            })
 
             // Handle paginated response format from backend
             const { items = [], pagination = {} } = response.data.data || {}
-            console.log('📊 Parsed response:', {
+            logger.debug('Parsed conversation response', {
                 itemsCount: items.length,
-                items,
-                pagination
+                pagination,
             })
 
             return {
@@ -148,8 +153,10 @@ export class ChatService {
                 totalPages: pagination.total_pages || 0,
             }
         } catch (error) {
-            console.error('❌ Failed to fetch conversations:', error)
-            console.error('Error response:', (error as any)?.response?.data)
+            logger.error('Failed to fetch conversations', {
+                error,
+                response: (error as any)?.response?.data,
+            })
             throw error
         }
     }
@@ -164,7 +171,7 @@ export class ChatService {
             )
             return response.data.data
         } catch (error) {
-            console.error(`Failed to fetch conversation ${conversationId}:`, error)
+            logger.error(`Failed to fetch conversation ${conversationId}`, error)
             throw error
         }
     }
@@ -179,7 +186,7 @@ export class ChatService {
             )
             return response.data.data
         } catch (error) {
-            console.error(`Failed to fetch conversation attachments ${conversationId}:`, error)
+            logger.error(`Failed to fetch conversation attachments ${conversationId}`, error)
             throw error
         }
     }
@@ -194,7 +201,7 @@ export class ChatService {
             })
             return response.data.data
         } catch (error) {
-            console.error('Failed to create conversation:', error)
+            logger.error('Failed to create conversation', error)
             throw error
         }
     }
@@ -217,7 +224,7 @@ export class ChatService {
 
             return response.data.data
         } catch (error) {
-            console.error(`Failed to attach resources for conversation ${conversationId}:`, error)
+            logger.error(`Failed to attach resources for conversation ${conversationId}`, error)
             throw error
         }
     }
@@ -245,7 +252,7 @@ export class ChatService {
                 pageSize: pagination.page_size || pageSize,
             }
         } catch (error) {
-            console.error(`Failed to fetch messages for conversation ${conversationId}:`, error)
+            logger.error(`Failed to fetch messages for conversation ${conversationId}`, error)
             throw error
         }
     }
@@ -271,19 +278,22 @@ export class ChatService {
         currentPage?: number
     ): Promise<void> {
         try {
-            const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+            // ⚠️ QUAN TRỌNG: Streaming must go directly to the backend host.
+            const streamUrl = buildDirectApiUrl(`${API_ENDPOINTS.CHAT.MESSAGES}/stream/`)
 
-            // ⚠️ QUAN TRỌNG: Không dùng Next.js rewrite (/api/v1/...) cho streaming.
-            // Next.js rewrites() buffer toàn bộ response trước khi forward → phá hủy SSE.
-            // Gọi thẳng backend URL để nhận stream real-time.
-            const backendBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || 'http://localhost:8000/api/v1'
-            const streamUrl = `${backendBase}/${API_ENDPOINTS.CHAT.MESSAGES}/stream/`
+            // Get auth token for Authorization header
+            const token = getAuthToken()
+            if (!token) {
+                logger.error('No auth token available for stream')
+                throw new Error('Not authenticated')
+            }
 
             const response = await fetch(streamUrl, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+                    'Authorization': `Bearer ${token}`,
                 },
                 body: JSON.stringify({
                     content,
@@ -300,6 +310,7 @@ export class ChatService {
 
             if (!response.ok) {
                 const errText = await response.text().catch(() => '')
+                logger.error('Stream request failed', { status: response.status, body: errText.substring(0, 200) })
                 throw new Error(`Stream request failed: ${response.status} ${errText.substring(0, 200)}`)
             }
 
@@ -334,7 +345,7 @@ export class ChatService {
                             if (e instanceof Error && data?.error) {
                                 throw e
                             }
-                            console.error('Error parsing stream line:', e)
+                            logger.error('Error parsing stream line', e)
                         }
                     }
                 }
@@ -359,11 +370,11 @@ export class ChatService {
                     if (e instanceof Error && data?.error) {
                         throw e
                     }
-                    console.error('Error parsing stream line:', e)
+                    logger.error('Error parsing stream line', e)
                 }
             }
         } catch (error) {
-            console.error('Streaming failed:', error)
+            logger.error('Streaming failed', error)
             throw error
         }
     }
@@ -386,7 +397,7 @@ export class ChatService {
 
             // Add attachments if provided
             if (attachments && attachments.length > 0) {
-                attachments.forEach((file, index) => {
+                attachments.forEach((file) => {
                     formData.append(`attachments`, file)
                 })
             }
@@ -399,7 +410,7 @@ export class ChatService {
 
             return response.data.data
         } catch (error) {
-            console.error('Failed to send message:', error)
+            logger.error('Failed to send message', error)
             throw error
         }
     }
@@ -412,7 +423,7 @@ export class ChatService {
         const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
         if (!uuidRegex.test(messageId)) {
             const err = new Error(`Message ${messageId} is not a valid server ID`)
-            console.error(err)
+            logger.error('Invalid feedback message ID', { messageId, error: err })
             throw err
         }
 
@@ -426,7 +437,7 @@ export class ChatService {
             )
             return response.data.data
         } catch (error) {
-            console.error(`Failed to send feedback for message ${messageId}:`, error)
+            logger.error(`Failed to send feedback for message ${messageId}`, error)
             throw error
         }
     }
@@ -441,7 +452,7 @@ export class ChatService {
             )
             return response.data
         } catch (error) {
-            console.error(`Failed to delete conversation ${conversationId}:`, error)
+            logger.error(`Failed to delete conversation ${conversationId}`, error)
             throw error
         }
     }
@@ -459,7 +470,7 @@ export class ChatService {
             )
             return response.data.data
         } catch (error) {
-            console.error(`Failed to update conversation ${conversationId}:`, error)
+            logger.error(`Failed to update conversation ${conversationId}`, error)
             throw error
         }
     }

@@ -13,39 +13,23 @@ import { useParams } from 'next/navigation';
 import { DepartmentStorageArchive } from '@/components/features/departments/storage';
 import DepartmentDetailLayout from '@/components/departments/layout/DepartmentDetailLayout';
 import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail';
-import { useDepartments } from '@/hooks/useDepartments';
 import LoadingSkeletons from '@/components/departments/loading/LoadingSkeletons';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
-import { useAuthContext } from '@/context'
 import { useRBAC } from '@/hooks/useRBAC'
-import { canAccessDepartmentDetail } from '@/lib/departmentAccess';
 
 export default function DepartmentStoragePage() {
     const params = useParams();
     const deptId = params.id as string;
-    const { user, isLoading: authLoading } = useAuthContext()
-    const { isAdmin, isTruongPhong } = useRBAC()
-    const { departments, isLoading: departmentsLoading } = useDepartments({ page_size: 100 })
+    const { hasPermission } = useRBAC()
+    const canReadDepartment = hasPermission('department_read')
+    const canReadFolders = hasPermission('folder_read')
+    const canReadDocuments = hasPermission('document_read')
+    const canAccess = canReadDepartment && canReadFolders && canReadDocuments
 
     const { data: departmentDetail, loading, error } = useDepartmentDetail(
-        deptId
+        deptId,
+        { enabled: canAccess }
     );
-
-    const canAccess = canAccessDepartmentDetail({
-        user,
-        targetDeptId: deptId,
-        departments,
-        isAdmin: isAdmin(),
-        isTruongPhong: isTruongPhong(),
-    })
-
-    if (authLoading) {
-        return <LoadingSkeletons />;
-    }
-
-    if (departmentsLoading) {
-        return <LoadingSkeletons />;
-    }
 
     if (!canAccess) {
         return (
@@ -81,6 +65,8 @@ export default function DepartmentStoragePage() {
             <DepartmentStorageArchive
                 departmentId={deptId}
                 departmentName={departmentDetail.name}
+                canReadFolders={canReadFolders}
+                canReadDocuments={canReadDocuments}
             />
         </DepartmentDetailLayout>
     );

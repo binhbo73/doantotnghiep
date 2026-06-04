@@ -2,7 +2,7 @@
 
 /**
  * Users Management Page
- * RBAC: Admin-only page. Non-admin users see an access denied message.
+ * RBAC: rendered from backend permission codes.
  */
 
 import React, { useState, useEffect, useCallback } from 'react'
@@ -13,6 +13,7 @@ import {
     createUser,
     updateUser,
     deleteUser,
+    resetUserPassword,
     User,
     CreateUserPayload,
     UpdateUserPayload,
@@ -23,19 +24,24 @@ import {
     UserTable,
     FilterBar,
     CreateUserModal,
+    ResetPasswordModal,
     Pagination,
     LoadingSkeleton,
     type FilterOptions,
     type CreateUserFormData,
 } from '@/components/features/users'
 import { useRBAC } from '@/hooks/useRBAC'
-import { useAuthContext } from '@/context'
 import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 
 export default function UsersPage() {
     const router = useRouter()
-    const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
-    const { user } = useAuthContext()
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canReadUsers = hasPermission('user_read')
+    const canCreateUser = hasPermission('user_create')
+    const canUpdateUser = hasPermission('user_update')
+    const canDeleteUsers = hasPermission('user_delete')
+    const canChangeUserRole = hasPermission('user_change_role')
+    const canResetPassword = hasPermission('user_reset_password')
 
     const [users, setUsers] = useState<User[]>([])
     const [loading, setLoading] = useState(true)
@@ -59,40 +65,30 @@ export default function UsersPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [editingUser, setEditingUser] = useState<User | null>(null)
     const [modalLoading, setModalLoading] = useState(false)
+    const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false)
+    const [resettingUser, setResettingUser] = useState<User | null>(null)
 
     // Selection state
     const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set())
 
     /**
-     * RBAC Guard - Admin or Manager (with limited scope)
-     */
-    if (!isAdmin() && !isTruongPhong()) {
-        return (
-            <AccessDeniedPage
-                title="Truy cập bị hạn chế"
-                message="Bạn cần quyền Quản trị viên (Admin) hoặc Trưởng phòng để truy cập trang Quản lý người dùng. Vui lòng liên hệ quản trị viên hệ thống nếu bạn cần được cấp quyền."
-                icon="🔒"
-                showBackButton={true}
-                onGoBack={() => router.push('/dashboard')}
-            />
-        )
-    }
-
-    /**
      * Fetch users from API
      */
     const fetchUsers = useCallback(async () => {
+        if (!canReadUsers) {
+            setLoading(false)
+            return
+        }
+
         try {
             setLoading(true)
             setError(null)
-
-            const deptFilter = isTruongPhong() ? (user?.department_id ?? undefined) : filters.department
 
             const response = await getAllUsers(
                 currentPage,
                 pageSize,
                 filters.search,
-                deptFilter,
+                filters.department,
                 filters.role,
                 filters.status === 'active'
                     ? true
@@ -107,11 +103,11 @@ export default function UsersPage() {
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to fetch users'
             setError(message)
-            console.error('❌ Error fetching users:', err)
+            console.error('Error fetching users:', err)
         } finally {
             setLoading(false)
         }
-    }, [currentPage, pageSize, filters])
+    }, [canReadUsers, currentPage, pageSize, filters])
 
     /**
      * Load users on mount and when dependencies change
@@ -129,7 +125,7 @@ export default function UsersPage() {
 
             const canManageUser = (target: User | null | undefined) => {
                 if (!target) return false
-                return isAdmin() || (isTruongPhong() && target.department_id === user?.department_id)
+                return hasAnyPermission(['user_update', 'user_change_role'])
             }
 
             if (editingUser) {
@@ -152,14 +148,7 @@ export default function UsersPage() {
                 await updateUser(editingUser.id, filteredPayload)
                 setSuccess('Người dùng đã được cập nhật thành công')
             } else {
-                // Manager can only create users in their own department
-                if (!isAdmin() && isTruongPhong()) {
-                    if (data.department_id && data.department_id !== user?.department_id) {
-                        throw new Error('Bạn chỉ có thể tạo người dùng trong phòng ban của mình')
-                    }
-                    // force department to manager's department if empty
-                    if (!data.department_id) data.department_id = user?.department_id || ''
-                }
+                if (!canCreateUser) throw new Error('Bạn không có quyền tạo người dùng')
                 // Create new user
                 const payload: CreateUserPayload = {
                     username: data.username,
@@ -183,7 +172,7 @@ export default function UsersPage() {
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to save user'
             setError(message)
-            console.error('❌ Error saving user:', err)
+            console.error('Error saving user:', err)
         } finally {
             setModalLoading(false)
         }
@@ -193,8 +182,8 @@ export default function UsersPage() {
      * Handle user deletion
      */
     const handleDeleteUser = async (targetUser: User) => {
-        // Permission check: admin or manager of same department
-        if (!(isAdmin() || (isTruongPhong() && targetUser.department_id === user?.department_id))) {
+        // Permission check before delete.
+        if (!canDeleteUsers) {
             alert('Bạn không có quyền xóa người dùng này')
             return
         }
@@ -214,7 +203,7 @@ export default function UsersPage() {
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to delete user'
             setError(message)
-            console.error('❌ Error deleting user:', err)
+            console.error('Error deleting user:', err)
         } finally {
             setLoading(false)
         }
@@ -223,8 +212,36 @@ export default function UsersPage() {
     /**
      * Handle opening edit modal
      */
+
+    const handleOpenResetPassword = (user: User) => {
+        if (!canResetPassword) {
+            alert('Bạn không có quyền đặt lại mật khẩu')
+            return
+        }
+        setResettingUser(user)
+        setIsResetPasswordModalOpen(true)
+    }
+
+    const handleResetPasswordSubmit = async (newPassword: string, confirmPassword: string, sendEmail: boolean) => {
+        if (!resettingUser) return
+        try {
+            setModalLoading(true)
+            const res = await resetUserPassword(resettingUser.account_id, { new_password: newPassword, confirm_password: confirmPassword, send_email: sendEmail })
+            setSuccess(res.note || 'Mật khẩu đã được đặt lại thành công')
+            setIsResetPasswordModalOpen(false)
+            setResettingUser(null)
+            setTimeout(() => setSuccess(null), 3000)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to reset password'
+            setError(message)
+            throw err
+        } finally {
+            setModalLoading(false)
+        }
+    }
+
     const handleEditUser = (targetUser: User) => {
-        if (!(isAdmin() || (isTruongPhong() && targetUser.department_id === user?.department_id))) {
+        if (!hasAnyPermission(['user_update', 'user_change_role'])) {
             alert('Bạn không có quyền chỉnh sửa người dùng này')
             return
         }
@@ -288,6 +305,23 @@ export default function UsersPage() {
         setSelectedUsers(newSelected)
     }
 
+    /**
+     * RBAC Guard - requires user_read from backend.
+     * Keep this after hooks/callbacks so React hook order stays stable while
+     * auth state is hydrating.
+     */
+    if (!canReadUsers) {
+        return (
+            <AccessDeniedPage
+                title="Truy cập bị hạn chế"
+                message="Bạn cần quyền user_read để truy cập trang Quản lý người dùng. Vui lòng liên hệ quản trị viên hệ thống nếu bạn cần được cấp quyền."
+                icon="🔒"
+                showBackButton={true}
+                onGoBack={() => router.push('/dashboard')}
+            />
+        )
+    }
+
     return (
         <main
             className="min-h-screen p-2 lg:p-4"
@@ -296,9 +330,9 @@ export default function UsersPage() {
             <div className="w-full px-2 lg:px-4 mx-auto">
                 {/* Header */}
                 <PageHeader
-                    title="👥 Quản lý người dùng"
+                    title="Quản lý người dùng"
                     description="Quản lý tài khoản người dùng, phân quyền và cấu hình hệ thống"
-                    onAddNew={isAdmin() || hasGlobalPermission('create', 'user') || isTruongPhong() ? handleAddUser : undefined}
+                    onAddNew={canCreateUser ? handleAddUser : undefined}
                     actionLabel="Thêm người dùng mới"
                 />
 
@@ -348,7 +382,11 @@ export default function UsersPage() {
                             onView={handleViewUser}
                             onEdit={handleEditUser}
                             onDelete={handleDeleteUser}
-                            onAddUser={handleAddUser}
+                            onResetPassword={handleOpenResetPassword}
+                            onAddUser={canCreateUser ? handleAddUser : undefined}
+                            canEdit={canUpdateUser || canChangeUserRole}
+                            canDelete={canDeleteUsers}
+                            canResetPassword={canResetPassword}
                             selectedUsers={selectedUsers}
                             onSelectUser={handleSelectUser}
                             sortBy={sortBy}
@@ -382,6 +420,17 @@ export default function UsersPage() {
                     }}
                     onSubmit={handleUserSubmit}
                     editingUser={editingUser}
+                    loading={modalLoading}
+                />
+
+                <ResetPasswordModal
+                    isOpen={isResetPasswordModalOpen}
+                    onClose={() => {
+                        setIsResetPasswordModalOpen(false)
+                        setResettingUser(null)
+                    }}
+                    onSubmit={handleResetPasswordSubmit}
+                    targetUser={resettingUser}
                     loading={modalLoading}
                 />
             </div>

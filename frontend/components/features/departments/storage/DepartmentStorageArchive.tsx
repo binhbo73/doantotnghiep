@@ -10,15 +10,22 @@ import { Search, Loader2, AlertCircle } from 'lucide-react';
 import { useDepartmentFolders } from '@/hooks/departments/useDepartmentFolders';
 import { FolderTree } from './FolderTree';
 import { FileMetadataPanel } from './FileMetadataPanel';
+import { PreviewModal } from '@/components/features/documents/PreviewModal';
+import { api } from '@/services/api/client';
+import { toast } from 'sonner';
 
 interface DepartmentStorageArchiveProps {
     departmentId: string;
     departmentName: string;
+    canReadFolders?: boolean;
+    canReadDocuments?: boolean;
 }
 
 export function DepartmentStorageArchive({
     departmentId,
     departmentName,
+    canReadFolders = true,
+    canReadDocuments = true,
 }: DepartmentStorageArchiveProps) {
     const {
         folders,
@@ -30,14 +37,49 @@ export function DepartmentStorageArchive({
         selectDocument,
         toggleFolder,
         refresh,
-    } = useDepartmentFolders(departmentId);
+    } = useDepartmentFolders(departmentId, {
+        enabled: canReadFolders && canReadDocuments,
+        canReadFolders,
+        canReadDocuments,
+    });
 
     const [searchQuery, setSearchQuery] = useState('');
+    const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState<string>('');
+    const [previewFileType, setPreviewFileType] = useState<string>('');
+    const [isPreviewing, setIsPreviewing] = useState(false);
 
     const handleDownload = () => {
         if (selectedDocument) {
             // TODO: Implement download logic
             alert(`Tải về: ${selectedDocument.original_name || selectedDocument.filename}`);
+        }
+    };
+
+    const handleOpen = async () => {
+        if (!selectedDocument) return;
+        setIsPreviewing(true);
+        const toastId = toast.loading('Đang chuẩn bị xem trước...');
+        try {
+            const endpoint = `/documents/${selectedDocument.id}/preview`;
+            const blob = await api.download(endpoint);
+            if (!blob || blob.size === 0) {
+                throw new Error('File rỗng hoặc không hợp lệ');
+            }
+            const blobType = blob.type?.toLowerCase() || '';
+            if (blobType.includes('application/json') || blobType.includes('text/html')) {
+                throw new Error('Phản hồi tải xuống không hợp lệ');
+            }
+            const url = URL.createObjectURL(blob);
+            setPreviewUrl(url);
+            setPreviewFileType(blob.type || selectedDocument.file_type);
+            setIsPreviewOpen(true);
+            toast.success('Đã mở bản xem trước', { id: toastId });
+        } catch (error) {
+            console.error('Preview failed:', error);
+            toast.error('Không thể xem trước tài liệu', { id: toastId });
+        } finally {
+            setIsPreviewing(false);
         }
     };
 
@@ -184,7 +226,7 @@ export function DepartmentStorageArchive({
                             selectedFolder={selectedFolder}
                             selectedDocument={selectedDocument}
                             onDownload={handleDownload}
-                            onShare={handleShare}
+                            onOpen={handleOpen}
                         />
                     </div>
                 </div>
@@ -198,6 +240,25 @@ export function DepartmentStorageArchive({
                     {selectedDocument &&
                         ` • Tệp: ${selectedDocument.original_name || selectedDocument.filename}`}
                 </div>
+            )}
+
+            {/* Preview Modal */}
+            {selectedDocument && (
+                <PreviewModal
+                    isOpen={isPreviewOpen}
+                    onClose={() => {
+                        setIsPreviewOpen(false);
+                        if (previewUrl.startsWith('blob:')) {
+                            URL.revokeObjectURL(previewUrl);
+                        }
+                        setPreviewUrl('');
+                        setPreviewFileType('');
+                    }}
+                    documentId={selectedDocument.id}
+                    fileUrl={previewUrl}
+                    fileName={selectedDocument.original_name || selectedDocument.filename || 'Tài liệu'}
+                    fileType={previewFileType || selectedDocument.file_type}
+                />
             )}
         </div>
     );

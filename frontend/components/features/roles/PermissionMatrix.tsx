@@ -85,7 +85,7 @@ export function PermissionMatrix({ selectedRoleId, refreshKey }: PermissionMatri
     }
 
     const getRoleName = () => {
-        return selectedRoleId || 'Admin'
+        return selectedRoleId || 'Chua chon vai tro'
     }
 
     const handleCreatePermission = async (data: {

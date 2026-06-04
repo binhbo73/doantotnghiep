@@ -8,7 +8,8 @@ export interface NavItem {
     icon: string
     href: string
     badge?: number
-    roles?: string[]
+    permissions?: string[]
+    requireAllPermissions?: boolean
 }
 
 export const dashboardNavigation: NavItem[] = [
@@ -23,40 +24,43 @@ export const dashboardNavigation: NavItem[] = [
         label: 'Tài liệu của tôi',
         icon: '👤',
         href: '/dashboard/my-documents',
-        roles: ['MANAGER', 'TRUONG_PHONG', 'USER', 'NHAN_VIEN', 'EMPLOYEE'],
+        permissions: ['document_read', 'folder_read'],
+        requireAllPermissions: true,
     },
     {
         id: 'documents',
         label: 'Kho tài liệu',
         icon: '📁',
         href: '/dashboard/documents',
+        permissions: ['document_read', 'folder_read'],
     },
     {
         id: 'chat',
         label: 'Chat',
         icon: '💬',
         href: '/dashboard/chat',
+        permissions: ['chat_read', 'chat_send', 'chat_create'],
     },
     {
         id: 'users',
         label: 'Quản lý người',
         icon: '👥',
         href: '/dashboard/users',
-        roles: ['ADMIN'],
+        permissions: ['user_read'],
     },
     {
         id: 'departments',
         label: 'Phòng ban',
         icon: '🏢',
         href: '/dashboard/departments',
-        roles: ['ADMIN', 'MANAGER', 'TRUONG_PHONG', 'USER', 'NHAN_VIEN', 'EMPLOYEE'],
+        permissions: ['department_read'],
     },
     {
         id: 'roles',
         label: 'Vai trò & Quyền hạn',
         icon: '🔐',
         href: '/dashboard/roles',
-        roles: ['ADMIN'],
+        permissions: ['role_manage', 'permission_manage'],
     },
     // {
     //     id: 'projects',

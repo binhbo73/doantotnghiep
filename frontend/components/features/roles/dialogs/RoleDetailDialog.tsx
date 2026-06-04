@@ -23,7 +23,8 @@ export function RoleDetailDialog({ isOpen, role, onClose, onEdit, onDelete }: Ro
         role?.id || ''
     )
 
-    const { isAdmin } = useRBAC()
+    const { hasPermission } = useRBAC()
+    const canManageRoles = hasPermission('role_manage')
 
     const handleDelete = async () => {
         if (!role || !onDelete) return
@@ -147,7 +148,7 @@ export function RoleDetailDialog({ isOpen, role, onClose, onEdit, onDelete }: Ro
                             Đóng
                         </button>
 
-                        {isAdmin() && (
+                        {canManageRoles && (
                             <>
                                 <button
                                     onClick={() => onEdit && onEdit(role.id)}

@@ -20,6 +20,126 @@ from .permission_manager import get_permission_manager
 logger = logging.getLogger(__name__)
 
 
+def get_user_permission_codes(user) -> set:
+    """Return current DB-backed permission codes for a user."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return set()
+
+    cached = getattr(user, '_rbac_permission_codes', None)
+    if cached is not None:
+        return cached
+
+    try:
+        from repositories.permission_repository import PermissionRepository
+        codes = set(PermissionRepository().get_user_permission_codes(user.id))
+        setattr(user, '_rbac_permission_codes', codes)
+        return codes
+    except Exception as e:
+        logger.error(f"Error loading permission codes for user {getattr(user, 'id', None)}: {e}", exc_info=True)
+        return set()
+
+
+def user_has_permission(user, permission_code: str) -> bool:
+    """Check a permission code with system_admin bypass."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+
+    codes = get_user_permission_codes(user)
+    return PermissionCodes.SYSTEM_ADMIN in codes or permission_code in codes
+
+
+def user_has_any_permission(user, permission_codes) -> bool:
+    """Check any permission code with system_admin bypass."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+
+    codes = get_user_permission_codes(user)
+    if PermissionCodes.SYSTEM_ADMIN in codes:
+        return True
+    return any(code in codes for code in permission_codes or [])
+
+
+def user_has_all_permissions(user, permission_codes) -> bool:
+    """Check all permission codes with system_admin bypass."""
+    if not user or not getattr(user, 'is_authenticated', False):
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+
+    codes = get_user_permission_codes(user)
+    if PermissionCodes.SYSTEM_ADMIN in codes:
+        return True
+    return all(code in codes for code in permission_codes or [])
+
+
+class HasAnyPermission(BasePermission):
+    """
+    Permission class that reads `required_permissions` from the view.
+    Grants access when the user has at least one required permission.
+    """
+
+    message = "You don't have the required permission"
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        required = getattr(view, 'required_permissions', None)
+        if required is None:
+            single = getattr(view, 'required_permission_code', None)
+            required = [single] if single else []
+
+        if isinstance(required, str):
+            required = [required]
+
+        if not required:
+            logger.warning(f"View {view.__class__.__name__} missing required_permissions")
+            return False
+
+        allowed = user_has_any_permission(request.user, required)
+        if not allowed:
+            self.message = f"You need one of these permissions: {', '.join(required)}"
+            logger.warning(
+                f"User {request.user.id} denied - missing any permission {required} "
+                f"on {request.method} {request.path}"
+            )
+        return allowed
+
+
+class HasAllPermissions(BasePermission):
+    """
+    Permission class that reads `required_permissions` from the view.
+    Grants access only when the user has all required permissions.
+    """
+
+    message = "You don't have all required permissions"
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        required = getattr(view, 'required_permissions', [])
+        if isinstance(required, str):
+            required = [required]
+
+        if not required:
+            logger.warning(f"View {view.__class__.__name__} missing required_permissions")
+            return False
+
+        allowed = user_has_all_permissions(request.user, required)
+        if not allowed:
+            self.message = f"You need all these permissions: {', '.join(required)}"
+            logger.warning(
+                f"User {request.user.id} denied - missing all permissions {required} "
+                f"on {request.method} {request.path}"
+            )
+        return allowed
+
+
 class IsAuthenticatedUser(IsAuthenticated):
     """
     Custom authenticated permission
@@ -46,36 +166,53 @@ class IsAuthenticatedUser(IsAuthenticated):
 
 
 class IsAdmin(BasePermission):
-    """Check if user has ADMIN role"""
+    """Check if user has system administrator permission."""
     message = "Admin access required"
     
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        return request.user.has_role(RoleIds.ADMIN)
+        return user_has_permission(request.user, PermissionCodes.SYSTEM_ADMIN)
 
 
 class IsManager(BasePermission):
-    """Check if user has MANAGER role"""
+    """Check if user has management-level permissions."""
     message = "Manager access required"
     
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        return request.user.has_role(RoleIds.MANAGER)
+        return user_has_any_permission(
+            request.user,
+            [
+                PermissionCodes.USER_UPDATE,
+                PermissionCodes.USER_CHANGE_ROLE,
+                PermissionCodes.DEPARTMENT_READ,
+                PermissionCodes.DEPARTMENT_UPDATE,
+            ],
+        )
 
 
 class IsAdminOrManager(BasePermission):
-    """Check if user has ADMIN or MANAGER role"""
+    """Check if user has system or management permissions."""
     message = "Admin or Manager access required"
     
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        return request.user.has_role(RoleIds.ADMIN) or request.user.has_role(RoleIds.MANAGER)
+        return user_has_any_permission(
+            request.user,
+            [
+                PermissionCodes.SYSTEM_ADMIN,
+                PermissionCodes.USER_UPDATE,
+                PermissionCodes.USER_CHANGE_ROLE,
+                PermissionCodes.DEPARTMENT_READ,
+                PermissionCodes.DEPARTMENT_UPDATE,
+            ],
+        )
 
 
 class HasDocumentPermission(BasePermission):
@@ -314,8 +451,7 @@ class IsAdmin(BasePermission):
     
     def has_permission(self, request, view):
         try:
-            perm_mgr = get_permission_manager()
-            if not perm_mgr.check_user_has_role(request.user.id, RoleIds.ADMIN):
+            if not user_has_permission(request.user, PermissionCodes.SYSTEM_ADMIN):
                 logger.warning(f"User {request.user.id} attempted admin-only access")
                 return False
             return True
@@ -337,11 +473,18 @@ class IsAdminOrManager(BasePermission):
     
     def has_permission(self, request, view):
         try:
-            perm_mgr = get_permission_manager()
-            has_admin = perm_mgr.check_user_has_role(request.user.id, RoleIds.ADMIN)
-            has_manager = perm_mgr.check_user_has_role(request.user.id, RoleIds.MANAGER)
+            has_management_permission = user_has_any_permission(
+                request.user,
+                [
+                    PermissionCodes.SYSTEM_ADMIN,
+                    PermissionCodes.USER_UPDATE,
+                    PermissionCodes.USER_CHANGE_ROLE,
+                    PermissionCodes.DEPARTMENT_READ,
+                    PermissionCodes.DEPARTMENT_UPDATE,
+                ],
+            )
             
-            if not (has_admin or has_manager):
+            if not has_management_permission:
                 logger.warning(f"User {request.user.id} attempted manager-level access")
                 return False
             
@@ -411,10 +554,8 @@ class CanModifyUser(BasePermission):
             obj: Target Account instance
         """
         try:
-            perm_mgr = get_permission_manager()
-            
-            # Admin can do anything
-            if perm_mgr.check_user_has_role(request.user.id, RoleIds.ADMIN):
+            # Users with user_update can modify managed user records.
+            if user_has_permission(request.user, PermissionCodes.USER_UPDATE):
                 return True
             
             # User can modify themselves
@@ -458,10 +599,16 @@ def is_admin_or_manager(user) -> bool:
     if not user or not user.is_authenticated:
         return False
     
-    return user.account_roles.filter(
-        role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-        is_deleted=False
-    ).exists()
+    return user_has_any_permission(
+        user,
+        [
+            PermissionCodes.SYSTEM_ADMIN,
+            PermissionCodes.USER_UPDATE,
+            PermissionCodes.USER_CHANGE_ROLE,
+            PermissionCodes.DEPARTMENT_READ,
+            PermissionCodes.DEPARTMENT_UPDATE,
+        ],
+    )
 
 
 def is_admin(user) -> bool:
@@ -481,10 +628,7 @@ def is_admin(user) -> bool:
     if not user or not user.is_authenticated:
         return False
     
-    return user.account_roles.filter(
-        role_id=RoleIds.ADMIN,
-        is_deleted=False
-    ).exists()
+    return user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
 
 
 # ============================================================================
@@ -496,9 +640,15 @@ __all__ = [
     'HasDocumentPermission',
     'HasFolderPermission',
     'HasPermissionCode',
+    'HasAnyPermission',
+    'HasAllPermissions',
     'HasRole',
     'IsAdmin',
     'IsAdminOrManager',
     'IsObjectOwner',
     'CanModifyUser',
+    'get_user_permission_codes',
+    'user_has_permission',
+    'user_has_any_permission',
+    'user_has_all_permissions',
 ]

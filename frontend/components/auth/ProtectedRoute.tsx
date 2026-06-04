@@ -3,21 +3,35 @@
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuthContext } from '@/context'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface ProtectedRouteProps {
     children: React.ReactNode
-    requiredRole?: string // 'admin', 'user', etc. Optional
+    requiredPermission?: string
+    requiredPermissions?: string[]
+    requireAllPermissions?: boolean
 }
 
 /**
  * ProtectedRoute - Wrapper component to protect dashboard and child routes
  * Redirects to login if not authenticated
- * Can optionally check for specific roles
+ * Can optionally check for specific permission codes.
  */
-export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
+export function ProtectedRoute({
+    children,
+    requiredPermission,
+    requiredPermissions,
+    requireAllPermissions = false,
+}: ProtectedRouteProps) {
     const router = useRouter()
-    const { isAuthenticated, isLoading, user } = useAuthContext()
-    const hasRequiredRole = !requiredRole || user?.roles?.some((role) => role.code === requiredRole)
+    const { isAuthenticated, isLoading } = useAuthContext()
+    const { hasAnyPermission, hasAllPermissions } = useRBAC()
+    const permissionList = [
+        ...(requiredPermission ? [requiredPermission] : []),
+        ...(requiredPermissions || []),
+    ]
+    const hasRequiredPermissions = permissionList.length === 0
+        || (requireAllPermissions ? hasAllPermissions(permissionList) : hasAnyPermission(permissionList))
 
     useEffect(() => {
         // If still loading, don't do anything yet
@@ -29,12 +43,11 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
             return
         }
 
-        // If role is required, check it
-        if (requiredRole && !hasRequiredRole) {
+        if (!hasRequiredPermissions) {
             // Redirect to unauthorized page or dashboard
             router.push('/dashboard')
         }
-    }, [isAuthenticated, isLoading, requiredRole, hasRequiredRole, router])
+    }, [isAuthenticated, isLoading, hasRequiredPermissions, router])
 
     // Show loading state while checking auth
     if (isLoading) {
@@ -55,8 +68,7 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
         return null
     }
 
-    // If role check failed, show nothing
-    if (requiredRole && !hasRequiredRole) {
+    if (!hasRequiredPermissions) {
         return null
     }
 

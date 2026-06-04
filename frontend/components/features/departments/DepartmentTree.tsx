@@ -2,9 +2,7 @@
 
 import React, { useMemo } from 'react'
 import { useRBAC } from '@/hooks/useRBAC'
-import { useAuthContext } from '@/context'
 import { Department } from '@/types/api'
-import { canEditDepartment } from '@/lib/departmentAccess'
 
 interface DepartmentTreeProps {
     departments: Department[]
@@ -24,8 +22,9 @@ const getIconForName = (name: string) => {
 }
 
 export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: DepartmentTreeProps) {
-    const { isAdmin, isTruongPhong } = useRBAC()
-    const { user } = useAuthContext()
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canUpdateDepartments = hasAnyPermission(['department_update', 'department_manage'])
+    const canDeleteDepartments = hasPermission('department_manage')
 
     const visibleDepartments = useMemo(
         () => departments.filter((d) => !d.is_deleted),
@@ -44,13 +43,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: De
         onSelect?.(id)
     }
 
-    const canEditNode = (node: Department) => canEditDepartment({
-        user,
-        targetDeptId: node.id,
-        departments: visibleDepartments,
-        isAdmin: isAdmin(),
-        isTruongPhong: isTruongPhong(),
-    })
+    const canEditNode = (_node: Department) => canUpdateDepartments
 
     const renderNode = (node: Department, depth: number = 0) => {
         const children = getChildren(node.id)
@@ -108,7 +101,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: De
                                         <span className="material-symbols-outlined text-sm">edit</span>
                                     </button>
                                 )}
-                                {isAdmin() && isRoot && (
+                                {canDeleteDepartments && isRoot && (
                                     <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-500 transition-colors"><span className="material-symbols-outlined text-sm">delete</span></button>
                                 )}
                                 {!isRoot && (

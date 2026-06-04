@@ -148,7 +148,7 @@ services:
       SMTP_PORT: 587
       SMTP_USE_TLS: "True"
       SMTP_USERNAME: phuongbinh732004@gmail.com
-      SMTP_PASSWORD: wtgr smng iswt twjm
+      SMTP_PASSWORD: fabe nefa wgdp benz
       EMAIL_SENDER: phuongbinh732004@gmail.com
       APP_URL: http://localhost:3000
       FRONTEND_URL: http://localhost:3000

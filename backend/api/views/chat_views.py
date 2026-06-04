@@ -19,9 +19,10 @@ import logging
 from typing import Optional
 from uuid import UUID
 
+from asgiref.sync import sync_to_async
 from django.utils import timezone
 from django.db.models import Q
-from rest_framework import status, viewsets
+from rest_framework import status, viewsets, serializers
 from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -52,8 +53,20 @@ from api.serializers.chat_serializers import (
     ConversationHistorySerializer,
 )
 from core.exceptions import BusinessLogicError, ValidationError
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import user_has_permission
 
 logger = logging.getLogger(__name__)
+
+
+def _chat_forbidden(permission_code: str) -> Response:
+    return Response(
+        ResponseBuilder.error(
+            message=f"You need {permission_code} permission",
+            status_code=status.HTTP_403_FORBIDDEN,
+        ),
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 # ============================================================
@@ -95,6 +108,9 @@ class ConversationListCreateView(BaseViewSet):
         - page_size: Items per page (default: 50, max: 500)
         - search: Search in conversation title
         """
+        if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+            return _chat_forbidden(PermissionCodes.CHAT_READ)
+
         queryset = self.get_queryset()
         
         # Debug logging
@@ -143,6 +159,9 @@ class ConversationListCreateView(BaseViewSet):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_CREATE):
+                return _chat_forbidden(PermissionCodes.CHAT_CREATE)
+
             serializer = ConversationCreateSerializer(
                 data=request.data,
                 context={'request': request}
@@ -200,6 +219,9 @@ class ConversationDetailView(BaseViewSet):
     def retrieve(self, request: Request, conversation_id: str) -> Response:
         """Get conversation details with message history"""
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+                return _chat_forbidden(PermissionCodes.CHAT_READ)
+
             conversation = self.get_object(UUID(conversation_id))
             
             if not conversation:
@@ -222,6 +244,9 @@ class ConversationDetailView(BaseViewSet):
     def update(self, request: Request, conversation_id: str) -> Response:
         """Update conversation title/summary"""
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_CREATE):
+                return _chat_forbidden(PermissionCodes.CHAT_CREATE)
+
             conversation = self.get_object(UUID(conversation_id))
 
             if not conversation:
@@ -263,6 +288,9 @@ class ConversationDetailView(BaseViewSet):
     def destroy(self, request: Request, conversation_id: str) -> Response:
         """Soft delete conversation"""
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_CREATE):
+                return _chat_forbidden(PermissionCodes.CHAT_CREATE)
+
             conversation = self.get_object(UUID(conversation_id))
 
             if not conversation:
@@ -352,6 +380,9 @@ class ConversationAttachmentView(BaseViewSet):
 
     def retrieve(self, request: Request, conversation_id: str) -> Response:
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+                return _chat_forbidden(PermissionCodes.CHAT_READ)
+
             conversation = self.get_object(UUID(conversation_id))
             if not conversation:
                 return self.error_response(
@@ -376,6 +407,9 @@ class ConversationAttachmentView(BaseViewSet):
 
     def create(self, request: Request, conversation_id: str) -> Response:
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_CREATE):
+                return _chat_forbidden(PermissionCodes.CHAT_CREATE)
+
             conversation = self.get_object(UUID(conversation_id))
             if not conversation:
                 return self.error_response(
@@ -432,6 +466,9 @@ class ConversationAttachmentView(BaseViewSet):
 
     def destroy(self, request: Request, conversation_id: str) -> Response:
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_CREATE):
+                return _chat_forbidden(PermissionCodes.CHAT_CREATE)
+
             conversation = self.get_object(UUID(conversation_id))
             if not conversation:
                 return self.error_response(
@@ -507,6 +544,10 @@ class MessageSendView(BaseViewSet):
         - Tokens used
         """
         try:
+            for permission_code in (PermissionCodes.CHAT_SEND, PermissionCodes.RAG_QUERY):
+                if not user_has_permission(request.user, permission_code):
+                    return _chat_forbidden(permission_code)
+
             serializer = MessageCreateSerializer(
                 data=request.data,
                 context={'request': request}
@@ -533,7 +574,7 @@ class MessageSendView(BaseViewSet):
                 message="Message processed successfully",
                 status_code=status.HTTP_201_CREATED
             )
-        except ValidationError as e:
+        except (ValidationError, serializers.ValidationError) as e:
             return self.error_response(
                 message=str(e),
                 status_code=status.HTTP_400_BAD_REQUEST
@@ -576,6 +617,9 @@ class MessageListView(BaseViewSet):
         - page_size: Items per page
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+                return _chat_forbidden(PermissionCodes.CHAT_READ)
+
             conversation = self.get_conversation(UUID(conversation_id))
             
             if not conversation:
@@ -631,6 +675,9 @@ class MessageDetailView(BaseViewSet):
     def retrieve(self, request: Request, message_id: str) -> Response:
         """Get message details"""
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+                return _chat_forbidden(PermissionCodes.CHAT_READ)
+
             message = Message.objects.get(
                 id=UUID(message_id),
                 is_deleted=False,
@@ -690,6 +737,9 @@ class MessageFeedbackView(BaseViewSet):
         - 401: Unauthorized
         - 404: Message not found or no permission
         """
+        if not user_has_permission(request.user, PermissionCodes.CHAT_SEND):
+            return _chat_forbidden(PermissionCodes.CHAT_SEND)
+
         try:
             message_id_uuid = UUID(message_id)
         except ValueError:
@@ -765,6 +815,9 @@ class MessageFeedbackView(BaseViewSet):
         Query Parameters:
         - rating: Filter by rating (1-5 stars) - optional
         """
+        if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+            return _chat_forbidden(PermissionCodes.CHAT_READ)
+
         try:
             message_id_uuid = UUID(message_id)
         except ValueError:
@@ -832,6 +885,9 @@ class MessageFeedbackView(BaseViewSet):
         Can only delete feedback that user created.
         Performs soft delete for audit trail.
         """
+        if not user_has_permission(request.user, PermissionCodes.CHAT_SEND):
+            return _chat_forbidden(PermissionCodes.CHAT_SEND)
+
         try:
             message_id_uuid = UUID(message_id)
         except ValueError:
@@ -977,6 +1033,11 @@ class ChatStreamView(View):
             return JsonResponse({'error': 'Authentication error'}, status=401)
 
         # 3. Tạo chat service
+        for permission_code in (PermissionCodes.CHAT_SEND, PermissionCodes.RAG_QUERY):
+            has_permission = await sync_to_async(user_has_permission)(user, permission_code)
+            if not has_permission:
+                return JsonResponse({'error': f'You need {permission_code} permission'}, status=403)
+
         from services.chat_service import ChatService
         chat_service = ChatService()
 

@@ -44,6 +44,7 @@ permissions_data = [
     ('user_delete', 'Delete User', 'users', 'delete', 'DELETE /api/users/{id} - Delete user account'),
     ('user_change_role', 'Change User Role', 'users', 'change_role', 'POST /api/users/{id}/roles - Assign/remove roles'),
     ('user_change_status', 'Change User Status', 'users', 'change_status', 'PATCH /api/users/{id}/status - Block/unblock user'),
+    ('user_reset_password', 'Reset User Password', 'users', 'reset_password', 'POST /accounts/{id}/reset-password - Admin reset password'),
     
     # Document Management APIs
     ('document_create', 'Create Document', 'documents', 'create', 'POST /api/documents - Upload/create documents'),
@@ -61,6 +62,7 @@ permissions_data = [
     ('folder_delete', 'Delete Folder', 'folders', 'delete', 'DELETE /api/folders/{id} - Delete folder'),
     
     # Department Management APIs
+    ('department_create', 'Create Department', 'departments', 'create', 'POST /api/departments - Create new department'),
     ('department_read', 'Read Department', 'departments', 'read', 'GET /api/departments - View department list'),
     ('department_update', 'Update Department', 'departments', 'update', 'PUT /api/departments/{id} - Update department'),
     ('department_manage', 'Manage Department', 'departments', 'manage', 'Full department management'),
@@ -113,10 +115,10 @@ roles_data = {
         'permissions': [
             # Admin can do everything
             'system_admin', 'permission_manage', 'role_manage',
-            'user_create', 'user_read', 'user_update', 'user_delete', 'user_change_role', 'user_change_status',
+            'user_create', 'user_read', 'user_update', 'user_delete', 'user_change_role', 'user_change_status', 'user_reset_password',
             'document_create', 'document_read', 'document_update', 'document_delete', 'document_share', 'document_download', 'document_write',
             'folder_create', 'folder_read', 'folder_update', 'folder_delete',
-            'department_read', 'department_update', 'department_manage',
+            'department_create', 'department_read', 'department_update', 'department_manage',
             'chat_create', 'chat_read', 'chat_send',
             'rag_query', 'embedding_generate',
             'audit_log_view'

@@ -273,15 +273,18 @@ export async function updateUsersStatus(
 
 /**
  * Reset user password
- * POST /api/v1/users/{id}/reset-password
+ * POST /api/v1/accounts/{id}/reset-password
  */
-export async function resetUserPassword(userId: string): Promise<{ temporary_password: string }> {
+export async function resetUserPassword(
+    accountId: string,
+    payload: { new_password?: string; confirm_password?: string; send_email?: boolean }
+): Promise<{ notification_sent: boolean; note: string }> {
     try {
         const response = await api.post<{
             success: boolean
             message?: string
-            data: { temporary_password: string }
-        }>(`/users/${userId}/reset-password`, {})
+            data: { notification_sent: boolean; note: string }
+        }>(`/accounts/${accountId}/reset-password`, payload)
 
         if (!response.success) {
             throw new Error(response.message || 'Failed to reset password')
@@ -294,3 +297,76 @@ export async function resetUserPassword(userId: string): Promise<{ temporary_pas
         throw new Error(message)
     }
 }
+
+/**
+ * My Profile data returned by /users/me
+ */
+export interface MyProfile {
+    id: string
+    account_id: string
+    username: string
+    email: string
+    full_name: string
+    avatar_url: string | null
+    address: string | null
+    birthday: string | null
+    department_name: string | null
+    metadata: Record<string, unknown>
+    created_at: string
+    updated_at: string
+}
+
+/**
+ * Get own profile (authenticated user)
+ * GET /api/v1/users/me
+ */
+export async function getMyProfile(): Promise<MyProfile> {
+    try {
+        const response = await api.get<{
+            success: boolean
+            message?: string
+            data: MyProfile
+        }>('/users/me')
+
+        if (!response.success || !response.data) {
+            throw new Error(response.message || 'Failed to fetch profile')
+        }
+
+        return response.data
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to fetch profile'
+        console.error('❌ Error fetching own profile:', err)
+        throw new Error(message)
+    }
+}
+
+/**
+ * Update own profile (authenticated user)
+ * PATCH /api/v1/users/me
+ * Allowed fields: full_name, address, birthday, metadata
+ */
+export async function updateMyProfile(payload: {
+    full_name?: string
+    address?: string
+    birthday?: string
+    metadata?: Record<string, unknown>
+}): Promise<MyProfile> {
+    try {
+        const response = await api.patch<{
+            success: boolean
+            message?: string
+            data: MyProfile
+        }>('/users/me', payload)
+
+        if (!response.success || !response.data) {
+            throw new Error(response.message || 'Failed to update profile')
+        }
+
+        return response.data
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to update profile'
+        console.error('❌ Error updating own profile:', err)
+        throw new Error(message)
+    }
+}
+

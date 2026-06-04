@@ -11,7 +11,8 @@ from api.serializers.base import ResponseBuilder, LoginSerializer, ChangePasswor
 from api.serializers.user_serializers import AccountSerializer, AccountCreateSerializer
 from api.views.base import BaseViewSet
 from services.user_service import UserService
-from core.constants import RoleIds, AccountStatus
+from core.constants import RoleIds, AccountStatus, PermissionCodes
+from core.permissions.drf_permissions import user_has_permission
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.db import transaction
@@ -868,13 +869,8 @@ class AdminResetPasswordView(APIView):
             from apps.users.password_reset import PasswordResetService
             from services.email_service import EmailService
             
-            # Check admin permission
-            is_admin = request.user.account_roles.filter(
-                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],  # ADMIN, MANAGER
-                is_deleted=False
-            ).exists()
-            
-            if not is_admin:
+            # Check account update permission
+            if not user_has_permission(request.user, PermissionCodes.USER_RESET_PASSWORD):
                 logger.warning(f"Non-admin user {request.user.username} tried to reset password for others")
                 return Response(
                     ResponseBuilder.error(message="Chỉ admin mới có quyền reset password cho account khác"),

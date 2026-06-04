@@ -8,15 +8,23 @@
 import { useState } from 'react'
 import { useDocuments, useDeleteDocument, useUploadDocuments } from '@/hooks/useDocument'
 import { ErrorBoundary } from '@/components/error/ErrorBoundary'
+import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 import { logger } from '@/services/logger'
+import { useRBAC } from '@/hooks/useRBAC'
 import { Loader2, Trash2, Upload, AlertCircle, Search } from 'lucide-react'
 import type { Document } from '@/types/api'
 
 interface DocumentsPageProps {
     initialLimit?: number
+    canUploadDocuments?: boolean
+    canDeleteDocuments?: boolean
 }
 
-export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps) {
+function DocumentsPageContent({
+    initialLimit = 20,
+    canUploadDocuments = false,
+    canDeleteDocuments = false,
+}: DocumentsPageProps) {
     const [page, setPage] = useState(1)
     const [searchTerm, setSearchTerm] = useState('')
     const [fileStatus, setFileStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle')
@@ -35,6 +43,7 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
 
     // Handle file upload
     const handleUpload = async (files: FileList) => {
+        if (!canUploadDocuments) return
         if (files.length === 0) return
 
         setFileStatus('uploading')
@@ -59,6 +68,7 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
 
     // Handle delete
     const handleDelete = (documentId: string) => {
+        if (!canDeleteDocuments) return
         if (window.confirm('Are you sure you want to delete this document?')) {
             deleteDocument.mutate(documentId)
         }
@@ -78,7 +88,7 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
                 {/* Main Content */}
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                     {/* Upload Section */}
-                    <div className="bg-white rounded-lg shadow mb-8 p-6">
+                    {canUploadDocuments && <div className="bg-white rounded-lg shadow mb-8 p-6">
                         <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-12 cursor-pointer hover:border-blue-500 transition-colors">
                             <Upload className="h-12 w-12 text-gray-400 mb-2" />
                             <span className="text-lg font-medium text-gray-900">
@@ -101,7 +111,7 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
                                 className="hidden"
                             />
                         </label>
-                    </div>
+                    </div>}
 
                     {/* Search Section */}
                     <div className="mb-6 flex gap-2">
@@ -210,7 +220,7 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
                                             </div>
 
                                             {/* Actions */}
-                                            <div className="mt-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            {canDeleteDocuments && <div className="mt-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                 <button
                                                     onClick={() => handleDelete(doc.id)}
                                                     disabled={deleteDocument.isPending}
@@ -223,7 +233,7 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
                                                     )}
                                                     Delete
                                                 </button>
-                                            </div>
+                                            </div>}
                                         </div>
                                     </div>
                                 ))}
@@ -251,5 +261,27 @@ export default function DocumentsPage({ initialLimit = 20 }: DocumentsPageProps)
                 </div>
             </div>
         </ErrorBoundary>
+    )
+}
+
+export default function DocumentsPage(props: DocumentsPageProps) {
+    const { hasPermission } = useRBAC()
+
+    if (!hasPermission('document_read')) {
+        return (
+            <AccessDeniedPage
+                title="Khong co quyen xem tai lieu"
+                message="Ban can quyen document_read de xem trang tai lieu nay."
+                icon="lock"
+            />
+        )
+    }
+
+    return (
+        <DocumentsPageContent
+            {...props}
+            canUploadDocuments={hasPermission('document_create')}
+            canDeleteDocuments={hasPermission('document_delete')}
+        />
     )
 }

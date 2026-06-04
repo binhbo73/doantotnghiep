@@ -4,7 +4,7 @@ import React from 'react'
 import { FolderTreeNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { DocumentRow } from './DocumentRow'
-import { useRBAC, ObjectPerm } from '@/hooks/useRBAC'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface FolderTreeNodeProps {
     node: FolderTreeNode
@@ -16,7 +16,6 @@ interface FolderTreeNodeProps {
     departmentMap?: Record<string, string>
     showPersonal?: boolean
 }
-
 // ─── Helper: Match search query ────────────────────────────
 
 function matchesSearch(text: string, query: string): boolean {
@@ -76,15 +75,16 @@ export function FolderTreeNodeComponent({
     showPersonal = true,
 }: FolderTreeNodeProps) {
     const { folder, children, documents, isExpanded, isLoadingDocs, hasLoadedDocs } = node
-    const { canWrite, canDelete, isTruongPhong, isInDepartment, isAdmin } = useRBAC()
+    const { canWrite, hasPermission } = useRBAC()
     const folderPerm = folder.my_permission
+    const canInspectFolderOwner = hasPermission('system_admin') || hasPermission('folder_update') || hasPermission('folder_delete')
+    const canOpenFolder = hasPermission('folder_read')
+    const canReadFolderDocuments = hasPermission('document_read')
+    const canWriteFolder = hasPermission('folder_update') || canWrite(folderPerm)
 
     const folderIcon = getFolderIcon(folder.name, isExpanded)
 
-    // FIXED: Check access_scope first - company-scoped folders are accessible to everyone
-    const isFolderCompanyScope = folder.access_scope === 'company'
-    const isManagerInDifferentDept = isTruongPhong() && folder.department_id && !isInDepartment(folder.department_id)
-    const restricted = !isFolderCompanyScope && isManagerInDifferentDept
+    const restricted = !canOpenFolder
 
     // Filter documents by search
     const filteredDocs = searchQuery
@@ -105,8 +105,8 @@ export function FolderTreeNodeComponent({
     const hasMatchingContent = filteredDocs.length > 0 || filteredChildren.length > 0
     if (searchQuery && !folderMatches && !hasMatchingContent) return null
 
-    // Hide personal-scoped folders when showPersonal is false, but allow admins to see them
-    if (folder.access_scope === 'personal' && !showPersonal && !isAdmin()) return null
+    // Hide personal-scoped folders when showPersonal is false, except for system admins.
+    if (folder.access_scope === 'personal' && !showPersonal && !hasPermission('system_admin')) return null
 
     const hasContent = children.length > 0 || (hasLoadedDocs && documents.length > 0)
     const docCount = documents.length
@@ -163,8 +163,8 @@ export function FolderTreeNodeComponent({
                     {/* Scope Badge */}
                     <div className="flex items-center gap-1 mt-1">
                         <ScopeBadge scope={folder.access_scope} />
-                        {/* If folder is personal, show owner/uploader name to admins */}
-                        {folder.access_scope === 'personal' && folder.uploader_name && isAdmin() && (
+                        {/* If folder is personal, show owner/uploader name to users who can manage folders. */}
+                        {folder.access_scope === 'personal' && folder.uploader_name && canInspectFolderOwner && (
                             <span className="ml-2 text-[10px] bg-yellow-50 px-2 py-0.5 rounded text-yellow-700 border border-yellow-100">{folder.uploader_name}</span>
                         )}
                     </div>
@@ -198,20 +198,7 @@ export function FolderTreeNodeComponent({
             {/* Expanded Content */}
             {isExpanded && (() => {
                 // FIXED: Check access_scope BEFORE checking department restrictions
-                // Logic:
-                // - access_scope='company' → Everyone can see (no restriction)
-                // - access_scope='department' → Managers can only see own/child departments (not parent)
-                // - access_scope='personal' → Only owner can see (handled by backend)
-
-                // Determine if this folder content should be restricted for display
-                const isFolderCompanyScope = folder.access_scope === 'company'
-                const isFolderPersonalScope = folder.access_scope === 'personal'
-                const isManagerInDifferentDept = isTruongPhong() && folder.department_id && !isInDepartment(folder.department_id)
-
-                // Show restriction ONLY if:
-                // 1. NOT company-scoped (company-scoped is visible to everyone)
-                // 2. AND is personal-scoped OR manager in different department
-                const restricted = !isFolderCompanyScope && isManagerInDifferentDept && !isFolderPersonalScope
+                const restricted = !canOpenFolder
 
                 if (restricted) {
                     return (
@@ -251,6 +238,17 @@ export function FolderTreeNodeComponent({
                             ))}
                         </div>
 
+                        {/* Document access locked */}
+                        {!canReadFolderDocuments && documentCount > 0 && (
+                            <div className="mt-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-center">
+                                <div className="flex flex-col items-center">
+                                    <span className="material-symbols-outlined text-2xl text-slate-400 mb-1">lock</span>
+                                    <p className="text-xs font-semibold text-slate-600">Tài liệu trong thư mục bị khóa</p>
+                                    <p className="text-[10px] text-slate-400 mt-1">Bạn cần quyền document_read để xem tài liệu bên trong.</p>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Documents */}
                         {hasLoadedDocs && filteredDocs.length > 0 && (
                             <div className="mt-1 space-y-0.5">
@@ -271,11 +269,11 @@ export function FolderTreeNodeComponent({
                         )}
 
                         {/* Empty state */}
-                        {hasLoadedDocs && documents.length === 0 && children.length === 0 && (
+                        {hasLoadedDocs && documents.length === 0 && children.length === 0 && !(documentCount > 0 && !canReadFolderDocuments) && (
                             <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
                                 <span className="material-symbols-outlined text-3xl text-slate-200 mb-2">folder_off</span>
                                 <p className="text-[11px] text-slate-500 font-medium">Thư mục trống</p>
-                                {canWrite(folderPerm) ? (
+                                {canWriteFolder ? (
                                     <p className="text-[10px] text-slate-400 mt-1">Sẵn sàng để tải lên tài liệu mới</p>
                                 ) : (
                                     <p className="text-[10px] text-slate-400 mt-1 italic">Bạn chỉ có quyền xem thư mục này</p>

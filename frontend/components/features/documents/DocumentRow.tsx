@@ -47,12 +47,14 @@ export function DocumentRow({
     folderName,
     departmentName,
 }: DocumentRowProps) {
-    const { canWrite, canDelete, canRead, isAdmin } = useRBAC()
+    const { canWrite, canDelete, canRead, hasAnyPermission, hasPermission } = useRBAC()
     const perm = document.my_permission
+    const canInspectUploader = hasAnyPermission(['document_share', 'document_update', 'document_delete'])
+    const canOpenDocument = hasPermission('document_read') || canRead(perm)
 
     const fileIcon = getFileIcon(document.file_type)
     const displayName = document.original_name || document.filename
-    const isRestricted = perm === 'none'
+    const isRestricted = !canOpenDocument
 
     return (
         <div
@@ -114,8 +116,8 @@ export function DocumentRow({
                                 </div>
                             </>
                         )}
-                        {/* Show uploader name only to admins */}
-                        {isAdmin() && document.uploader_name && (
+                        {/* Show uploader name only to users with document management permissions */}
+                        {canInspectUploader && document.uploader_name && (
                             <>
                                 <span className="text-[10px] text-slate-300">•</span>
                                 <span className="text-[10px] bg-yellow-50 px-2 py-0.5 rounded text-yellow-700 border border-yellow-100">{document.uploader_name}</span>
@@ -128,7 +130,7 @@ export function DocumentRow({
             {/* Action Buttons - Hidden for restricted documents */}
             {!isRestricted && (
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    {canRead(perm) && (
+                    {canOpenDocument && (
                         <button className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Xem">
                             <span className="material-symbols-outlined text-sm">visibility</span>
                         </button>

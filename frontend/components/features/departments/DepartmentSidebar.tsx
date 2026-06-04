@@ -4,6 +4,8 @@ import React from 'react'
 import Link from 'next/link'
 import { Department } from '@/types/api'
 import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail'
+import { useRBAC } from '@/hooks/useRBAC'
+import { api } from '@/services/api/client'
 
 interface DepartmentSidebarProps {
     department: Department | null
@@ -16,8 +18,19 @@ export function DepartmentSidebar({
     onClose,
     onEdit,
 }: DepartmentSidebarProps) {
+    const { hasPermission } = useRBAC()
+    const canDownloadDocuments = hasPermission('document_download')
+    const canReadUsers = hasPermission('user_read')
+    const canReadDocuments = hasPermission('document_read')
+
+    const expandFields = []
+    if (canReadUsers) expandFields.push('users')
+    if (canReadDocuments) expandFields.push('documents')
+
     // Fetch expanded details for the selected department
-    const { data: deptDetail, loading } = useDepartmentDetail(department?.id || '')
+    const { data: deptDetail, loading } = useDepartmentDetail(department?.id || '', {
+        expand: expandFields as any
+    })
 
     // Use fetched users, otherwise fallback to empty
     const membersList = deptDetail?.users?.items || []
@@ -31,6 +44,11 @@ export function DepartmentSidebar({
         const sizes = ['B', 'KB', 'MB', 'GB']
         const i = Math.floor(Math.log(bytes) / Math.log(k))
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+    }
+
+    const handleDownload = async (documentId: string, fileName: string) => {
+        if (!canDownloadDocuments) return
+        await api.download(`/documents/${documentId}/download`, fileName)
     }
 
     if (!department) {
@@ -147,7 +165,16 @@ export function DepartmentSidebar({
                                     {new Date(file.updated_at || file.created_at).toLocaleDateString('vi-VN')} • {formatFileSize(file.file_size)}
                                 </p>
                             </div>
-                            <a href={`/api/v1/documents/${file.id}/download`} className="material-symbols-outlined text-base text-slate-300 group-hover:text-[#9d4300] transition-colors" download>download</a>
+                            {canDownloadDocuments && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleDownload(file.id, file.original_name)}
+                                    className="material-symbols-outlined text-base text-slate-300 group-hover:text-[#9d4300] transition-colors"
+                                    aria-label="Download document"
+                                >
+                                    download
+                                </button>
+                            )}
                         </div>
                     )) : (
                         <div className="flex items-center gap-2 p-2 border border-slate-100 rounded-lg bg-slate-50">

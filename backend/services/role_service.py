@@ -40,6 +40,7 @@ from core.exceptions import (
     NotFoundError,
     PermissionDeniedError,
 )
+from core.constants import PermissionCodes
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,14 @@ class RoleService(BaseService):
         self.role_repo = self.repository  # From base (RoleRepository)
         self.permission_repo = PermissionRepository()
         self.audit_service = AuditService()
+
+    def _can_modify_system_role(self, requested_by_user_id: Optional[UUID]) -> bool:
+        if not requested_by_user_id:
+            return False
+        return self.permission_repo.check_user_has_permission(
+            requested_by_user_id,
+            PermissionCodes.SYSTEM_ADMIN,
+        )
     
     # ============================================================================
     # READ OPERATIONS
@@ -378,8 +387,9 @@ class RoleService(BaseService):
             if not role or role.is_deleted:
                 raise NotFoundError(f"Role {role_id} not found")
             
-            # Check if system role
-            if role.is_system_role:
+            # Built-in roles are protected from normal role managers, but
+            # system administrators can tune permissions from IAM.
+            if role.is_system_role and not self._can_modify_system_role(requested_by_user_id):
                 raise PermissionDeniedError(
                     f"Cannot modify system role '{role.code}'"
                 )
@@ -657,8 +667,9 @@ class RoleService(BaseService):
             if not role or role.is_deleted:
                 raise NotFoundError(f"Role not found")
             
-            # Verify not system role
-            if role.is_system_role:
+            # Built-in roles are protected from normal role managers, but
+            # system administrators can tune permissions from IAM.
+            if role.is_system_role and not self._can_modify_system_role(requested_by_user_id):
                 raise PermissionDeniedError(
                     f"Cannot modify system role '{role.code}'"
                 )
@@ -740,8 +751,9 @@ class RoleService(BaseService):
             if not role or role.is_deleted:
                 raise NotFoundError(f"Role not found")
             
-            # Verify not system role
-            if role.is_system_role:
+            # Built-in roles are protected from normal role managers, but
+            # system administrators can tune permissions from IAM.
+            if role.is_system_role and not self._can_modify_system_role(requested_by_user_id):
                 raise PermissionDeniedError(
                     f"Cannot modify system role '{role.code}'"
                 )
@@ -821,35 +833,30 @@ class RoleService(BaseService):
             ValidationError: If permission code not found
         """
         try:
-            from apps.users.models import User, AccountRole
-            
-            # Get user
+            from apps.users.models import Account, AccountRole, RolePermission
+
             try:
-                user = User.objects.get(id=user_id, is_deleted=False)
-            except User.DoesNotExist:
+                user = Account.objects.get(id=user_id, is_deleted=False)
+            except Account.DoesNotExist:
                 raise NotFoundError(f"User {user_id} not found")
-            
-            # Get permission
+
             permission = self.permission_repo.get_by_code(permission_code)
             if not permission or permission.is_deleted:
                 raise ValidationError(f"Permission '{permission_code}' not found")
-            
-            # Get user's roles
-            user_roles = AccountRole.objects.filter(
-                user=user,
-                is_active=True,
+
+            role_ids = list(AccountRole.objects.filter(
+                account_id=user.id,
                 is_deleted=False
-            ).select_related('role')
-            
-            # Find which roles have this permission
-            granting_roles = []
-            for account_role in user_roles:
-                if permission in account_role.role.get_permissions():
-                    granting_roles.append(account_role.role.code)
-            
+            ).values_list('role_id', flat=True))
+
+            granting_roles = list(RolePermission.objects.filter(
+                role_id__in=role_ids,
+                permission_id=permission.id,
+                is_deleted=False,
+            ).select_related('role').values_list('role__code', flat=True).distinct())
+
             has_permission = len(granting_roles) > 0
-            
-            # Build message
+
             if has_permission:
                 roles_str = ', '.join(granting_roles)
                 message = f"User has '{permission_code}' permission via roles: {roles_str}"

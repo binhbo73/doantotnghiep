@@ -4,14 +4,14 @@
  * Strategy:
  * 1. Do not create a token until real login succeeds
  * 2. Use loginAndGetToken() to get real JWT from backend
- * 3. Store in localStorage for persistence
+ * 3. Store in localStorage only when backend token cookies are unavailable
  */
 
-import { buildApiUrl, getApiBaseUrl } from '@/config/api'
+import { buildApiUrl } from '@/config/api'
+import { logger } from '@/services/logger'
 
 const TOKEN_KEY = 'auth_token'
 const REFRESH_TOKEN_KEY = 'refresh_token'
-const API_BASE_URL = getApiBaseUrl()
 
 export function initializeToken(): void {
     if (typeof window === 'undefined') return
@@ -19,98 +19,68 @@ export function initializeToken(): void {
     try {
         const existing = localStorage.getItem(TOKEN_KEY)
         if (existing && existing.trim() !== '') {
-            console.log('✅ Token already in localStorage')
+            logger.debug('Token already present in localStorage on startup')
         } else {
-            console.log('ℹ️ No auth token found on startup')
+            logger.debug('No auth token found in localStorage on startup')
         }
     } catch (err) {
-        console.error('❌ Error checking token on startup:', err)
+        logger.error('Error checking token on startup', err)
     }
 }
 
 /**
  * Login to backend and get real JWT token
- * Call this after user submits login form or on debug page
- *
- * @param username - Login username
- * @param password - Login password
- * @returns JWT token if successful
  */
 export async function loginAndGetToken(username: string, password: string): Promise<string> {
     try {
-        console.log(`🔐 Logging in as "${username}"...`)
+        logger.debug('Logging in via legacy token service', { username })
 
         const response = await fetch(buildApiUrl('/auth/login'), {
             method: 'POST',
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ username, password }),
-            signal: AbortSignal.timeout(10000) // 10 second timeout
+            signal: AbortSignal.timeout(10000)
         })
-
-        console.log(`📡 Login response status: ${response.status}`)
 
         if (!response.ok) {
             const errorText = await response.text()
-            console.error(`❌ Login failed (${response.status}): ${errorText.substring(0, 300)}`)
-            throw new Error(`Login failed with status ${response.status}`)
+            throw new Error(`Login failed with status ${response.status}: ${errorText.substring(0, 300)}`)
         }
 
         const data = await response.json()
-        console.log(`📡 Login response data keys: ${Object.keys(data || {}).join(', ')}`)
-        console.log(`📡 Login data.data keys: ${Object.keys(data?.data || {}).join(', ')}`)
-
-        // Try multiple possible response formats
         const token = data?.data?.access_token || data?.access_token || data?.token
         const refreshToken = data?.data?.refresh_token || data?.refresh_token
 
         if (!token) {
-            console.error('❌ No access_token in login response:', JSON.stringify(data).substring(0, 500))
+            logger.error('No access_token in login response', { response: data })
             throw new Error('No token in login response')
         }
 
-        if (!refreshToken) {
-            console.error('❌ No refresh_token in login response! Data:', JSON.stringify(data?.data || {}).substring(0, 500))
-        }
-
-        // Store both access and refresh tokens
         if (typeof window !== 'undefined') {
-            localStorage.setItem(TOKEN_KEY, token)
-            console.log(`✅ Access token stored (length: ${token.length})`)
-
             if (refreshToken) {
                 localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
-                console.log(`✅ Refresh token stored (length: ${refreshToken.length})`)
-            } else {
-                console.warn('⚠️ No refresh_token to store!')
             }
-
-            // Verify storage
-            const storedAccess = localStorage.getItem(TOKEN_KEY)
-            const storedRefresh = localStorage.getItem(REFRESH_TOKEN_KEY)
-            console.log(`🔍 Verified storage - access: ${storedAccess ? '✅' : '❌'}, refresh: ${storedRefresh ? '✅' : '❌'}`)
+            localStorage.setItem(TOKEN_KEY, token)
         }
 
-        console.log('✅ Access token obtained and stored successfully')
         return token
     } catch (err) {
-        console.error('❌ Login error:', err)
+        logger.error('Legacy login error', err)
         throw err
     }
 }
 
 /**
  * Get current token from localStorage (sync)
- * Used by API client to attach to requests
  */
 export function getAuthTokenForAPI(): string {
     if (typeof window === 'undefined') return ''
 
     try {
-        const token = localStorage.getItem(TOKEN_KEY) || ''
-
-        return token
+        return localStorage.getItem(TOKEN_KEY) || ''
     } catch (err) {
-        console.error('❌ Error retrieving token:', err)
+        logger.error('Error retrieving token', err)
         return ''
     }
 }
@@ -123,9 +93,9 @@ export function setAuthToken(token: string): void {
 
     try {
         localStorage.setItem(TOKEN_KEY, token)
-        console.log('✅ Token stored')
+        logger.debug('Legacy auth token stored in localStorage')
     } catch (err) {
-        console.error('❌ Error storing token:', err)
+        logger.error('Error storing token', err)
     }
 }
 
@@ -138,60 +108,65 @@ export function getRefreshToken(): string {
     try {
         return localStorage.getItem(REFRESH_TOKEN_KEY) || ''
     } catch (err) {
-        console.error('❌ Error retrieving refresh token:', err)
+        logger.error('Error retrieving refresh token', err)
         return ''
     }
 }
 
+let refreshPromise: Promise<string | null> | null = null
+
 /**
  * Refresh access token using refresh token
- * Called when access token expires (401 error)
  */
 export async function refreshAccessToken(): Promise<string | null> {
-    try {
-        const refreshToken = getRefreshToken()
-
-        if (!refreshToken) {
-            console.warn('⚠️ No refresh token available - cannot refresh access token')
-            return null
-        }
-
-        console.log('🔄 Attempting to refresh access token...')
-
-        const response = await fetch(buildApiUrl('/auth/refresh'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh: refreshToken }),
-            signal: AbortSignal.timeout(10000) // 10 second timeout
-        })
-
-        if (!response.ok) {
-            console.error(`❌ Token refresh failed with status ${response.status}`)
-            const errorData = await response.text()
-            console.error('Error details:', errorData.substring(0, 300))
-            return null
-        }
-
-        const data = await response.json()
-        console.log('📡 Refresh response data:', Object.keys(data || {}))
-
-        // Extract new access token from response
-        // Backend returns: { success: true, data: { access: "..." }, message: "..." }
-        const newAccessToken = data?.data?.access || data?.access
-
-        if (!newAccessToken) {
-            console.error('❌ No access token in refresh response:', JSON.stringify(data).substring(0, 300))
-            return null
-        }
-
-        // Store new access token
-        setAuthToken(newAccessToken)
-        console.log('✅ Access token refreshed successfully')
-        return newAccessToken
-    } catch (err) {
-        console.error('❌ Token refresh error:', err)
-        return null
+    if (refreshPromise) {
+        logger.debug('Reusing in-flight token refresh promise')
+        return refreshPromise
     }
+
+    refreshPromise = (async () => {
+        try {
+            const refreshToken = getRefreshToken()
+
+            if (!refreshToken) {
+                logger.warn('No refresh token available for legacy refresh flow')
+                return null
+            }
+
+            logger.debug('Attempting refresh in legacy token service')
+
+            const refreshPayload: Record<string, unknown> = { refresh: refreshToken }
+            const response = await fetch(buildApiUrl('/auth/refresh'), {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(refreshPayload),
+                signal: AbortSignal.timeout(10000)
+            })
+
+            if (!response.ok) {
+                return null
+            }
+
+            const data = await response.json()
+            const newAccessToken = data?.data?.access || data?.access
+
+            if (!newAccessToken) {
+                logger.error('No access token in refresh response', { response: data })
+                return null
+            }
+
+            setAuthToken(newAccessToken)
+            return newAccessToken
+        } catch (err) {
+            logger.error('Legacy token refresh failed', err)
+            return null
+        } finally {
+            refreshPromise = null
+        }
+    })()
+
+    return refreshPromise
 }
 
 /**
@@ -203,74 +178,51 @@ export function clearAuthToken(): void {
     try {
         localStorage.removeItem(TOKEN_KEY)
         localStorage.removeItem(REFRESH_TOKEN_KEY)
-        console.log('✅ Tokens cleared on logout')
+        logger.debug('Legacy auth tokens cleared from localStorage')
     } catch (err) {
-        console.error('❌ Error clearing tokens:', err)
+        logger.error('Error clearing legacy auth tokens', err)
     }
 }
 
 /**
  * Logout from backend and clear local tokens
- * Call this when user clicks logout button
- *
- * Sends: Authorization header with access_token + refresh_token in body
  */
 export async function logoutUser(): Promise<void> {
     try {
         const accessToken = getAuthTokenForAPI()
         const refreshToken = getRefreshToken()
 
-        console.log(`🔓 Logout attempt:`)
-        console.log(`  - Access token: ${accessToken ? `✅ (length: ${accessToken.length})` : '❌ EMPTY'}`)
-        console.log(`  - Refresh token: ${refreshToken ? `✅ (length: ${refreshToken.length})` : '❌ EMPTY'}`)
+        logger.debug('Legacy logout attempt', {
+            hasAccessToken: !!accessToken,
+            hasRefreshToken: !!refreshToken
+        })
 
         if (!accessToken || accessToken.includes('placeholder')) {
-            console.warn('⚠️ No valid access token to logout with')
+            logger.warn('No valid access token to logout with')
             clearAuthToken()
             return
         }
 
-        if (!refreshToken) {
-            console.warn('⚠️ No refresh token found! Checking localStorage directly...')
-            const directRefresh = localStorage.getItem(REFRESH_TOKEN_KEY)
-            console.warn(`  - Direct localStorage lookup: ${directRefresh ? `✅ (length: ${directRefresh.length})` : '❌ EMPTY'}`)
-        }
-
-        console.log('📡 Sending logout request...')
-        console.log(`   Body: { "refresh_token": "${refreshToken ? refreshToken.substring(0, 20) + '...' : 'EMPTY'}" }`)
-        console.log(`   Header: Authorization: Bearer ${accessToken.substring(0, 20)}...`)
-
         const response = await fetch(buildApiUrl('/auth/logout'), {
             method: 'POST',
+            credentials: 'include',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${accessToken}`
+                ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
             },
-            body: JSON.stringify({
-                refresh: refreshToken
-            }),
+            body: JSON.stringify({ refresh: refreshToken }),
             signal: AbortSignal.timeout(5000)
         })
 
-        console.log(`📡 Logout response status: ${response.status}`)
-
-        try {
-            const responseData = await response.text()
-            console.log(`📡 Logout response: ${responseData.substring(0, 300)}`)
-        } catch (e) {
-            // Ignore text parsing errors
-        }
-
         if (!response.ok) {
-            console.error(`❌ Logout API returned ${response.status}`)
+            logger.error('Legacy logout API returned non-OK status', { status: response.status })
         } else {
-            console.log('✅ Logout API returned 200 OK')
+            logger.debug('Legacy logout API successful', { status: response.status })
         }
 
         clearAuthToken()
-        console.log('✅ Logged out successfully and tokens cleared')
     } catch (err) {
-        console.error('❌ Logout error:', err)
+        logger.error('Legacy logout error', err)
         clearAuthToken()
     }
 }

@@ -164,11 +164,11 @@ class Logger {
                 buildApiUrl('/logs'),
                 {
                     method: 'POST',
+                    credentials: 'include', // rely on HttpOnly cookie auth when available
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${this.getAuthToken() || ''}`,
                     },
-                    body: JSON.stringify(logRequest),
+                    body: JSON.stringify(this.redactSensitiveFields(logRequest)),
                 }
             ).catch(() => {
                 // Fail silently - don't crash if logging fails
@@ -219,13 +219,30 @@ class Logger {
 
         if (typeof data === 'object' && data !== null) {
             try {
-                return JSON.parse(JSON.stringify(data))
+                return this.redactSensitiveFields(JSON.parse(JSON.stringify(data)))
             } catch {
                 return String(data)
             }
         }
 
         return data
+    }
+
+    /**
+     * Redact obvious sensitive fields from log payloads
+     */
+    private redactSensitiveFields(obj: any): any {
+        if (!obj || typeof obj !== 'object') return obj
+        const cloned = Array.isArray(obj) ? [...obj] : { ...obj }
+        const sensitiveKeys = ['auth_token', 'access_token', 'refresh_token', 'password', 'token']
+        for (const key of Object.keys(cloned)) {
+            if (sensitiveKeys.includes(key.toLowerCase())) {
+                cloned[key] = '[REDACTED]'
+            } else if (typeof cloned[key] === 'object' && cloned[key] !== null) {
+                cloned[key] = this.redactSensitiveFields(cloned[key])
+            }
+        }
+        return cloned
     }
 
     /**

@@ -32,58 +32,61 @@ const inferPermissionLevel = (permissionString: string): ObjectPerm => {
 }
 
 /**
- * useRBAC Hook - Centralized logic for Role-Based Access Control
- * Handles both Global Roles (Admin, Manager, Employee) and 
- * Permission strings from backend (e.g., "document_create", "user_delete").
- * 
- * Role codes are matched case-insensitively and support both
- * object format {code: 'admin'} and string format 'admin'.
+ * useRBAC Hook - Centralized logic for permission-based access control.
+ * Uses permission strings from backend (e.g., "document_create", "user_delete").
  */
 export function useRBAC() {
     const { user } = useAuthContext()
 
-    // --- 1. Global Role Checks ---
+    const permissionSet = new Set(
+        Array.isArray(user?.permissions)
+            ? user.permissions.map((permission) => normalizePermission(permission))
+            : []
+    )
 
-    /**
-     * Check if user has a specific role by code (case-insensitive)
-     * Supports both {code: '...'} objects and plain strings
-     */
-    const hasRole = (roleCode: string): boolean => {
-        if (!user || !user.roles || !Array.isArray(user.roles)) return false
+    const hasSystemAdmin = (): boolean => permissionSet.has('system_admin')
 
-        return user.roles.some((r: any) => {
-            const code = typeof r === 'string' ? r : r?.code
-            if (!code) return false
-            return code.toLowerCase() === roleCode.toLowerCase()
-        })
+    const hasPermission = (permissionCode: string): boolean => {
+        if (!permissionCode) return false
+        return permissionSet.has(normalizePermission(permissionCode)) || hasSystemAdmin()
+    }
+
+    const hasAnyPermission = (permissionCodes: string[] | undefined | null): boolean => {
+        if (!permissionCodes || permissionCodes.length === 0) return true
+        return hasSystemAdmin() || permissionCodes.some(hasPermission)
+    }
+
+    const hasAllPermissions = (permissionCodes: string[] | undefined | null): boolean => {
+        if (!permissionCodes || permissionCodes.length === 0) return true
+        return hasSystemAdmin() || permissionCodes.every(hasPermission)
     }
 
     /**
-     * Admin check - ADMIN or SUPERUSER role
+     * System administrator check from backend permission code.
      */
     const isAdmin = (): boolean => {
-        return hasRole('admin') || hasRole('superuser')
+        return hasPermission('system_admin')
     }
 
     /**
-     * Manager check (Trưởng phòng) - MANAGER or TRUONG_PHONG role
+     * Management-level display helper based on management permissions.
      */
     const isTruongPhong = (): boolean => {
-        return hasRole('truong_phong') || hasRole('manager')
+        return hasAnyPermission(['user_update', 'user_change_role', 'department_update'])
     }
 
     /**
-     * Employee check (Nhân viên) - USER, EMPLOYEE, or NHAN_VIEN role
+     * Basic authenticated-user display helper.
      */
     const isNhanVien = (): boolean => {
-        return hasRole('nhan_vien') || hasRole('user') || hasRole('employee')
+        return !!user && !isAdmin() && !isTruongPhong()
     }
 
     // --- 2. Object-Level Permission Checks ---
 
     /**
      * Generic permission check: actual >= required
-     * Example: can('write', 'admin') -> true
+     * Example: can('write', 'delete') -> true
      */
     const can = (required: ObjectPerm, actual: ObjectPerm | undefined | null): boolean => {
         if (!actual) return false
@@ -134,12 +137,18 @@ export function useRBAC() {
         !!uploaderId && user?.id === uploaderId
 
     /**
-     * Get the user's highest role label for display
+     * Get the user's backend role label for display.
+     * Color still reflects broad capability level, but the text comes from the role data.
      */
     const getRoleBadge = (): { label: string; color: string; bgColor: string } => {
-        if (isAdmin()) return { label: 'Quản trị viên', color: '#c62828', bgColor: '#ffebee' }
-        if (isTruongPhong()) return { label: 'Trưởng phòng', color: '#e65100', bgColor: '#fff3e0' }
-        return { label: 'Nhân viên', color: '#1565c0', bgColor: '#e3f2fd' }
+        const role = Array.isArray(user?.roles)
+            ? user.roles.find((item) => item?.name || item?.code)
+            : undefined
+        const label = role?.name || role?.code || 'Người dùng'
+
+        if (hasPermission('system_admin')) return { label, color: '#c62828', bgColor: '#ffebee' }
+        if (hasAnyPermission(['user_update', 'user_change_role', 'department_update'])) return { label, color: '#e65100', bgColor: '#fff3e0' }
+        return { label, color: '#1565c0', bgColor: '#e3f2fd' }
     }
 
     // --- 4. Backend Permission String Parsing & Checking ---
@@ -151,8 +160,7 @@ export function useRBAC() {
      * This directly matches the permission strings returned by the backend in the login response.
      */
     const hasPermissionString = (permissionString: string): boolean => {
-        if (!user || !Array.isArray(user.permissions)) return false
-        return user.permissions.includes(permissionString)
+        return hasPermission(permissionString)
     }
 
     /**
@@ -206,14 +214,14 @@ export function useRBAC() {
         // Check exact permission string match: "{resource}_{action}"
         if (normalizedResource) {
             const permString = `${normalizedResource}_${normalizedAction}`
-            if (user.permissions.some(perm => normalizePermission(perm) === permString)) return true
+            if (hasPermission(permString)) return true
         }
 
         // Check just the action (might be system-wide)
-        if (user.permissions.some(perm => normalizePermission(perm) === normalizedAction)) return true
+        if (hasPermission(normalizedAction)) return true
 
         // Check system_admin (has everything)
-        if (user.permissions.some(perm => normalizePermission(perm) === 'system_admin')) return true
+        if (hasSystemAdmin()) return true
 
         // Infer the required level from the action name itself
         const requiredLevel = inferPermissionLevel(normalizedAction) || inferPermissionLevel(resource ? `${normalizedResource}_${normalizedAction}` : normalizedAction)
@@ -309,7 +317,7 @@ export function useRBAC() {
         resourceType?: string,
     ): ObjectPerm => {
         // Admins get full rights
-        if (isAdmin()) return 'delete'
+        if (hasPermission('system_admin')) return 'delete'
 
         // 1️⃣ Start with my_permission from resource
         let best: ObjectPerm = resource?.my_permission ?? 'none'
@@ -347,7 +355,6 @@ export function useRBAC() {
         isAdmin,
         isTruongPhong,
         isNhanVien,
-        hasRole,
         can,
         canRead,
         canWrite,
@@ -360,6 +367,9 @@ export function useRBAC() {
         getEffectivePermission,
         parsePermissionString,
         hasGlobalPermission,
+        hasPermission,
+        hasAnyPermission,
+        hasAllPermissions,
         // NEW: Backend permission helpers
         hasPermissionString,
         parseBackendPermission,

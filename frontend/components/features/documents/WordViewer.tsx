@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { api } from '@/services/api/client'
+import DOMPurify from 'dompurify'
+import { logger } from '@/services/logger'
 
 interface WordViewerProps {
     fileUrl: string
@@ -303,7 +305,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
             setError(null)
             setProgress('Tải preview...')
             try {
-                console.log('Loading Word preview from:', fileUrl)
+                logger.debug('Loading Word preview from', { fileUrl })
                 setProgress('Fetching preview HTML...')
 
                 const response = await api.get<any>(fileUrl)
@@ -336,12 +338,23 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
                     </style>
                 `
 
-                setHtmlContent(inlineStyles + highlightPreviewHtml(htmlBody, searchText, chunkText, answerContext))
+                const highlighted = highlightPreviewHtml(htmlBody, searchText, chunkText, answerContext)
+
+                // Sanitize highlighted HTML to prevent XSS while allowing our injected <mark> highlights and classes
+                const safe = DOMPurify.sanitize(highlighted, {
+                    ADD_TAGS: ['mark'],
+                    ADD_ATTR: ['class'],
+                    FORBID_TAGS: ['script', 'style', 'iframe'],
+                    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus'],
+                    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|ftp):|[^a-z]|[a-z+.-]+:)/i,
+                })
+
+                setHtmlContent(inlineStyles + safe)
                 setProgress('Done')
                 onLoadSuccessRef.current()
             } catch (err) {
                 const error = err instanceof Error ? err : new Error(String(err))
-                console.error('Word loading error:', error)
+                logger.error('Word loading error', error)
                 setError(`Error: ${error.message}`)
                 onLoadErrorRef.current(error)
             } finally {

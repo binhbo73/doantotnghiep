@@ -43,15 +43,12 @@ export async function requestMiddleware(
     // Add auth header if token exists (but filter out placeholder tokens)
     if (token && !token.includes('placeholder')) {
         request.headers.set('Authorization', `Bearer ${token}`)
-        console.log(`✅ [RequestMiddleware] Authorization header added for ${request.method} ${request.url} (token length: ${token.length})`)
+        console.debug(`[RequestMiddleware] Authorization header added for ${request.method} ${request.url}`)
     } else if (token && token.includes('placeholder')) {
-        console.warn(`⚠️ [RequestMiddleware] Placeholder token found for ${request.method} ${request.url} - no real JWT yet. User not authenticated.`)
+        console.warn(`[RequestMiddleware] Placeholder token found for ${request.method} ${request.url} - no real JWT yet.`)
     } else if (!isPublicEndpoint(request.url)) {
         // Only warn about missing tokens for protected endpoints
-        console.warn(`⚠️ [RequestMiddleware] No auth token found for ${request.method} ${request.url}. localStorage check:`, {
-            storageName: typeof window !== 'undefined' ? (typeof localStorage !== 'undefined' ? 'available' : 'unavailable') : 'server-side',
-            tokenValue: token ? 'exists' : 'null/empty'
-        })
+        console.warn(`[RequestMiddleware] No auth token found for ${request.method} ${request.url}.`)
     }
 
     // Add body for non-GET requests

@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios'
 import { env } from '@/config/environment'
+import { logger } from '@/services/logger'
 
 /**
  * API Client Configuration
@@ -13,6 +14,7 @@ interface ExtendedAxiosRequestConfig extends AxiosRequestConfig {
 
 class APIClient {
     private instance: AxiosInstance
+    private inMemoryAccessToken: string | null = null
 
     constructor() {
         const normalizedBase = env.apiUrl.endsWith('/') ? env.apiUrl : `${env.apiUrl}/`
@@ -20,6 +22,7 @@ class APIClient {
         this.instance = axios.create({
             baseURL: normalizedBase,
             timeout: env.defaultTimeout,
+            withCredentials: true, // rely on HttpOnly cookies when available
             headers: {
                 'Accept': 'application/json',
             },
@@ -29,18 +32,10 @@ class APIClient {
         this.instance.interceptors.request.use(
             (config) => {
                 const token = this.getToken()
-                console.log('🔐 Request Interceptor:', {
-                    url: config.url,
-                    method: config.method,
-                    hasToken: !!token,
-                    tokenPrefix: token ? token.substring(0, 20) + '...' : 'NO_TOKEN'
-                })
 
+                // Attach Authorization header only when an in-memory or explicit token exists.
                 if (token) {
                     config.headers.Authorization = `Bearer ${token}`
-                    console.log('✅ Token added to headers')
-                } else {
-                    console.warn('❌ No token found in localStorage!')
                 }
 
                 // Don't override Content-Type if it's already set (e.g., for FormData)
@@ -60,18 +55,26 @@ class APIClient {
 
                 // Handle 401 Unauthorized
                 if (error.response?.status === 401 && !originalRequest.skipTokenRefresh) {
-                    const refreshToken = this.getRefreshToken()
+                    try {
+                        // Attempt to refresh token using HttpOnly cookies when available.
+                        // We intentionally do not send refresh token in body to prefer backend cookie flow.
+                        const refreshPayload: Record<string, unknown> = {}
+                        const storedRefresh = this.getRefreshToken()
+                        if (storedRefresh) {
+                            refreshPayload.refresh = storedRefresh
+                        }
 
-                    if (refreshToken) {
-                        try {
-                            // Attempt to refresh token
-                            const response = await axios.post(
-                                `${env.apiUrl}/auth/refresh/`,
-                                { refresh: refreshToken },
-                                { timeout: env.defaultTimeout }
-                            )
+                        const response = await axios.post(
+                            `${env.apiUrl.replace(/\/$/, '')}/auth/refresh/`,
+                            refreshPayload,
+                            { timeout: env.defaultTimeout, withCredentials: true }
+                        )
 
-                            const newAccessToken = response.data.access
+                        // Support multiple response shapes including wrapper data and direct token payloads.
+                        const respData = response.data || {}
+                        const newAccessToken = this.parseAccessToken(respData)
+
+                        if (newAccessToken) {
                             this.setToken(newAccessToken)
 
                             // Retry original request with new token
@@ -80,16 +83,17 @@ class APIClient {
                             }
 
                             return this.instance(originalRequest)
-                        } catch (refreshError) {
-                            // Token refresh failed - clear storage and redirect to login
-                            this.clearTokens()
-                            window.location.href = '/login'
-                            return Promise.reject(refreshError)
                         }
-                    } else {
-                        // No refresh token - redirect to login
+
+                        // If no token returned, treat as failed refresh
                         this.clearTokens()
                         window.location.href = '/login'
+                        return Promise.reject(error)
+                    } catch (refreshError) {
+                        // Token refresh failed - clear storage and redirect to login
+                        this.clearTokens()
+                        window.location.href = '/login'
+                        return Promise.reject(refreshError)
                     }
                 }
 
@@ -106,7 +110,7 @@ class APIClient {
                     }[statusCode] || data?.message || 'Lỗi không xác định'
 
                     // You can dispatch to a toast/notification system here if needed
-                    console.error(`API Error [${statusCode}]:`, errorMessage)
+                    logger.error(`API Error [${statusCode}]`, { errorMessage, url: error.config?.url })
                 }
 
                 return Promise.reject(error)
@@ -114,44 +118,62 @@ class APIClient {
         )
     }
 
-    private getToken(): string | null {
+    // Returns the currently available access token. Prefers in-memory token set by the login/refresh flow.
+    public getToken(): string | null {
+        if (this.inMemoryAccessToken) return this.inMemoryAccessToken
         if (typeof window !== 'undefined') {
-            const token = localStorage.getItem('auth_token')  // Changed from 'access_token'
-            console.log('🔑 getToken() from localStorage:', {
-                key: 'auth_token',
-                found: !!token,
-                preview: token ? token.substring(0, 30) + '...' : 'null'
-            })
-            return token
+            // Fallback for older deployments that still write tokens to localStorage
+            try {
+                const token = localStorage.getItem('auth_token')
+                return token
+            } catch {
+                return null
+            }
         }
         return null
     }
 
-    private getRefreshToken(): string | null {
+    public getRefreshToken(): string | null {
         if (typeof window !== 'undefined') {
-            const token = localStorage.getItem('refresh_token')
-            console.log('🔄 getRefreshToken() from localStorage:', {
-                key: 'refresh_token',
-                found: !!token,
-                preview: token ? token.substring(0, 30) + '...' : 'null'
-            })
-            return token
+            try {
+                return localStorage.getItem('refresh_token')
+            } catch {
+                return null
+            }
         }
         return null
     }
 
-    private setToken(token: string): void {
-        if (typeof window !== 'undefined') {
-            localStorage.setItem('auth_token', token)  // Changed from 'access_token'
-            console.log('💾 setToken() to localStorage with key: auth_token')
-        }
+    private parseAccessToken(payload: any): string | null {
+        if (!payload || typeof payload !== 'object') return null
+        return (
+            payload.access ||
+            payload.access_token ||
+            payload.token ||
+            payload?.data?.access ||
+            payload?.data?.access_token ||
+            payload?.data?.token ||
+            payload?.data?.data?.access ||
+            payload?.data?.data?.access_token ||
+            payload?.data?.data?.token ||
+            null
+        )
     }
 
-    private clearTokens(): void {
+    // Set token into in-memory store. Avoid persisting tokens in JS-accessible storage.
+    public setToken(token: string): void {
+        this.inMemoryAccessToken = token
+    }
+
+    public clearTokens(): void {
+        this.inMemoryAccessToken = null
         if (typeof window !== 'undefined') {
-            localStorage.removeItem('auth_token')  // Changed from 'access_token'
-            localStorage.removeItem('refresh_token')
-            console.log('🗑️ Tokens cleared from localStorage')
+            try {
+                localStorage.removeItem('auth_token')
+                localStorage.removeItem('refresh_token')
+            } catch {
+                // ignore
+            }
         }
     }
 

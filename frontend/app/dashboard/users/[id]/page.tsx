@@ -2,14 +2,18 @@
 
 /**
  * User Detail Page
+'use client'
+
+/**
+ * User Detail Page
  * Shows detailed information about a single user
  */
 
 import React, { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, Mail, Calendar, Building, Badge, Trash2, Edit, Clock } from 'lucide-react'
-import { getUserById, deleteUser, updateUser, User, UpdateUserPayload } from '@/services/users'
-import { UserAvatar, StatusBadge, RoleBadge, CreateUserModal, type CreateUserFormData } from '@/components/features/users'
+import { ArrowLeft, Mail, Calendar, Building, Badge, Trash2, Edit, Clock, Lock } from 'lucide-react'
+import { getUserById, deleteUser, updateUser, resetUserPassword, User, UpdateUserPayload } from '@/services/users'
+import { UserAvatar, StatusBadge, RoleBadge, CreateUserModal, ResetPasswordModal, type CreateUserFormData } from '@/components/features/users'
 import { useAuthContext } from '@/context'
 import { useRBAC } from '@/hooks/useRBAC'
 
@@ -18,7 +22,11 @@ export default function UserDetailPage() {
     const router = useRouter()
     const userId = params.id as string
     const { isLoading: authLoading } = useAuthContext()
-    const { isAdmin } = useRBAC()
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canReadUser = hasPermission('user_read')
+    const canUpdateUser = hasPermission('user_update')
+    const canDeleteUser = hasPermission('user_delete')
+    const canResetPassword = hasPermission('user_reset_password')
 
     const [user, setUser] = useState<User | null>(null)
     const [loading, setLoading] = useState(true)
@@ -26,6 +34,9 @@ export default function UserDetailPage() {
     const [isDeleting, setIsDeleting] = useState(false)
     const [isEditModalOpen, setIsEditModalOpen] = useState(false)
     const [isEditLoading, setIsEditLoading] = useState(false)
+    const [isResetPasswordModalOpen, setIsResetPasswordModalOpen] = useState(false)
+    const [modalLoading, setModalLoading] = useState(false)
+    const [success, setSuccess] = useState<string | null>(null)
 
     /**
      * Fetch user details
@@ -33,7 +44,7 @@ export default function UserDetailPage() {
     useEffect(() => {
         if (authLoading) return
 
-        if (!isAdmin()) {
+        if (!canReadUser) {
             setLoading(false)
             return
         }
@@ -54,13 +65,13 @@ export default function UserDetailPage() {
         }
 
         fetchUser()
-    }, [userId, authLoading, isAdmin])
+    }, [userId, authLoading, canReadUser])
 
     /**
      * Handle user deletion
      */
     const handleDelete = async () => {
-        if (!isAdmin()) {
+        if (!canDeleteUser) {
             setError('Bạn không có quyền xóa người dùng này')
             return
         }
@@ -91,7 +102,7 @@ export default function UserDetailPage() {
      * Handle user edit
      */
     const handleEditSubmit = async (data: CreateUserFormData) => {
-        if (!isAdmin()) {
+        if (!canUpdateUser) {
             setError('Bạn không có quyền chỉnh sửa người dùng này')
             return
         }
@@ -124,12 +135,42 @@ export default function UserDetailPage() {
         }
     }
 
+    const handleResetPasswordSubmit = async (newPassword: string, confirmPassword: string, sendEmail: boolean) => {
+        if (!user) return
+        try {
+            setModalLoading(true)
+            const res = await resetUserPassword(user.account_id, { new_password: newPassword, confirm_password: confirmPassword, send_email: sendEmail })
+            setSuccess(res.note || 'Mật khẩu đã được đặt lại thành công')
+            setIsResetPasswordModalOpen(false)
+            setTimeout(() => setSuccess(null), 3000)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to reset password'
+            setError(message)
+            throw err
+        } finally {
+            setModalLoading(false)
+        }
+    }
+
     if (loading) {
         return (
             <main className="min-h-screen p-6" style={{ backgroundColor: '#f9f9ff' }}>
                 <div className="max-w-4xl mx-auto">
                     <div className="h-12 bg-gray-200 rounded mb-4 animate-pulse" />
                     <div className="h-96 bg-gray-200 rounded animate-pulse" />
+                </div>
+            </main>
+        )
+    }
+
+    if (!authLoading && !canReadUser) {
+        return (
+            <main className="min-h-screen p-6" style={{ backgroundColor: '#f9f9ff' }}>
+                <div className="max-w-4xl mx-auto">
+                    <div className="p-6 rounded-lg" style={{ backgroundColor: '#fff3e0', color: '#9d4300' }}>
+                        <h2 className="font-semibold mb-2">Truy cập bị hạn chế</h2>
+                        <p>Bạn cần quyền user_read để xem trang chi tiết người dùng.</p>
+                    </div>
                 </div>
             </main>
         )
@@ -153,19 +194,6 @@ export default function UserDetailPage() {
                     >
                         <h2 className="font-semibold mb-2">Lỗi</h2>
                         <p>{error || 'Không tìm thấy người dùng'}</p>
-                    </div>
-                </div>
-            </main>
-        )
-    }
-
-    if (!authLoading && !isAdmin()) {
-        return (
-            <main className="min-h-screen p-6" style={{ backgroundColor: '#f9f9ff' }}>
-                <div className="max-w-4xl mx-auto">
-                    <div className="p-6 rounded-lg" style={{ backgroundColor: '#fff3e0', color: '#9d4300' }}>
-                        <h2 className="font-semibold mb-2">Truy cập bị hạn chế</h2>
-                        <p>Bạn cần quyền Quản trị viên để xem trang chi tiết người dùng.</p>
                     </div>
                 </div>
             </main>
@@ -212,7 +240,7 @@ export default function UserDetailPage() {
                         <span>Quay lại</span>
                     </button>
 
-                    <button
+                    {canDeleteUser && <button
                         onClick={handleDelete}
                         disabled={isDeleting}
                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-white font-medium transition-all hover:shadow-lg disabled:opacity-50"
@@ -222,8 +250,15 @@ export default function UserDetailPage() {
                     >
                         <Trash2 size={18} />
                         <span>{isDeleting ? 'Đang xóa...' : 'Xóa người dùng'}</span>
-                    </button>
+                    </button>}
                 </div>
+
+                {success && (
+                    <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg text-green-700 flex items-center justify-between">
+                        <span>{success}</span>
+                        <button onClick={() => setSuccess(null)} className="text-green-700 hover:text-green-900">✕</button>
+                    </div>
+                )}
 
                 {/* Main Card */}
                 <div
@@ -429,19 +464,35 @@ export default function UserDetailPage() {
                 </div>
 
                 {/* Edit Button */}
-                {isAdmin() && (
-                    <div className="mt-6 flex justify-center">
-                        <button
-                            onClick={() => setIsEditModalOpen(true)}
-                            className="flex items-center gap-2 px-8 py-3 rounded-lg text-white font-medium transition-all hover:shadow-lg"
-                            style={{
-                                backgroundColor: '#9d4300',
-                                backgroundImage: 'linear-gradient(to bottom, #9d4300, #783200)',
-                            }}
-                        >
-                            <Edit size={18} />
-                            <span>Chỉnh sửa thông tin</span>
-                        </button>
+                {(canUpdateUser || canResetPassword) && (
+                    <div className="mt-6 flex justify-center gap-4">
+                        {canUpdateUser && (
+                            <button
+                                onClick={() => setIsEditModalOpen(true)}
+                                className="flex items-center gap-2 px-8 py-3 rounded-lg text-white font-medium transition-all hover:shadow-lg"
+                                style={{
+                                    backgroundColor: '#9d4300',
+                                    backgroundImage: 'linear-gradient(to bottom, #9d4300, #783200)',
+                                }}
+                            >
+                                <Edit size={18} />
+                                <span>Chỉnh sửa thông tin</span>
+                            </button>
+                        )}
+                        {canResetPassword && (
+                            <button
+                                onClick={() => setIsResetPasswordModalOpen(true)}
+                                className="flex items-center gap-2 px-8 py-3 rounded-lg font-medium transition-all hover:shadow-lg border"
+                                style={{
+                                    backgroundColor: 'white',
+                                    color: '#0d1c2e',
+                                    borderColor: '#dce2f3'
+                                }}
+                            >
+                                <Lock size={18} />
+                                <span>Đặt lại mật khẩu</span>
+                            </button>
+                        )}
                     </div>
                 )}
 
@@ -452,6 +503,14 @@ export default function UserDetailPage() {
                     onSubmit={handleEditSubmit}
                     editingUser={user}
                     loading={isEditLoading}
+                />
+
+                <ResetPasswordModal
+                    isOpen={isResetPasswordModalOpen}
+                    onClose={() => setIsResetPasswordModalOpen(false)}
+                    onSubmit={handleResetPasswordSubmit}
+                    targetUser={user}
+                    loading={modalLoading}
                 />
             </div>
         </main>

@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { buildApiUrl } from '@/config/api'
+import { getAuthToken } from '@/services/auth'
+import { logger } from '@/services/logger'
 
 type AssetImageHint = {
     id?: string
@@ -132,7 +134,7 @@ function buildMergeMaps(merges: MergeRange[]) {
         const rowSpan = merge.e.r - merge.s.r + 1
         const colSpan = merge.e.c - merge.s.c + 1
         const parentKey = `${merge.s.r}:${merge.s.c}`
-        
+
         if (rowSpan <= 1 && colSpan <= 1) return
 
         visible.set(parentKey, { rowSpan, colSpan })
@@ -156,17 +158,17 @@ function normalizeApiEndpoint(endpoint?: string) {
 
 function AuthenticatedExcelAssetImage({ assetImage }: { assetImage: AssetImageHint }) {
     // Priority: 1. /assets/{id}/image (standard API) 2. imageEndpoint (fallback)
-    const endpoint = assetImage.id 
-        ? `/assets/${assetImage.id}/image` 
+    const endpoint = assetImage.id
+        ? `/assets/${assetImage.id}/image`
         : normalizeApiEndpoint(assetImage.imageEndpoint)
-    
+
     const [src, setSrc] = useState<string | null>(null)
     const [failed, setFailed] = useState(false)
 
     useEffect(() => {
-        console.log(`[AuthenticatedExcelAssetImage] Loading endpoint: ${endpoint} for asset ${assetImage.id}`)
+        logger.debug('AuthenticatedExcelAssetImage loading endpoint', { endpoint, assetId: assetImage.id })
         if (!endpoint) {
-            console.warn(`[AuthenticatedExcelAssetImage] No endpoint for asset ${assetImage.id}`)
+            logger.warn('AuthenticatedExcelAssetImage missing endpoint', { assetId: assetImage.id })
             return
         }
         let objectUrl: string | null = null
@@ -174,23 +176,23 @@ function AuthenticatedExcelAssetImage({ assetImage }: { assetImage: AssetImageHi
 
         const load = async () => {
             try {
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
-                console.log(`[AuthenticatedExcelAssetImage] Fetching: ${endpoint}`)
+                const token = getAuthToken()
+                logger.debug('AuthenticatedExcelAssetImage fetching', { endpoint })
                 const response = await fetch(buildApiUrl(endpoint), {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
                     },
                 })
                 if (!response.ok) {
-                    console.error(`[AuthenticatedExcelAssetImage] Failed: ${response.status}`)
+                    logger.error('AuthenticatedExcelAssetImage failed', { status: response.status })
                     throw new Error(`Cannot load asset image: ${response.status}`)
                 }
                 const blob = await response.blob()
                 objectUrl = URL.createObjectURL(blob)
-                console.log(`[AuthenticatedExcelAssetImage] Successfully loaded, objectUrl: ${objectUrl}`)
+                logger.debug('AuthenticatedExcelAssetImage loaded successfully', { objectUrl })
                 if (!cancelled) setSrc(objectUrl)
             } catch (err) {
-                console.error(`[AuthenticatedExcelAssetImage] Error:`, err)
+                logger.error('AuthenticatedExcelAssetImage error', err)
                 if (!cancelled) setFailed(true)
             }
         }
@@ -203,7 +205,7 @@ function AuthenticatedExcelAssetImage({ assetImage }: { assetImage: AssetImageHi
     }, [endpoint])
 
     if (!endpoint || failed) {
-        console.log(`[AuthenticatedExcelAssetImage] Returning null: endpoint=${endpoint}, failed=${failed}`)
+        logger.warn('AuthenticatedExcelAssetImage returning null', { endpoint, failed })
         return null
     }
     if (!src) return <div className="h-40 min-w-48 animate-pulse rounded bg-slate-200" />
@@ -253,7 +255,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
                     let range = worksheet['!ref']
                         ? XLSX.utils.decode_range(worksheet['!ref'])
                         : { s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }
-                    
+
                     // Expand range to include all assets for this sheet
                     assetImages.forEach(img => {
                         if (img.sheetName === sheetName && img.anchorCell) {
@@ -264,7 +266,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
                                 if (cell.r < range.s.r) range.s.r = cell.r
                                 if (cell.c < range.s.c) range.s.c = cell.c
                             } catch (e) {
-                                console.warn(`Failed to decode anchor cell: ${img.anchorCell}`, e)
+                                logger.warn(`Failed to decode anchor cell: ${img.anchorCell}`, e)
                             }
                         }
                     })
@@ -316,7 +318,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
                 onLoadSuccessRef.current()
             } catch (err) {
                 const error = err instanceof Error ? err : new Error('Unknown error')
-                console.error('Excel loading error:', error)
+                logger.error('Excel loading error', error)
                 setError('Không thể tải file Excel')
                 onLoadErrorRef.current(error)
             } finally {
@@ -377,21 +379,19 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
         // Return all assets without duplicates by ID
         const allAssets = [...assetImages, ...(assetImage ? [assetImage] : [])]
         const uniqueMap = new Map<string, AssetImageHint>()
-        
-        allAssets.forEach(a => {
+
+        allAssets.forEach((a) => {
             const key = a.id || a.imageEndpoint || `temp-${Math.random()}`
             if (!uniqueMap.has(key)) {
                 uniqueMap.set(key, a)
             }
         })
-        
+
         const result = Array.from(uniqueMap.values())
-        console.log(`[ExcelViewer] visibleAssetImages: ${result.length} unique assets`, result.map((a, i) => ({
-            index: i,
-            id: a.id,
-            sheet: a.sheetName,
-            anchor: a.anchorCell,
-        })))
+        logger.debug('ExcelViewer visible asset images', {
+            count: result.length,
+            preview: result.slice(0, 5).map((a) => ({ id: a.id, imageEndpoint: a.imageEndpoint })),
+        })
         return result
     }, [assetImage, assetImages])
 
@@ -404,7 +404,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
         visibleAssetImages.forEach((img) => {
             if (img.sheetName === sheet.name && img.anchorCell) {
                 let cellAddr = img.anchorCell.trim().toUpperCase()
-                
+
                 // Map image to parent cell if it's in a merge
                 try {
                     const decoded = XLSX.utils.decode_cell(cellAddr)
@@ -414,7 +414,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
                         const [r, c] = parentKey.split(':').map(Number)
                         cellAddr = XLSX.utils.encode_cell({ r, c })
                     }
-                } catch (e) {}
+                } catch (e) { }
 
                 if (!map.has(cellAddr)) {
                     map.set(cellAddr, [])
@@ -427,9 +427,9 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
 
     const galleryImages = useMemo(() => {
         const currentSheetName = sheets[activeSheet]?.name
-        return visibleAssetImages.filter(img => 
-            !img.sheetName || 
-            img.sheetName !== currentSheetName || 
+        return visibleAssetImages.filter(img =>
+            !img.sheetName ||
+            img.sheetName !== currentSheetName ||
             !img.anchorCell
         )
     }, [visibleAssetImages, sheets, activeSheet])
@@ -543,46 +543,46 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
                                         const absoluteCol = currentSheet.startCol + cellIdx
                                         const key = `${absoluteRow}:${absoluteCol}`
                                         if (covered.has(key)) return null
-                                    const merge = visible.get(key)
+                                        const merge = visible.get(key)
 
-                                    return (
-                                        <td
-                                            key={cellIdx}
-                                            id={`cell-${XLSX.utils.encode_cell({ r: absoluteRow, c: absoluteCol })}`}
-                                            rowSpan={merge?.rowSpan}
-                                            colSpan={merge?.colSpan}
-                                            className={`border border-slate-300 px-2 py-1 text-left align-top leading-snug transition-all duration-500 ${isHighlightedCell(cell)
-                                                ? 'bg-amber-100 font-semibold text-slate-900'
-                                                : rowIdx === 0
-                                                    ? 'bg-slate-100 font-bold text-slate-900'
-                                                    : 'bg-white text-slate-700'
-                                                } ${cellIdx === 0 ? 'font-medium' : ''}`}
-                                            style={{
-                                                minWidth: currentSheet.colWidths[cellIdx],
-                                                maxWidth: currentSheet.colWidths[cellIdx] * (merge?.colSpan || 1),
-                                            }}
-                                        >
-                                            <div className="whitespace-pre-wrap break-words">{cell}</div>
-                                            {(() => {
-                                                const cellAddress = XLSX.utils.encode_cell({ r: absoluteRow, c: absoluteCol })
-                                                const cellImages = imagesByCell.get(cellAddress)
-                                                if (!cellImages || cellImages.length === 0) return null
-                                                return (
-                                                    <div className="mt-2 flex flex-col gap-3">
-                                                        {cellImages.map((img, i) => (
-                                                            <div key={img.id || i} className="relative group">
-                                                                <AuthenticatedExcelAssetImage assetImage={img} />
-                                                                <div className="absolute top-2 left-2 px-2 py-1 bg-black/50 backdrop-blur-sm rounded text-[10px] text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                    {img.anchorCell}
+                                        return (
+                                            <td
+                                                key={cellIdx}
+                                                id={`cell-${XLSX.utils.encode_cell({ r: absoluteRow, c: absoluteCol })}`}
+                                                rowSpan={merge?.rowSpan}
+                                                colSpan={merge?.colSpan}
+                                                className={`border border-slate-300 px-2 py-1 text-left align-top leading-snug transition-all duration-500 ${isHighlightedCell(cell)
+                                                    ? 'bg-amber-100 font-semibold text-slate-900'
+                                                    : rowIdx === 0
+                                                        ? 'bg-slate-100 font-bold text-slate-900'
+                                                        : 'bg-white text-slate-700'
+                                                    } ${cellIdx === 0 ? 'font-medium' : ''}`}
+                                                style={{
+                                                    minWidth: currentSheet.colWidths[cellIdx],
+                                                    maxWidth: currentSheet.colWidths[cellIdx] * (merge?.colSpan || 1),
+                                                }}
+                                            >
+                                                <div className="whitespace-pre-wrap break-words">{cell}</div>
+                                                {(() => {
+                                                    const cellAddress = XLSX.utils.encode_cell({ r: absoluteRow, c: absoluteCol })
+                                                    const cellImages = imagesByCell.get(cellAddress)
+                                                    if (!cellImages || cellImages.length === 0) return null
+                                                    return (
+                                                        <div className="mt-2 flex flex-col gap-3">
+                                                            {cellImages.map((img, i) => (
+                                                                <div key={img.id || i} className="relative group">
+                                                                    <AuthenticatedExcelAssetImage assetImage={img} />
+                                                                    <div className="absolute top-2 left-2 px-2 py-1 bg-black/50 backdrop-blur-sm rounded text-[10px] text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                        {img.anchorCell}
+                                                                    </div>
                                                                 </div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )
-                                            })()}
-                                        </td>
-                                    )
-                                })}
+                                                            ))}
+                                                        </div>
+                                                    )
+                                                })()}
+                                            </td>
+                                        )
+                                    })}
                                 </tr>
                             )
                         })}

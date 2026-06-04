@@ -54,10 +54,11 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     const [documentStatus, setDocumentStatus] = useState<SidebarDocumentStatus | null>(null)
     const [statusLoading, setStatusLoading] = useState(false)
     const [statusError, setStatusError] = useState<string | null>(null)
-    const { canRead, canWrite, canDelete } = useRBAC()
+    const { canRead, canWrite, canDelete, hasPermission } = useRBAC()
+    const canReadDocumentForStatus = !!document && (hasPermission('document_read') || canRead(document.my_permission))
 
     useEffect(() => {
-        if (!document) {
+        if (!document || !canReadDocumentForStatus) {
             setDocumentStatus(null)
             setStatusLoading(false)
             setStatusError(null)
@@ -95,7 +96,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
         return () => {
             isActive = false
         }
-    }, [document?.id])
+    }, [document?.id, canReadDocumentForStatus])
 
     if (!document) {
         return (
@@ -113,9 +114,10 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
 
     const fileIcon = getFileIcon(document.file_type)
     const displayName = document.original_name || document.filename || 'Tài liệu'
-    const canReadDocument = canRead(document.my_permission)
+    const canReadDocument = canReadDocumentForStatus
     const canWriteDocument = canWrite(document.my_permission)
     const canDeleteDocument = canDelete(document.my_permission)
+    const canDownloadDocument = hasPermission('document_download') && canReadDocument
     const statusLabel = documentStatus?.current_stage_label || 'Tài liệu đã sẵn sàng'
     const statusProgress = typeof documentStatus?.progress_percent === 'number'
         ? documentStatus.progress_percent
@@ -147,6 +149,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
 
     const handleDownload = async (mode: 'download' | 'preview') => {
         if (!document) return
+        if (mode === 'download' && !canDownloadDocument) return
 
         setIsDownloading(true)
         const toastId = toast.loading(mode === 'download' ? 'Đang chuẩn bị tải xuống...' : 'Đang chuẩn bị xem trước...')
@@ -319,15 +322,17 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                 {/* Primary Actions */}
                 <div className="space-y-3 pt-2">
                     <div className="flex gap-2">
-                        <button
-                            onClick={() => handleDownload('download')}
-                            disabled={isDownloading}
-                            className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#9d4300] text-white rounded-xl text-xs font-bold hover:bg-[#b75b00] transition-colors shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Tải file gốc về máy"
-                        >
-                            <span className="material-symbols-outlined text-sm">download</span>
-                            Tải xuống
-                        </button>
+                        {canDownloadDocument && (
+                            <button
+                                onClick={() => handleDownload('download')}
+                                disabled={isDownloading}
+                                className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#9d4300] text-white rounded-xl text-xs font-bold hover:bg-[#b75b00] transition-colors shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Tải file gốc về máy"
+                            >
+                                <span className="material-symbols-outlined text-sm">download</span>
+                                Tải xuống
+                            </button>
+                        )}
 
                         <button
                             onClick={() => handleDownload('preview')}

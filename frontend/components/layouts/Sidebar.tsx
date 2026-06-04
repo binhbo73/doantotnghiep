@@ -25,13 +25,17 @@ export function Sidebar({
         return pathname.startsWith(href)
     }
 
-    const { hasRole, isAdmin } = useRBAC()
+    const { hasAnyPermission, hasAllPermissions, isAdmin } = useRBAC()
 
-    // Filter navigation based on roles
+    // Filter navigation based on permissions
     const filteredNavigation = dashboardNavigation.filter(item => {
-        if (!item.roles || item.roles.length === 0) return true
-        if (isAdmin() && item.roles.includes('ADMIN')) return true
-        return item.roles.some(role => hasRole(role))
+        if (!item.permissions || item.permissions.length === 0) return true
+        if (isAdmin()) return true
+
+        if (item.requireAllPermissions) {
+            return hasAllPermissions(item.permissions)
+        }
+        return hasAnyPermission(item.permissions)
     })
 
     return (
@@ -49,13 +53,15 @@ export function Sidebar({
                 className="flex items-center justify-between px-2 py-4 border-b flex-shrink-0"
                 style={{ borderColor: '#dce2f3' }}
             >
-                <div
-                    className="flex items-center gap-2 transition-all flex-1 overflow-hidden"
+                <Link
+                    href="/dashboard/profile"
+                    className="flex items-center gap-2 transition-all flex-1 overflow-hidden hover:opacity-80"
                     style={{
                         opacity: isCollapsed ? 0 : 1,
                         maxWidth: isCollapsed ? '0px' : '100%',
                         width: isCollapsed ? '0px' : 'auto',
                     }}
+                    title="Hồ sơ cá nhân"
                 >
                     <div
                         className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
@@ -69,7 +75,7 @@ export function Sidebar({
                     >
                         Knowledge OS
                     </span>
-                </div>
+                </Link>
 
                 {/* Toggle Button - Always Visible */}
                 <button

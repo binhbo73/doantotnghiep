@@ -12,6 +12,7 @@ import { useDeleteRole } from '@/hooks/useDeleteRole'
 import { useRolePermissions } from '@/hooks/useRolePermissions'
 import { useRefreshUserPermissions } from '@/hooks/useRefreshUserPermissions'
 import { IamPermission } from '@/types/api'
+import { useRBAC } from '@/hooks/useRBAC'
 
 type RolePermission = IamPermission & {
   checked: boolean
@@ -25,17 +26,20 @@ export function RoleManagementPage() {
   const [editRoleId, setEditRoleId] = useState<string | null>(null)
   const [permissionRefreshKey, setPermissionRefreshKey] = useState(0)
 
+  const { hasPermission } = useRBAC()
+  const canManageRoles = hasPermission('role_manage')
+  const canManagePermissions = hasPermission('permission_manage')
   const { roles, loading: rolesLoading, error: rolesError, useFallback: rolesUseFallback, refetch: refetchRoles } = useRoles({
     page: 1,
     page_size: 100,
-  })
+  }, canManageRoles)
 
   const { updateRole } = useUpdateRole()
   const { deleteRole } = useDeleteRole()
   const { refreshUserPermissions } = useRefreshUserPermissions()
 
   // Fetch current permissions for edit mode
-  const { permissions: editRolePermissions, loading: editPermissionsLoading } = useRolePermissions(editRoleId || '')
+  const { permissions: editRolePermissions, loading: editPermissionsLoading } = useRolePermissions(canManageRoles ? (editRoleId || '') : '')
 
   // Set first role as selected when roles load
   React.useEffect(() => {
@@ -62,6 +66,7 @@ export function RoleManagementPage() {
     action: string
     description: string
   }) => {
+    if (!canManagePermissions) return
     try {
       await createPermission({
         code: data.code.trim().toLowerCase(),
@@ -81,6 +86,7 @@ export function RoleManagementPage() {
   }
 
   const handleEditRole = (roleId: string) => {
+    if (!canManageRoles) return
     setEditRoleId(roleId)
     setDetailRoleId(null)
   }
@@ -92,6 +98,7 @@ export function RoleManagementPage() {
     permissions: RolePermission[]
   }) => {
     if (!editRoleId) return
+    if (!canManageRoles) return
 
     try {
       const permissionIds = data.permissions
@@ -118,6 +125,7 @@ export function RoleManagementPage() {
   }
 
   const handleDeleteRole = async (roleId: string) => {
+    if (!canManageRoles) return
     try {
       await deleteRole(roleId)
       await refetchRoles()
@@ -167,7 +175,7 @@ export function RoleManagementPage() {
             </p>
           </div>
           <div className="flex items-center ml-4 gap-2">
-            <button
+            {canManagePermissions && <button
               type="button"
               onClick={() => setIsCreatePermissionDialogOpen(true)}
               className="px-3 py-1.5 rounded-lg font-medium text-xs transition whitespace-nowrap flex items-center gap-1"
@@ -178,15 +186,15 @@ export function RoleManagementPage() {
               }}
             >
               <span>🔐</span> Tạo quyền hạn mới
-            </button>
+            </button>}
 
-            <button
+            {canManageRoles && <button
               onClick={() => setIsCreateDialogOpen(true)}
               className="px-3 py-1.5 rounded-lg font-medium text-xs text-white transition whitespace-nowrap flex items-center gap-1"
               style={{ backgroundColor: '#b75b00' }}
             >
               <span>➕</span> Tạo vai trò mới
-            </button>
+            </button>}
           </div>
         </div>
       </div>
@@ -194,7 +202,7 @@ export function RoleManagementPage() {
       {/* Main Content */}
       <div className="px-3 lg:px-4 py-2 space-y-2">
         {/* Current Roles Section */}
-        <div>
+        {canManageRoles && <div>
           <h2 className="text-base font-bold mb-2 flex items-center gap-1.5" style={{ color: '#151c27' }}>
             <span>Vai trò hiện tại ({roles.length})</span>
             {rolesUseFallback && (
@@ -217,10 +225,10 @@ export function RoleManagementPage() {
               selectedRoleId={selectedRoleId}
               onSelectRole={setSelectedRoleId}
               onViewDetails={(roleId) => setDetailRoleId(roleId)}
-              onEditRole={handleEditRole}
+              onEditRole={canManageRoles ? handleEditRole : undefined}
             />
           )}
-        </div>
+        </div>}
 
         {/* Permission Matrix Section */}
         <div>
@@ -228,12 +236,18 @@ export function RoleManagementPage() {
             Danh mục Quyền hạn Hệ thống
           </h2>
           {/* pass permission refresh key so matrix can refetch when new permission created */}
-          <PermissionMatrix selectedRoleId={selectedRoleId} refreshKey={permissionRefreshKey} />
+          {canManagePermissions ? (
+            <PermissionMatrix selectedRoleId={selectedRoleId} refreshKey={permissionRefreshKey} />
+          ) : (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
+              Ban can quyen permission_manage de xem danh muc quyen han.
+            </div>
+          )}
         </div>
       </div>
 
       {/* Create/Edit Role Dialog */}
-      <CreateRoleDialog
+      {canManageRoles && <CreateRoleDialog
         isOpen={isCreateDialogOpen || !!editRoleId}
         isEdit={!!editRoleId}
         initialData={editRoleInitialData}
@@ -242,22 +256,22 @@ export function RoleManagementPage() {
           setEditRoleId(null)
         }}
         onSubmit={editRoleId ? handleUpdateRole : handleCreateRole}
-      />
+      />}
 
-      <CreatePermissionDialog
+      {canManagePermissions && <CreatePermissionDialog
         isOpen={isCreatePermissionDialogOpen}
         onClose={() => setIsCreatePermissionDialogOpen(false)}
         onSubmit={handleCreatePermission}
-      />
+      />}
 
       {/* Role Detail Dialog */}
-      <RoleDetailDialog
+      {canManageRoles && <RoleDetailDialog
         isOpen={!!detailRoleId}
         role={detailRole}
         onClose={() => setDetailRoleId(null)}
-        onEdit={(roleId) => handleEditRole(roleId)}
-        onDelete={handleDeleteRole}
-      />
+        onEdit={canManageRoles ? (roleId) => handleEditRole(roleId) : undefined}
+        onDelete={canManageRoles ? handleDeleteRole : undefined}
+      />}
     </div>
   )
 }

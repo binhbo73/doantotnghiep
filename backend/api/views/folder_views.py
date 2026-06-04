@@ -30,7 +30,8 @@ from rest_framework.views import APIView
 from django.db import transaction
 import logging
 
-from core.permissions.drf_permissions import IsAuthenticatedUser
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import IsAuthenticatedUser, user_has_any_permission, user_has_permission
 from core.utils.response_builder import ResponseBuilder
 from core.exceptions import (
     ValidationError,
@@ -51,6 +52,19 @@ from api.serializers.folder_serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _forbidden(message="You don't have the required folder permission"):
+    return Response(
+        ResponseBuilder.error(message, status_code=403),
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+FOLDER_MANAGE_PERMISSIONS = [
+    PermissionCodes.FOLDER_UPDATE,
+    PermissionCodes.FOLDER_DELETE,
+]
 
 
 # ============================================================
@@ -92,6 +106,9 @@ class FolderListCreateView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.FOLDER_READ):
+                return _forbidden("You need folder_read permission to view folders")
+
             service = FolderService()
             
             # Get folder tree
@@ -152,6 +169,9 @@ class FolderListCreateView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.FOLDER_CREATE):
+                return _forbidden("You need folder_create permission to create folders")
+
             # Validate input
             serializer = FolderCreateSerializer(data=request.data)
             if not serializer.is_valid():
@@ -249,6 +269,9 @@ class FolderDetailView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.FOLDER_READ):
+                return _forbidden("You need folder_read permission to view folders")
+
             service = FolderService()
             repo = service.repository
             
@@ -259,8 +282,8 @@ class FolderDetailView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # TODO: Check user has read permission on folder
-            # For now: assume all authenticated users can view
+            if not service.check_folder_permission(folder_id, str(request.user.id), 'read'):
+                return _forbidden("You don't have permission to access this folder")
             
             serializer = FolderDetailSerializer(folder, context={'request': request})
             
@@ -302,6 +325,9 @@ class FolderDetailView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.FOLDER_UPDATE):
+                return _forbidden("You need folder_update permission to update folders")
+
             # Validate input
             serializer = FolderUpdateSerializer(data=request.data)
             if not serializer.is_valid():
@@ -378,6 +404,9 @@ class FolderDetailView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.FOLDER_DELETE):
+                return _forbidden("You need folder_delete permission to delete folders")
+
             service = FolderService()
             
             # Delete folder (with cascade)
@@ -455,6 +484,9 @@ class FolderMoveView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.FOLDER_UPDATE):
+                return _forbidden("You need folder_update permission to move folders")
+
             # Validate input
             serializer = FolderMoveSerializer(data=request.data)
             if not serializer.is_valid():
@@ -532,6 +564,9 @@ class FolderPermissionsListView(APIView):
 
     def get(self, request):
         try:
+            if not user_has_any_permission(request.user, FOLDER_MANAGE_PERMISSIONS):
+                return _forbidden("You need folder management permission to view folder permissions")
+
             page = int(request.query_params.get('page', 1))
             page_size = int(request.query_params.get('page_size', 20))
             search = request.query_params.get('search')
@@ -631,6 +666,9 @@ class FolderPermissionsView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(request.user, FOLDER_MANAGE_PERMISSIONS):
+                return _forbidden("You need folder management permission to view folder permissions")
+
             service = FolderService()
             granted_by_id = request.query_params.get('granted_by_id')
             
@@ -690,6 +728,9 @@ class FolderPermissionsView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(request.user, FOLDER_MANAGE_PERMISSIONS):
+                return _forbidden("You need folder management permission to grant folder permissions")
+
             # Validate input
             serializer = FolderPermissionSerializer(data=request.data)
             if not serializer.is_valid():
@@ -769,7 +810,8 @@ class FolderPermissionDetailView(APIView):
     
     DELETE: Revoke access to folder (identified by subject_type, subject_id, permission level)
     """
-    
+    permission_classes = [IsAuthenticatedUser]
+
     @transaction.atomic
     def delete(self, request, folder_id, subject_type, subject_id, permission):
         """
@@ -795,6 +837,9 @@ class FolderPermissionDetailView(APIView):
         - permission = "read"
         """
         try:
+            if not user_has_any_permission(request.user, FOLDER_MANAGE_PERMISSIONS):
+                return _forbidden("You need folder management permission to revoke folder permissions")
+
             # Validate inputs
             if subject_type not in ['account', 'role']:
                 return Response(

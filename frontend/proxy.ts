@@ -5,7 +5,7 @@ import type { NextRequest } from 'next/server'
 const PUBLIC_ROUTES = ['/login', '/register', '/forgot-password', '/reset-password', '/']
 
 // Routes cần xác thực
-const PROTECTED_ROUTES = ['/dashboard']
+const PROTECTED_ROUTES = ['/dashboard', '/documents']
 
 export function middleware(request: NextRequest) {
     const pathname = request.nextUrl.pathname

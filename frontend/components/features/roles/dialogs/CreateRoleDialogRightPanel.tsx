@@ -7,6 +7,7 @@ import { CreatePermissionDialog } from './CreatePermissionDialog'
 import { useCreateRole } from '@/hooks/useCreateRole'
 import { usePermissions } from '@/hooks/usePermissions'
 import { IamPermission } from '@/types/api'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface RolePermission extends IamPermission {
     checked: boolean
@@ -35,6 +36,8 @@ export function CreateRoleDialogRightPanel({
     onSubmit,
     initialData,
 }: CreateRoleDialogRightPanelProps) {
+    const { hasPermission } = useRBAC()
+    const canManagePermissions = hasPermission('permission_manage')
     const [formData, setFormData] = useState({
         code: initialData?.code || '',
         displayName: initialData?.displayName || '',
@@ -45,7 +48,7 @@ export function CreateRoleDialogRightPanel({
     const { permissions: apiPermissions, loading: permissionsLoading, error: permissionsError } = usePermissions({
         page: 1,
         page_size: 100,
-    })
+    }, canManagePermissions)
 
     // Create role hook
     const { createRole, addPermissionsToRole, loading: createLoading, error: createError } = useCreateRole()
@@ -133,7 +136,6 @@ export function CreateRoleDialogRightPanel({
             const errorMsg =
                 err instanceof Error ? err.message : (isEdit ? 'Có lỗi xảy ra khi cập nhật vai trò' : 'Có lỗi xảy ra khi tạo vai trò')
             alert(errorMsg)
-            throw err
         } finally {
             setIsSubmitting(false)
         }
@@ -273,7 +275,7 @@ export function CreateRoleDialogRightPanel({
                 <button
                     type="button"
                     onClick={() => setIsPermissionsSelectorOpen(true)}
-                    disabled={permissionsLoading}
+                    disabled={permissionsLoading || !canManagePermissions}
                     className="w-full px-4 py-2 rounded-lg font-medium text-sm transition border-2 mt-1 disabled:opacity-50"
                     style={{
                         backgroundColor: '#f0f3ff',

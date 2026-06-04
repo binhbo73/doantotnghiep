@@ -174,12 +174,13 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         error: null,
     })
     const subjectOptionsLoadedRef = useRef(false)
-    const { isAdmin, isTruongPhong, can } = useRBAC()
+    const { hasAnyPermission, hasPermission } = useRBAC()
 
     // Check if user can manage permissions for this resource
-    const canManagePermissions = isAdmin() || isTruongPhong() ||
-        (effectiveDocument && can('delete', effectiveDocument.my_permission)) ||
-        (effectiveFolder && can('delete', effectiveFolder.my_permission))
+    const canManageFolderPermissions = hasAnyPermission(['folder_update', 'folder_delete'])
+    const canManageDocumentPermissions = hasAnyPermission(['document_share', 'document_update', 'document_delete'])
+    const canLoadAccountSubjects = hasPermission('user_read')
+    const canLoadRoleSubjects = hasPermission('role_manage')
 
     const folderId = effectiveFolder?.id || effectiveDocument?.folder || effectiveDocument?.folder_id || null
 
@@ -190,9 +191,24 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         return () => window.clearTimeout(timer)
     }, [actionMessage])
     const documentId = effectiveDocument?.id || null
-    const hasSelectedResource = Boolean(folderId || documentId)
+    const canManagePermissions = documentId
+        ? canManageDocumentPermissions
+        : Boolean(folderId && canManageFolderPermissions)
+    const hasSelectedResource = Boolean(
+        (documentId && canManageDocumentPermissions) ||
+        (folderId && canManageFolderPermissions)
+    )
 
     const loadSubjectOptions = async () => {
+        if (!canLoadAccountSubjects && !canLoadRoleSubjects) {
+            setSubjectOptions((prev) => ({
+                ...prev,
+                loading: false,
+                error: 'Bạn cần quyền user_read hoặc role_manage để chọn đối tượng cấp quyền.',
+            }))
+            return
+        }
+
         if (subjectOptionsLoadedRef.current && subjectOptions.accounts.length > 0 && subjectOptions.roles.length > 0) {
             return
         }
@@ -254,8 +270,8 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         }
 
         const [accountsResult, rolesResult] = await Promise.allSettled([
-            loadAllUsers(),
-            loadAllRoles(),
+            canLoadAccountSubjects ? loadAllUsers() : Promise.resolve([]),
+            canLoadRoleSubjects ? loadAllRoles() : Promise.resolve([]),
         ])
 
         const accounts = accountsResult.status === 'fulfilled' ? accountsResult.value : []
@@ -278,13 +294,13 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
             error: accountError || roleError,
         }))
 
-        if (accounts.length > 0 && roles.length > 0) {
+        if ((!canLoadAccountSubjects || accounts.length > 0) && (!canLoadRoleSubjects || roles.length > 0)) {
             subjectOptionsLoadedRef.current = true
         }
     }
 
     const loadPermissions = async () => {
-        if (!folderId && !documentId) {
+        if (!hasSelectedResource) {
             setState({
                 folderName: effectiveFolder?.name || '',
                 folderScope: effectiveFolder?.access_scope || '',
@@ -301,8 +317,8 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         try {
             const grantedById = user?.account_id || user?.id
             const [folderResponse, documentResponse] = await Promise.all([
-                folderId ? fetchFolderPermissions(folderId, grantedById) : Promise.resolve(null),
-                documentId ? fetchDocumentPermissions(documentId, grantedById) : Promise.resolve({ document_id: '', permissions: [] }),
+                folderId && canManageFolderPermissions ? fetchFolderPermissions(folderId, grantedById) : Promise.resolve(null),
+                documentId && canManageDocumentPermissions ? fetchDocumentPermissions(documentId, grantedById) : Promise.resolve({ document_id: '', permissions: [] }),
             ])
 
             setState({
@@ -324,12 +340,22 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
     }
 
     useEffect(() => {
+        if (form.subjectType === 'account' && !canLoadAccountSubjects && canLoadRoleSubjects) {
+            setForm((prev) => ({ ...prev, subjectType: 'role', subjectId: '' }))
+            return
+        }
+        if (form.subjectType === 'role' && !canLoadRoleSubjects && canLoadAccountSubjects) {
+            setForm((prev) => ({ ...prev, subjectType: 'account', subjectId: '' }))
+        }
+    }, [form.subjectType, canLoadAccountSubjects, canLoadRoleSubjects])
+
+    useEffect(() => {
         loadPermissions()
         if (mode === 'create' && hasSelectedResource && !subjectOptionsLoadedRef.current) {
             loadSubjectOptions()
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [documentId, folderId, mode])
+    }, [documentId, folderId, mode, canManageFolderPermissions, canManageDocumentPermissions])
 
     const activeSubjectOptions = form.subjectType === 'account' ? subjectOptions.accounts : subjectOptions.roles
 
@@ -353,10 +379,16 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
                 permission: form.permission,
             }
 
-            if (folderId && !documentId) {
-                await grantFolderPermission(folderId, payload)
-            } else if (documentId) {
+            if (documentId) {
+                if (!canManageDocumentPermissions) {
+                    throw new Error('Bạn không có quyền quản lý ACL tài liệu')
+                }
                 await grantDocumentPermission(documentId, payload)
+            } else if (folderId) {
+                if (!canManageFolderPermissions) {
+                    throw new Error('Bạn không có quyền quản lý ACL thư mục')
+                }
+                await grantFolderPermission(folderId, payload)
             } else {
                 throw new Error('Không xác định được tài nguyên để cấp quyền')
             }
@@ -379,6 +411,8 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
 
     const handleRevoke = async (item: PermissionItem, target: PermissionTarget) => {
         if (target === 'folder' && !folderId) return
+        if (target === 'folder' && !canManageFolderPermissions) return
+        if (target === 'document' && !canManageDocumentPermissions) return
 
         setSaving(true)
         setState((prev) => ({ ...prev, error: null }))
@@ -519,8 +553,8 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
                                         }))}
                                         className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[13px] text-slate-700 outline-none transition focus:border-[#9d4300]"
                                     >
-                                        <option value="account">Account</option>
-                                        <option value="role">Role</option>
+                                        {canLoadAccountSubjects && <option value="account">Account</option>}
+                                        {canLoadRoleSubjects && <option value="role">Role</option>}
                                     </select>
                                 </label>
 
@@ -531,7 +565,7 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
                                     <select
                                         value={form.subjectId}
                                         onChange={(e) => setForm((prev) => ({ ...prev, subjectId: e.target.value }))}
-                                        disabled={subjectOptions.loading}
+                                        disabled={subjectOptions.loading || (!canLoadAccountSubjects && !canLoadRoleSubjects)}
                                         className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-[13px] text-slate-700 outline-none transition focus:border-[#9d4300] disabled:bg-slate-50 disabled:text-slate-400"
                                     >
                                         <option value="">

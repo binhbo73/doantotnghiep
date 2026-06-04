@@ -47,7 +47,7 @@ export function RecentActivityCard({ activities: initialActivities, onViewAll }:
             }
         } catch (err) {
             // If backend returns 404, treat as empty (no activities available)
-            if (err instanceof ApiError && err.status === 404) {
+            if (err instanceof ApiError && err.statusCode === 404) {
                 setActivities([])
                 setError(null)
                 console.info('Recent activities endpoint not found (404). Showing empty state.')

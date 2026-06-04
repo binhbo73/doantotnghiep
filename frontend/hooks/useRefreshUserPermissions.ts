@@ -1,82 +1,95 @@
 'use client'
 
 /**
- * useRefreshUserPermissions Hook
- * Refreshes current user's data from backend (roles, permissions, etc)
- * Called after any permission/role changes to update UI immediately
+ * Refreshes current-user roles and permissions from the backend.
  */
 
 import { useCallback } from 'react'
 import { api } from '@/services/api/client'
-import { setAuthData } from '@/services/auth'
 import { useAuthContext } from '@/context'
 import { logger } from '@/services/logger'
-import type { LoginData } from '@/types/api'
+
+type CurrentUserPermissions = {
+    user: any
+    roles: any[]
+    permissions: string[]
+    department_id: string | null
+}
+
+type CurrentUserResponse = CurrentUserPermissions | {
+    success?: boolean
+    data?: CurrentUserPermissions
+}
+
+let inFlightRefresh: Promise<CurrentUserPermissions | null> | null = null
+let lastRefreshStartedAt = 0
+const REFRESH_DEDUPE_WINDOW_MS = 1500
+
+function normalizeCurrentUserResponse(response: CurrentUserResponse): CurrentUserPermissions | null {
+    const payload = 'data' in response && response.data
+        ? response.data
+        : response as CurrentUserPermissions
+
+    if (('success' in response && response.success === false) || !payload?.user) {
+        return null
+    }
+
+    return payload
+}
 
 export function useRefreshUserPermissions() {
     const { updateUser } = useAuthContext()
 
     const refreshUserPermissions = useCallback(async () => {
         try {
-            logger.info('🔄 Refreshing user permissions from backend...')
+            const now = Date.now()
+            if (!inFlightRefresh || now - lastRefreshStartedAt >= REFRESH_DEDUPE_WINDOW_MS) {
+                lastRefreshStartedAt = now
+                inFlightRefresh = api.get<CurrentUserResponse>('/auth/me')
+                    .then(normalizeCurrentUserResponse)
+                    .finally(() => {
+                        inFlightRefresh = null
+                    })
+            } else {
+                logger.debug('Reusing in-flight permission refresh')
+            }
 
-            // Fetch current user data from backend
-            const response = await api.get<{ user: any; roles: any[]; permissions: string[]; department_id: string }>('/auth/me')
-
-            if (!response.success || !response.data) {
-                logger.warn('⚠️ Failed to refresh user: Invalid response')
+            const payload = await inFlightRefresh
+            if (!payload?.user) {
+                logger.warn('Failed to refresh user: invalid response')
                 return
             }
 
-            // Extract user data from response
-            const { user, roles, permissions, department_id } = response.data
+            const { user, roles, permissions, department_id } = payload
 
-            // Update localStorage + cookies via setAuthData
-            const loginData: LoginData = {
-                access_token: '', // Don't update token on permission refresh
-                user,
-                roles: roles || [],
-                permissions: permissions || [],
-                department_id: department_id || '',
-            }
-
-            // Update localStorage (but don't override tokens)
-            if (user) {
-                localStorage.setItem('current_user', JSON.stringify(user))
-            }
-            if (roles && roles.length > 0) {
-                localStorage.setItem('user_roles', JSON.stringify(roles))
-            }
-            if (permissions && permissions.length > 0) {
-                localStorage.setItem('user_permissions', JSON.stringify(permissions))
-            }
+            localStorage.setItem('current_user', JSON.stringify(user))
+            localStorage.setItem('user_roles', JSON.stringify(roles || []))
+            localStorage.setItem('user_permissions', JSON.stringify(permissions || []))
             if (department_id) {
                 localStorage.setItem('user_department_id', department_id)
+            } else {
+                localStorage.removeItem('user_department_id')
             }
 
-            // Update AuthContext state
-            if (user && roles) {
-                updateUser({
-                    id: user.id,
-                    email: user.email,
-                    name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-                    username: user.username,
-                    roles: roles,
-                    department_id: department_id || null,
-                    permissions: permissions || [],
-                })
+            updateUser({
+                id: user.id,
+                email: user.email,
+                name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+                username: user.username,
+                roles: roles || [],
+                department_id: department_id || null,
+                permissions: permissions || [],
+            })
 
-                logger.info('✅ User permissions refreshed successfully', {
-                    userId: user.id,
-                    roleCount: roles.length,
-                    permissionCount: permissions.length,
-                })
-            }
+            logger.info('User permissions refreshed successfully', {
+                userId: user.id,
+                roleCount: roles?.length || 0,
+                permissionCount: permissions?.length || 0,
+            })
         } catch (error) {
-            logger.error('❌ Failed to refresh user permissions', {
+            logger.warn('Failed to refresh user permissions', {
                 error: error instanceof Error ? error.message : String(error),
             })
-            // Don't throw - let components handle gracefully
         }
     }, [updateUser])
 

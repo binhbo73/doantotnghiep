@@ -1,9 +1,5 @@
 /**
- * Custom Hook: useDepartments
- * Frontend standard flow for fetching department data
- * 
- * Usage:
- * const { data, count, loading, error } = useDepartments()
+ * Lightweight dashboard metrics hooks.
  */
 
 'use client'
@@ -24,24 +20,6 @@ export interface Department {
     [key: string]: any
 }
 
-export interface PaginatedResponse<T> {
-    success: boolean
-    data: {
-        items: T[]
-        pagination: {
-            page: number
-            page_size: number
-            total_items: number
-            total_pages: number
-            has_next?: boolean
-            has_previous?: boolean
-        }
-    }
-    message: string
-    timestamp: string
-    request_id: string
-}
-
 interface UseDepartmentsState {
     data: Department[] | null
     count: number
@@ -50,41 +28,41 @@ interface UseDepartmentsState {
     refetch: () => Promise<void>
 }
 
-export function useDepartments(): UseDepartmentsState {
+export function useDepartments(enabled: boolean = true): UseDepartmentsState {
     const [data, setData] = useState<Department[] | null>(null)
     const [count, setCount] = useState(0)
-    const [loading, setLoading] = useState(true)
+    const [loading, setLoading] = useState(enabled)
     const [error, setError] = useState<string | null>(null)
 
     const fetchDepartments = useCallback(async () => {
+        if (!enabled) {
+            setLoading(false)
+            setError(null)
+            return
+        }
+
         try {
             setLoading(true)
             setError(null)
 
-            // API: GET /api/v1/departments?page=1&page_size=1 (chỉ lấy count)
             const response = await api.get<any>('/departments/?page=1&page_size=1')
-
-            console.log('📊 Departments API Response:', JSON.stringify(response, null, 2).substring(0, 500))
-
-            // Defensive parsing - handle different response formats
             const total = response?.data?.pagination?.total_items || response?.pagination?.total_items || 0
             const items = response?.data?.items || response?.items || []
 
             if (response.success !== false) {
                 setCount(total)
                 setData(items)
-                console.log(`✅ Fetched departments successfully - count: ${total}`)
             } else {
                 setError('Failed to fetch departments')
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to fetch departments'
             setError(message)
-            console.error('❌ Error fetching departments:', err)
+            console.error('Error fetching departments:', err)
         } finally {
             setLoading(false)
         }
-    }, [])
+    }, [enabled])
 
     useEffect(() => {
         fetchDepartments()

@@ -18,38 +18,43 @@ import { useAuthContext } from '@/context'
 import { useRouter } from 'next/navigation'
 
 /**
- * Dashboard Page - Role-aware
+ * Dashboard Page - permission-aware
  * 
- * Admin:   Sees all stats (Users, Documents, Departments), quick actions, activity
- * Manager: Sees Documents stat, quick actions (limited), activity
- * User:    Sees Documents stat, activity only
+ * Visible stats and quick actions are derived from backend permission codes,
+ * so newly created roles work without frontend role-name changes.
  */
 export default function DashboardPage() {
     const router = useRouter()
     const [isAddEmployeeDialogOpen, setIsAddEmployeeDialogOpen] = useState(false)
     const { toasts, removeToast, showSuccess, showError } = useToast()
     const { user } = useAuthContext()
-    const { isAdmin, isTruongPhong } = useRBAC()
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canReadUsers = hasPermission('user_read')
+    const canCreateUser = hasPermission('user_create')
+    const canReadDepartments = hasPermission('department_read')
+    const canReadDocuments = hasPermission('document_read')
+    const canUploadDocument = hasPermission('document_create')
+    const canManageIam = hasAnyPermission(['role_manage', 'permission_manage'])
+    const canViewAudit = hasPermission('audit_log_view')
 
     // --- RBAC-aware API calls ---
-    // Documents API is accessible to ALL roles
-    const { count: documentCount, loading: docsLoading, error: docsError } = useDocuments()
+    // Documents API is loaded only when backend permissions allow access.
+    const { count: documentCount, loading: docsLoading, error: docsError } = useDocuments(canReadDocuments)
 
-    // Users & Departments API are admin-only on backend
-    // We use lazy state so we don't make the API call for non-admin users
+    // Users & Departments API calls are gated by permission codes.
     const [adminStats, setAdminStats] = useState<{ userCount: number; deptCount: number } | null>(null)
     const [adminStatsLoading, setAdminStatsLoading] = useState(false)
 
     React.useEffect(() => {
-        if (!isAdmin()) return
+        if (!canReadUsers && !canReadDepartments) return
 
         const fetchAdminStats = async () => {
             setAdminStatsLoading(true)
             try {
                 const { api } = await import('@/services/api')
                 const [usersRes, deptsRes] = await Promise.allSettled([
-                    api.get<any>('/users/?page=1&page_size=1'),
-                    api.get<any>('/departments/?page=1&page_size=1'),
+                    canReadUsers ? api.get<any>('/users/?page=1&page_size=1') : Promise.resolve(null),
+                    canReadDepartments ? api.get<any>('/departments/?page=1&page_size=1') : Promise.resolve(null),
                 ])
 
                 const userCount = usersRes.status === 'fulfilled'
@@ -68,17 +73,17 @@ export default function DashboardPage() {
         }
         fetchAdminStats()
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []) // Only run once on mount
+    }, [canReadUsers, canReadDepartments])
 
     // --- Loading & Error ---
     const isLoading = docsLoading || adminStatsLoading
     const errors = [docsError].filter(Boolean)
     const hasError = errors.length > 0
 
-    // --- Build stats cards based on role ---
+    // --- Build stats cards based on permission codes ---
     const stats = [
-        // Admin-only: User count
-        isAdmin() && {
+        // user_read: user count
+        canReadUsers && {
             id: 'users',
             icon: '👥',
             label: 'SỐ NGƯỜI DÙNG',
@@ -86,8 +91,8 @@ export default function DashboardPage() {
             trend: 'up' as const,
             iconBgColor: '#f0f3ff',
         },
-        // All roles: Document count
-        {
+        // document_read: document count
+        canReadDocuments && {
             id: 'documents',
             icon: '📁',
             label: 'TÀI LIỆU LƯU TRỮ',
@@ -95,8 +100,8 @@ export default function DashboardPage() {
             trend: 'up' as const,
             iconBgColor: '#fff4e0',
         },
-        // Admin-only: Department count
-        isAdmin() && {
+        // department read/update/manage: department count
+        canReadDepartments && {
             id: 'departments',
             icon: '🏢',
             label: 'SỐ PHÒNG BAN',
@@ -106,31 +111,31 @@ export default function DashboardPage() {
         },
     ].filter(Boolean) as any[]
 
-    // --- Quick action buttons based on role ---
+    // --- Quick action buttons based on permission codes ---
     const quickActions = [
-        // Admin-only: Add employee
-        isAdmin() && {
+        // Add employee/account when user_create is granted.
+        canCreateUser && {
             id: 'add-user',
             label: 'Thêm nhân sự',
             icon: '👤',
             onClick: () => setIsAddEmployeeDialogOpen(true),
         },
-        // Admin + Manager: Upload document
-        (isAdmin() || isTruongPhong()) && {
+        // document_create: upload document
+        canUploadDocument && {
             id: 'upload-doc',
             label: 'Tải tài liệu',
             icon: '📤',
             onClick: () => router.push('/dashboard/documents'),
         },
-        // Admin-only: Permission management
-        isAdmin() && {
+        // role_manage/permission_manage: permission management
+        canManageIam && {
             id: 'view-report',
             label: 'Phân quyền',
             icon: '🔐',
             onClick: () => router.push('/dashboard/roles'),
         },
-        // Admin + Manager: Department management
-        (isAdmin() || isTruongPhong()) && {
+        // department read/update/manage: department management
+        canReadDepartments && {
             id: 'departments',
             label: 'Phòng ban',
             icon: '🏢',
@@ -186,8 +191,8 @@ export default function DashboardPage() {
             {/* Toast Notifications - Top Right */}
             <ToastContainer toasts={toasts} onRemove={removeToast} />
 
-            {/* Add Employee Dialog (Admin only) */}
-            {isAdmin() && (
+            {/* Add account dialog, shown only when user_create is granted. */}
+            {canCreateUser && (
                 <AddEmployeeDialog
                     isOpen={isAddEmployeeDialogOpen}
                     onClose={() => setIsAddEmployeeDialogOpen(false)}
@@ -270,7 +275,7 @@ export default function DashboardPage() {
                     </ActivitySummary>
                 </section>
 
-                {/* Quick Actions Section - Admin & Manager only */}
+                {/* Quick actions are filtered by permission codes. */}
                 {quickActions.length > 0 && (
                     <section className="mb-4">
                         <div
@@ -292,7 +297,7 @@ export default function DashboardPage() {
                 )}
 
                 {/* Recent Activity Section */}
-                <section className="mb-4">
+                {canViewAudit && <section className="mb-4">
                     <div
                         className="rounded-lg p-4"
                         style={{
@@ -302,7 +307,7 @@ export default function DashboardPage() {
                     >
                         <RecentActivityCard onViewAll={handleViewAllActivities} />
                     </div>
-                </section>
+                </section>}
 
                 {/* Footer */}
                 <footer

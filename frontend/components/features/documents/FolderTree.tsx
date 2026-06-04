@@ -7,6 +7,7 @@ import { FolderTreeNodeComponent } from './FolderTreeNode'
 import { OtherDocuments } from './OtherDocuments'
 import { useDepartmentOptions } from '@/hooks/useDepartmentOptions'
 import { useMemo } from 'react'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface FolderTreeProps {
     tree: FolderTreeNode[]
@@ -29,8 +30,9 @@ export function FolderTree({
     searchQuery = '',
     showPersonal = true,
 }: FolderTreeProps) {
-    // Load department list to show readable department names
-    const { data: departments } = useDepartmentOptions()
+    // Load department list only when the current role can read departments.
+    const { hasPermission } = useRBAC()
+    const { data: departments } = useDepartmentOptions(hasPermission('department_read'))
 
     const departmentMap = useMemo(() => {
         const map: Record<string, string> = {}

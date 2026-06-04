@@ -13,6 +13,7 @@ import {
     PermissionItem,
 } from '@/services/documentAcl'
 import { useAuthContext } from '@/context'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface DocumentsPermissionsWorkspaceProps {
     tree: FolderTreeNode[]
@@ -366,6 +367,9 @@ export function DocumentsPermissionsWorkspace({
         documentItems: [],
     })
     const { user } = useAuthContext()
+    const { hasAnyPermission } = useRBAC()
+    const canManageFolderPermissions = hasAnyPermission(['folder_update', 'folder_delete'])
+    const canManageDocumentPermissions = hasAnyPermission(['document_share', 'document_update', 'document_delete'])
 
     const folders = useMemo(() => flattenFolders(tree), [tree])
     const folderMap = useMemo(() => {
@@ -436,8 +440,10 @@ export function DocumentsPermissionsWorkspace({
                 }
             })
 
-        return Array.from(uniqueResources.values())
-    }, [documents, folders, sharedDocuments, sharedFolders])
+        return Array.from(uniqueResources.values()).filter((resource) => (
+            resource.kind === 'folder' ? canManageFolderPermissions : canManageDocumentPermissions
+        ))
+    }, [documents, folders, sharedDocuments, sharedFolders, canManageFolderPermissions, canManageDocumentPermissions])
 
     const currentFolder = useMemo(
         () => folders.find((item) => item.folder.id === selectedFolderId)?.folder || null,
@@ -512,8 +518,12 @@ export function DocumentsPermissionsWorkspace({
         try {
             const grantedById = user?.account_id || user?.id
             const [folderItems, documentItems] = await Promise.all([
-                loadAllPages((page, pageSize) => fetchAllFolderPermissions(page, pageSize, '', grantedById)),
-                loadAllPages((page, pageSize) => fetchAllDocumentPermissions(page, pageSize, '', grantedById)),
+                canManageFolderPermissions
+                    ? loadAllPages((page, pageSize) => fetchAllFolderPermissions(page, pageSize, '', grantedById))
+                    : Promise.resolve([]),
+                canManageDocumentPermissions
+                    ? loadAllPages((page, pageSize) => fetchAllDocumentPermissions(page, pageSize, '', grantedById))
+                    : Promise.resolve([]),
             ])
 
             setOverview({
@@ -530,12 +540,23 @@ export function DocumentsPermissionsWorkspace({
                 documentItems: [],
             })
         }
-    }, [])
+    }, [canManageFolderPermissions, canManageDocumentPermissions, user?.account_id, user?.id])
 
     useEffect(() => {
         void loadOverview()
 
     }, [loadOverview])
+
+    useEffect(() => {
+        if (resourceKind === 'folder' && !canManageFolderPermissions && canManageDocumentPermissions) {
+            setResourceKind('document')
+            setSelectedFolderId(null)
+        }
+        if (resourceKind === 'document' && !canManageDocumentPermissions && canManageFolderPermissions) {
+            setResourceKind('folder')
+            setSelectedDocumentId(null)
+        }
+    }, [resourceKind, canManageFolderPermissions, canManageDocumentPermissions])
 
     const showFolder = resourceKind === 'folder'
     const panelFolder = showFolder ? currentFolder : currentDocumentEntry?.folder || null
@@ -543,12 +564,14 @@ export function DocumentsPermissionsWorkspace({
 
     const openDetails = (target: DetailTarget) => {
         if (target.kind === 'folder') {
+            if (!canManageFolderPermissions) return
             setDialogMode('detail')
             setResourceKind('folder')
             setSelectedFolderId(target.folder.id)
             setPermissionResourceKey(`folder:${target.folder.id}`)
             setIsPermissionDialogOpen(true)
         } else {
+            if (!canManageDocumentPermissions) return
             setDialogMode('detail')
             setResourceKind('document')
             setSelectedDocumentId(target.document.id)
@@ -571,7 +594,8 @@ export function DocumentsPermissionsWorkspace({
                     <div className="flex flex-wrap gap-2">
                         <button
                             type="button"
-                            onClick={openFolderPermission}
+                            onClick={() => canManageFolderPermissions && openFolderPermission()}
+                            disabled={!canManageFolderPermissions}
                             className="inline-flex items-center gap-1.5 rounded-full bg-[#9d4300] px-3 py-2 text-[11px] font-bold text-white transition-colors hover:bg-[#b75b00]"
                         >
                             <span className="material-symbols-outlined text-[14px]">folder</span>
@@ -579,7 +603,8 @@ export function DocumentsPermissionsWorkspace({
                         </button>
                         <button
                             type="button"
-                            onClick={openDocumentPermission}
+                            onClick={() => canManageDocumentPermissions && openDocumentPermission()}
+                            disabled={!canManageDocumentPermissions}
                             className="inline-flex items-center gap-1.5 rounded-full border border-[#9d4300]/20 bg-white px-3 py-2 text-[11px] font-bold text-[#9d4300] transition-colors hover:bg-[#fff3e0]"
                         >
                             <span className="material-symbols-outlined text-[14px]">description</span>

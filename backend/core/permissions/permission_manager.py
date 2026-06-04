@@ -144,9 +144,8 @@ class PermissionManager:
                 logger.debug(f"Account {account_id} is uploader of document {document_id}, granting {action}")
                 return True
             
-            # Admin bypass
-            from core.constants import RoleIds
-            if user.is_superuser or user.has_role(RoleIds.ADMIN):
+            # System administrator bypass is permission-based.
+            if user.is_superuser or self.check_user_has_permission(account_id, PermissionCodes.SYSTEM_ADMIN):
                 return True
             
             # Load the user's department from the profile relation. Department lives
@@ -291,9 +290,8 @@ class PermissionManager:
                 logger.warning(f"Account {account_id} not found for folder access check")
                 return False
 
-            # Admin bypass
-            from core.constants import RoleIds
-            if user.is_superuser or user.has_role(RoleIds.ADMIN):
+            # System administrator bypass is permission-based.
+            if user.is_superuser or self.check_user_has_permission(account_id, PermissionCodes.SYSTEM_ADMIN):
                 return True
 
             try:
@@ -588,10 +586,10 @@ class PermissionManager:
             logger.debug("No department restriction on target, allowing access")
             return True
 
-        # Managers can access their managed department(s) and all descendants.
+        # Department managers can access their managed department(s) and all descendants.
         # Regular users can only access their exact own department.
         try:
-            if user is not None and user.has_role(RoleIds.MANAGER):
+            if user is not None:
                 from django.apps import apps as _apps
                 Department = _apps.get_model('users', 'Department')
                 parent_chain = self._get_department_parent_chain(target_dept)

@@ -4,9 +4,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchDepartments, createDepartment, updateDepartment, deleteDepartment, DepartmentQueryParams } from '@/services/department'
 import { Department, PaginationInfo } from '@/types/api'
 
-export function useDepartments(initialParams?: DepartmentQueryParams) {
+export function useDepartments(initialParams?: DepartmentQueryParams, enabled: boolean = true) {
     const [departments, setDepartments] = useState<Department[]>([])
-    const [isLoading, setIsLoading] = useState(true)
+    const [isLoading, setIsLoading] = useState(enabled)
     const [error, setError] = useState<Error | null>(null)
     const [pagination, setPagination] = useState<PaginationInfo | null>(null)
     const [searchQuery, setSearchQuery] = useState('')
@@ -14,6 +14,12 @@ export function useDepartments(initialParams?: DepartmentQueryParams) {
     const hasLoadedRef = useRef(false)
 
     const loadDepartments = useCallback(async (params?: DepartmentQueryParams) => {
+        if (!enabled) {
+            setIsLoading(false)
+            setError(null)
+            return
+        }
+
         setIsLoading(true)
         setError(null)
         try {
@@ -37,15 +43,19 @@ export function useDepartments(initialParams?: DepartmentQueryParams) {
         } finally {
             setIsLoading(false)
         }
-    }, [])
+    }, [enabled])
 
     // Load departments only once on mount
     useEffect(() => {
+        if (!enabled) {
+            return
+        }
+
         if (!hasLoadedRef.current) {
             hasLoadedRef.current = true
             loadDepartments(initialParams)
         }
-    }, [loadDepartments, initialParams]) // loadDepartments won't change because no dependencies
+    }, [enabled, loadDepartments, initialParams])
 
     const addDepartment = useCallback(async (data: {
         name: string

@@ -30,10 +30,37 @@ from api.serializers.user_profile_serializers import (
     EnhancedUserProfileReadSerializer,
 )
 from services.user_service import UserService
-from core.constants import RoleIds
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import user_has_any_permission
 from core.exceptions import ValidationError, BusinessLogicError
 
 logger = logging.getLogger(__name__)
+
+
+def _get_request_user_department_id(user):
+    profile = getattr(user, 'user_profile', None)
+    department_id = getattr(profile, 'department_id', None)
+    return str(department_id) if department_id else None
+
+
+def _has_global_user_scope(user) -> bool:
+    """Permission-based scope bypass for users who can manage organization-wide users."""
+    return user_has_any_permission(user, [
+        PermissionCodes.SYSTEM_ADMIN,
+        PermissionCodes.DEPARTMENT_MANAGE,
+    ])
+
+
+def _profile_in_request_scope(request, profile) -> bool:
+    if _has_global_user_scope(request.user):
+        return True
+
+    target_department_id = getattr(profile, 'department_id', None)
+    if not target_department_id:
+        return False
+
+    scoped_department_ids = UserService().get_user_management_scope_department_ids(request.user)
+    return str(target_department_id) in scoped_department_ids
 
 
 # ============================================================
@@ -57,11 +84,10 @@ class IsAdmin(permissions.BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        # Check if user has ADMIN (id=1) or MANAGER (id=2) role
-        return request.user.account_roles.filter(
-            role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-            is_deleted=False
-        ).exists()
+        required_permissions = getattr(view, 'required_permissions', [PermissionCodes.USER_READ])
+        if isinstance(required_permissions, str):
+            required_permissions = [required_permissions]
+        return user_has_any_permission(request.user, required_permissions)
 
 
 # ============================================================
@@ -93,6 +119,7 @@ class UserProfileAdminListView(APIView):
     View → Service (fetch with filters) → Repository (DB queries) → ORM → DB
     """
     permission_classes = [permissions.IsAuthenticated, IsAdmin]
+    required_permissions = [PermissionCodes.USER_READ]
     pagination_class = UserProfilePagination
     
     def __init__(self, **kwargs):
@@ -106,12 +133,16 @@ class UserProfileAdminListView(APIView):
             search_query = request.query_params.get('search', '').strip()
             department_id = request.query_params.get('department_id', '').strip()
             status_filter = request.query_params.get('status', '').strip()
+            enforce_department_scope = not _has_global_user_scope(request.user)
+            scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
             
             # SERVICE LAYER: Get users with filters
             users_list = self.user_service.list_users(
                 search=search_query,
                 department_id=department_id,
-                status=status_filter
+                status=status_filter,
+                scope_department_ids=scoped_department_ids,
+                enforce_department_scope=enforce_department_scope,
             )
             
             # Pagination
@@ -127,7 +158,7 @@ class UserProfileAdminListView(APIView):
                 ResponseBuilder.paginated(
                     items=serializer.data,
                     page=paginator.page.number,
-                    page_size=paginator.page_size,
+                    page_size=paginator.page.paginator.per_page,
                     total_items=paginator.page.paginator.count,
                     message="User list retrieved successfully"
                 ),
@@ -177,6 +208,12 @@ class UserProfileAdminDetailView(APIView):
     → Repository (DB query/update) → ORM → DB
     """
     permission_classes = [permissions.IsAuthenticated, IsAdmin]
+
+    def get_permissions(self):
+        self.required_permissions = [
+            PermissionCodes.USER_UPDATE if self.request.method == 'PATCH' else PermissionCodes.USER_READ
+        ]
+        return super().get_permissions()
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -192,6 +229,12 @@ class UserProfileAdminDetailView(APIView):
                 return Response(
                     ResponseBuilder.error(message=f"User profile not found for ID: {user_id}"),
                     status=status.HTTP_404_NOT_FOUND
+                )
+
+            if not _profile_in_request_scope(request, profile):
+                return Response(
+                    ResponseBuilder.error(message="You don't have permission to access users outside your department"),
+                    status=status.HTTP_403_FORBIDDEN
                 )
             
             # ✅ SERIALIZER LAYER: Use EnhancedUserProfileReadSerializer to include account data
@@ -240,8 +283,23 @@ class UserProfileAdminDetailView(APIView):
         try:
             # Resolve current profile/account first so serializer can validate against the real account
             current_profile = self.user_service.get_user_profile(user_id)
+            if not _profile_in_request_scope(request, current_profile):
+                return Response(
+                    ResponseBuilder.error(message="You don't have permission to update users outside your department"),
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             current_account_id = str(current_profile.account_id)
             current_email = current_profile.account.email
+
+            requested_department_id = request.data.get('department_id')
+            if requested_department_id and not _has_global_user_scope(request.user):
+                scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
+                if str(requested_department_id) not in scoped_department_ids:
+                    return Response(
+                        ResponseBuilder.error(message="You can only assign users to your managed department tree"),
+                        status=status.HTTP_403_FORBIDDEN
+                    )
 
             # SERIALIZER LAYER: Validate request data with admin serializer
             serializer = AdminUserProfileUpdateSerializer(

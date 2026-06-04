@@ -15,7 +15,8 @@ import logging
 from typing import Dict, List, Any, Tuple
 from django.db.models import Q
 
-from core.constants import RoleIds
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import user_has_permission
 from repositories.document_repository import DocumentRepository
 from repositories.folder_repository import FolderRepository
 from repositories.permission_manager_repository import PermissionManagerRepository
@@ -101,8 +102,8 @@ class ChatAttachmentService:
             user_profile = user.user_profile if hasattr(user, 'user_profile') else None
             user_dept_id = user_profile.department_id if user_profile else None
             
-            # Check if admin
-            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            # Check system-level bypass by permission, not role code.
+            is_admin = user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
             
             if is_admin:
                 # Admin sees all documents
@@ -185,8 +186,8 @@ class ChatAttachmentService:
             user_profile = user.user_profile if hasattr(user, 'user_profile') else None
             user_dept_id = user_profile.department_id if user_profile else None
             
-            # Check if admin
-            is_admin = user.is_superuser or user.has_role(RoleIds.ADMIN)
+            # Check system-level bypass by permission, not role code.
+            is_admin = user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
             
             if is_admin:
                 # Admin sees all folders

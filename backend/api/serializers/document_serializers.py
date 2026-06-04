@@ -5,6 +5,8 @@ import logging
 from rest_framework import serializers
 from apps.documents.models import Document, Folder, DocumentChunk, DocumentEmbedding, Tag
 from .base import SoftDeleteModelSerializer
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import user_has_permission
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +40,8 @@ class FolderSerializer(SoftDeleteModelSerializer):
         if not request or not request.user.is_authenticated:
             return None
 
-        # Only admin can see owner full name for management use-cases.
-        is_admin = request.user.is_superuser
-        if hasattr(request.user, 'has_role'):
-            try:
-                from core.constants import RoleIds
-                is_admin = is_admin or request.user.has_role(RoleIds.ADMIN)
-            except Exception:
-                pass
+        # Only system administrators can see owner names for management use-cases.
+        is_admin = user_has_permission(request.user, PermissionCodes.SYSTEM_ADMIN)
 
         if not is_admin:
             return None
@@ -112,14 +108,8 @@ class DocumentSerializer(SoftDeleteModelSerializer):
         if not request or not request.user.is_authenticated:
             return None
 
-        # Only admin can see owner full name for personal docs management.
-        is_admin = request.user.is_superuser
-        if hasattr(request.user, 'has_role'):
-            try:
-                from core.constants import RoleIds
-                is_admin = is_admin or request.user.has_role(RoleIds.ADMIN)
-            except Exception:
-                pass
+        # Only system administrators can see owner names for personal docs management.
+        is_admin = user_has_permission(request.user, PermissionCodes.SYSTEM_ADMIN)
 
         if not is_admin:
             return None
@@ -197,13 +187,7 @@ class SharedFolderWithDocumentsSerializer(SoftDeleteModelSerializer):
         if not request or not request.user.is_authenticated:
             return None
 
-        is_admin = request.user.is_superuser
-        if hasattr(request.user, 'has_role'):
-            try:
-                from core.constants import RoleIds
-                is_admin = is_admin or request.user.has_role(RoleIds.ADMIN)
-            except Exception:
-                pass
+        is_admin = user_has_permission(request.user, PermissionCodes.SYSTEM_ADMIN)
 
         if not is_admin:
             return None

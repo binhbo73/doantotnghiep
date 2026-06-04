@@ -153,7 +153,7 @@ urlpatterns = [
     # List all accounts (admin only)
     re_path(r"^accounts/?$", UserListView.as_view(), name="account_list"),
     
-    # Admin: Create new account + send email
+    # user_create: create new account + send email
     re_path(r"^accounts/create/?$", AdminCreateAccountView.as_view(), name="account_create"),
     
     # Get single account detail (GET) / Update account (PATCH) 

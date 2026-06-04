@@ -23,7 +23,7 @@ interface FileMetadataPanelProps {
     selectedFolder?: FolderTreeNode | null;
     selectedDocument?: DocumentNode | null;
     onDownload?: () => void;
-    onShare?: () => void;
+    onOpen?: () => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -62,7 +62,7 @@ export function FileMetadataPanel({
     selectedFolder,
     selectedDocument,
     onDownload,
-    onShare,
+    onOpen,
 }: FileMetadataPanelProps) {
     const item = selectedDocument || selectedFolder;
 
@@ -136,13 +136,15 @@ export function FileMetadataPanel({
                     <Download className="w-4 h-4" />
                     <span>Tải về</span>
                 </button>
-                <button
-                    onClick={onShare}
-                    className="flex items-center justify-center gap-2 px-3 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-all text-sm font-medium"
-                >
-                    <Share2 className="w-4 h-4" />
-                    <span>Chia sẻ</span>
-                </button>
+                {isDocument && (
+                    <button
+                        onClick={onOpen}
+                        className="flex items-center justify-center gap-2 px-3 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition-all text-sm font-medium"
+                    >
+                        <Eye className="w-4 h-4" />
+                        <span>Mở</span>
+                    </button>
+                )}
             </div>
 
             {/* Metadata Section */}
@@ -236,11 +238,8 @@ export function FileMetadataPanel({
                 </div>
             </div>
 
-            {/* More Options */}
-            <button className="flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-200 rounded-lg hover:bg-gray-50 transition-all text-sm text-gray-600 font-medium mt-auto">
-                <MoreVertical className="w-4 h-4" />
-                <span>Thêm tùy chọn</span>
-            </button>
+          
+    
         </div>
     );
 }

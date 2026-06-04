@@ -35,7 +35,8 @@ from repositories.user_repository import UserRepository
 from services.audit_service import AuditService
 from services.base_service import BaseService
 from apps.users.models import Department
-from core.constants import RoleIds
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import user_has_any_permission, user_has_permission
 from core.exceptions import (
     ValidationError,
     BusinessLogicError,
@@ -161,7 +162,7 @@ class DepartmentService(BaseService):
         if not user:
             return set()
 
-        if user.is_superuser or user.has_role(RoleIds.ADMIN):
+        if user_has_permission(user, PermissionCodes.DEPARTMENT_MANAGE):
             return set(
                 str(dept_id)
                 for dept_id in self.department_repo.get_base_queryset()
@@ -171,43 +172,60 @@ class DepartmentService(BaseService):
 
         base_qs = self.department_repo.get_base_queryset().filter(is_deleted=False)
 
-        if user.has_role(RoleIds.MANAGER):
-            managed_ids = set(
-                str(dept_id)
-                for dept_id in base_qs.filter(
-                    Q(manager_id=user.id) | Q(managers__id=user.id)
-                ).values_list('id', flat=True).distinct()
-            )
-            if not managed_ids:
-                return set()
+        if not user_has_any_permission(
+            user,
+            [
+                PermissionCodes.DEPARTMENT_READ,
+                PermissionCodes.DEPARTMENT_UPDATE,
+                PermissionCodes.DEPARTMENT_MANAGE,
+            ],
+        ):
+            return set()
 
-            children_map: dict[str, list[str]] = {}
-            for dept_id, parent_id in base_qs.values_list('id', 'parent_id'):
-                if parent_id:
-                    children_map.setdefault(str(parent_id), []).append(str(dept_id))
+        managed_ids = set(
+            str(dept_id)
+            for dept_id in base_qs.filter(
+                Q(manager_id=user.id) | Q(managers__id=user.id)
+            ).values_list('id', flat=True).distinct()
+        )
 
-            visible_ids = set()
-            stack = list(managed_ids)
-            while stack:
-                current_id = stack.pop()
-                if current_id in visible_ids:
-                    continue
-                visible_ids.add(current_id)
-                stack.extend(children_map.get(current_id, []))
+        children_map: dict[str, list[str]] = {}
+        for dept_id, parent_id in base_qs.values_list('id', 'parent_id'):
+            if parent_id:
+                children_map.setdefault(str(parent_id), []).append(str(dept_id))
 
-            return visible_ids
+        visible_ids = set()
+        stack = list(managed_ids)
+        while stack:
+            current_id = stack.pop()
+            if current_id in visible_ids:
+                continue
+            visible_ids.add(current_id)
+            stack.extend(children_map.get(current_id, []))
 
         try:
             department_id = user.user_profile.department_id if hasattr(user, 'user_profile') else None
-            return {str(department_id)} if department_id else set()
+            if department_id:
+                stack.append(str(department_id))
+                while stack:
+                    current_id = stack.pop()
+                    if current_id in visible_ids:
+                        continue
+                    visible_ids.add(current_id)
+                    stack.extend(children_map.get(current_id, []))
         except Exception:
-            return set()
+            pass
+
+        return visible_ids
 
     def can_access_department(self, user, dept_id: str) -> bool:
         return str(dept_id) in self.get_accessible_department_ids(user)
 
     def can_edit_department(self, user, dept_id: str) -> bool:
-        if not user or not (user.is_superuser or user.has_role(RoleIds.ADMIN) or user.has_role(RoleIds.MANAGER)):
+        if not user_has_any_permission(
+            user,
+            [PermissionCodes.DEPARTMENT_UPDATE, PermissionCodes.DEPARTMENT_MANAGE],
+        ):
             return False
         return self.can_access_department(user, dept_id)
 

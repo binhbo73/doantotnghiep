@@ -8,6 +8,8 @@ import { KnowledgeCard } from './KnowledgeCard'
 import { useFeedback } from '@/hooks/useFeedback'
 import { useToast } from '@/hooks/useToast'
 import { buildApiUrl } from '@/config/api'
+import { getAuthToken } from '@/services/auth'
+import { logger } from '@/services/logger'
 
 export interface Message {
     id: string
@@ -308,7 +310,7 @@ const openCitationSource = async (citation: Citation) => {
     }
 
     const popup = window.open('about:blank', '_blank')
-    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+    const token = getAuthToken()
     const endpoint = citation.url || `/documents/${citation.document_id}/download`
     const response = await fetch(buildApiUrl(endpoint), {
         headers: {
@@ -536,7 +538,7 @@ function AuthenticatedInlineAssetImage({ citation }: { citation: Citation }) {
 
         const load = async () => {
             try {
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const token = getAuthToken()
                 const response = await fetch(buildApiUrl(endpoint), {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -546,8 +548,11 @@ function AuthenticatedInlineAssetImage({ citation }: { citation: Citation }) {
                 const blob = await response.blob()
                 objectUrl = URL.createObjectURL(blob)
                 if (!cancelled) setSrc(objectUrl)
-            } catch {
-                if (!cancelled) setFailed(true)
+            } catch (err) {
+                if (!cancelled) {
+                    logger.error('Failed to load inline asset image', err)
+                    setFailed(true)
+                }
             }
         }
 
@@ -681,7 +686,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
             setShowCommentBox(null)
             setCurrentRating(null)
         } catch (err) {
-            console.error('Failed to submit feedback:', err)
+            logger.error('Failed to submit feedback', err)
         }
     }
 
@@ -699,7 +704,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
         try {
             await openCitationSource(citation)
         } catch (error) {
-            console.error('Failed to open citation source:', error)
+            logger.error('Failed to open citation source', error)
             toast({
                 title: 'Khong the mo nguon',
                 description: 'Vui long thu tai lai tai lieu hoac kiem tra quyen truy cap.',

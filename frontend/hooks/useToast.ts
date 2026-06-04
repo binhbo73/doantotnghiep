@@ -99,22 +99,29 @@ export function useToast() {
             showError(`Tải lên "${data.fileName}" thất bại: ${data.error || 'Lỗi không xác định'}`)
         }
 
+        const onPermissionChanged = handlePermissionChanged as EventListener
+        const onRoleChanged = handleRoleChanged as EventListener
+        const onDepartmentChanged = handleDepartmentChanged as EventListener
+        const onDocumentShared = handleDocumentShared as EventListener
+        const onUploadComplete = handleUploadComplete as EventListener
+        const onUploadFailed = handleUploadFailed as EventListener
+
         // Add event listeners
-        window.addEventListener('permission:refresh-needed', handlePermissionChanged)
-        window.addEventListener('role:refresh-needed', handleRoleChanged)
-        window.addEventListener('department:refresh-needed', handleDepartmentChanged)
-        window.addEventListener('document:shared', handleDocumentShared)
-        window.addEventListener('upload:complete', handleUploadComplete)
-        window.addEventListener('upload:failed', handleUploadFailed)
+        window.addEventListener('permission:refresh-needed', onPermissionChanged)
+        window.addEventListener('role:refresh-needed', onRoleChanged)
+        window.addEventListener('department:refresh-needed', onDepartmentChanged)
+        window.addEventListener('document:shared', onDocumentShared)
+        window.addEventListener('upload:complete', onUploadComplete)
+        window.addEventListener('upload:failed', onUploadFailed)
 
         // Cleanup
         return () => {
-            window.removeEventListener('permission:refresh-needed', handlePermissionChanged)
-            window.removeEventListener('role:refresh-needed', handleRoleChanged)
-            window.removeEventListener('department:refresh-needed', handleDepartmentChanged)
-            window.removeEventListener('document:shared', handleDocumentShared)
-            window.removeEventListener('upload:complete', handleUploadComplete)
-            window.removeEventListener('upload:failed', handleUploadFailed)
+            window.removeEventListener('permission:refresh-needed', onPermissionChanged)
+            window.removeEventListener('role:refresh-needed', onRoleChanged)
+            window.removeEventListener('department:refresh-needed', onDepartmentChanged)
+            window.removeEventListener('document:shared', onDocumentShared)
+            window.removeEventListener('upload:complete', onUploadComplete)
+            window.removeEventListener('upload:failed', onUploadFailed)
         }
     }, [showInfo, showSuccess, showError])
 

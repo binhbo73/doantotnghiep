@@ -7,7 +7,7 @@ Endpoint: GET /api/v1/chat/available-attachments
 Returns all documents and folders that the current user can access for 
 attaching to conversations, based on:
 1. access_scope (personal/department/company)
-2. User's role
+2. backend permission codes
 3. DocumentPermission entries
 4. FolderPermission entries
 
@@ -27,7 +27,8 @@ from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from core.permissions.drf_permissions import IsAuthenticatedUser
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import IsAuthenticatedUser, user_has_permission
 from api.serializers.base import ResponseBuilder
 from api.serializers.chat_attachment_serializers import AvailableAttachmentsSerializer
 from services.chat_attachment_service import ChatAttachmentService
@@ -46,7 +47,7 @@ class AvailableAttachmentsView(APIView):
     - access_scope: personal (owner only), department (same dept), company (all)
     - DocumentPermission table: explicit account/role permissions
     - FolderPermission table: explicit account/role permissions
-    - User roles via AccountRole
+    - chat_read permission before exposing selectable attachments
     """
     permission_classes = [IsAuthenticatedUser]
     
@@ -70,6 +71,15 @@ class AvailableAttachmentsView(APIView):
         }
         """
         try:
+            if not user_has_permission(request.user, PermissionCodes.CHAT_READ):
+                return Response(
+                    ResponseBuilder.error(
+                        message=f"You need {PermissionCodes.CHAT_READ} permission",
+                        status_code=status.HTTP_403_FORBIDDEN,
+                    ),
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
             user_id = request.user.id
             logger.info(f"📎 Fetching available attachments for user: {user_id}")
             

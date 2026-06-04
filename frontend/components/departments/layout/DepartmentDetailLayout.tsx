@@ -8,6 +8,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useRBAC } from '@/hooks/useRBAC';
 
 interface DepartmentDetailLayoutProps {
     children: React.ReactNode;
@@ -20,7 +21,9 @@ export default function DepartmentDetailLayout({
 }: DepartmentDetailLayoutProps) {
     const pathname = usePathname();
     const router = useRouter();
+    const { hasPermission } = useRBAC();
     const isStorageTabActive = pathname.endsWith('/storage');
+    const canAccessStorage = hasPermission('folder_read') && hasPermission('document_read');
 
     const handleBack = () => {
         if (window.history.length > 1) {
@@ -58,7 +61,7 @@ export default function DepartmentDetailLayout({
                                     <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#f59e0b] rounded-full" />
                                 )}
                             </Link>
-                            <Link
+                            {canAccessStorage && <Link
                                 href={`/dashboard/departments/${deptId}/storage`}
                                 className="relative py-2 text-xs font-black transition-colors"
                                 style={{ color: isStorageTabActive ? '#b45309' : '#94a3b8' }}
@@ -67,7 +70,7 @@ export default function DepartmentDetailLayout({
                                 {isStorageTabActive && (
                                     <div className="absolute -bottom-2 left-0 right-0 h-0.5 bg-[#f59e0b] rounded-full" />
                                 )}
-                            </Link>
+                            </Link>}
                         </div>
                     </div>
 

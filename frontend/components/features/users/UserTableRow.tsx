@@ -18,6 +18,9 @@ interface UserTableRowProps {
     onEdit?: (user: User) => void
     onDelete?: (user: User) => void
     onResetPassword?: (user: User) => void
+    canEdit?: boolean
+    canDelete?: boolean
+    canResetPassword?: boolean
     isSelected?: boolean
     onSelect?: (userId: string, selected: boolean) => void
 }
@@ -28,6 +31,9 @@ export function UserTableRow({
     onEdit,
     onDelete,
     onResetPassword,
+    canEdit = true,
+    canDelete = true,
+    canResetPassword = true,
     isSelected = false,
     onSelect,
 }: UserTableRowProps) {
@@ -127,6 +133,9 @@ export function UserTableRow({
                     onEdit={() => onEdit?.(user)}
                     onDelete={() => onDelete?.(user)}
                     onResetPassword={() => onResetPassword?.(user)}
+                    showEdit={canEdit}
+                    showDelete={canDelete}
+                    showResetPassword={canResetPassword}
                 />
             </td>
         </tr>

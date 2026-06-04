@@ -3,9 +3,7 @@
 import React from 'react'
 import { useRouter } from 'next/navigation'
 import { useRBAC } from '@/hooks/useRBAC'
-import { useAuthContext } from '@/context'
 import { Department } from '@/types/api'
-import { canEditDepartment } from '@/lib/departmentAccess'
 
 interface DepartmentListProps {
     departments: Department[]
@@ -16,8 +14,9 @@ interface DepartmentListProps {
 
 export function DepartmentList({ departments, onAdd, onEdit, onExport }: DepartmentListProps) {
     const router = useRouter()
-    const { isAdmin, isTruongPhong } = useRBAC()
-    const { user } = useAuthContext()
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canUpdateDepartments = hasAnyPermission(['department_update', 'department_manage'])
+    const canDeleteDepartments = hasPermission('department_manage')
     const totalDepartments = departments.length
     const totalMembers = departments.reduce((acc, d) => acc + (d.member_count || 0), 0)
 
@@ -30,24 +29,10 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
     }
 
     const handleNavigateToDepartmentDetail = (deptId: string) => {
-        // Allow navigation, but the detail page will guard access.
-        // For managers, prevent navigation to other departments' detail (they see overview only).
-        if (isTruongPhong() && deptId !== user?.department_id) {
-            // Show an info cue and navigate to dashboard root (overview) instead
-            // Alternatively, still navigate but detail page will show restricted view. We'll navigate but notify.
-            router.push(`/dashboard/departments/${deptId}`)
-            return
-        }
         router.push(`/dashboard/departments/${deptId}`)
     }
 
-    const canEditDept = (dept: Department) => canEditDepartment({
-        user,
-        targetDeptId: dept.id,
-        departments,
-        isAdmin: isAdmin(),
-        isTruongPhong: isTruongPhong(),
-    })
+    const canEditDept = (_dept: Department) => canUpdateDepartments
 
     const getColorClass = (idx: number) => {
         const colors = [
@@ -169,7 +154,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
                                                 <button
                                                     onClick={() => handleNavigateToDepartmentDetail(dept.id)}
                                                     className="p-1.5 text-slate-400 hover:text-[#9d4300] bg-white hover:bg-orange-50 rounded shadow-sm border border-transparent transition-all"
-                                                    title={isTruongPhong() && dept.id !== user?.department_id ? 'Xem tổng quan (chi tiết bị giới hạn)' : 'Xem chi tiết'}
+                                                    title="Xem chi tiết"
                                                 >
                                                     <span className="material-symbols-outlined text-base">open_in_new</span>
                                                 </button>
@@ -182,7 +167,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
                                                         <span className="material-symbols-outlined text-base">edit</span>
                                                     </button>
                                                 )}
-                                                {isAdmin() ? (
+                                                {canDeleteDepartments ? (
                                                     <button className="p-1.5 text-slate-400 hover:text-red-600 bg-white hover:bg-red-50 rounded shadow-sm border border-transparent transition-all">
                                                         <span className="material-symbols-outlined text-base">delete</span>
                                                     </button>

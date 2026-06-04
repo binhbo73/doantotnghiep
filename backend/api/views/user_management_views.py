@@ -1,4 +1,4 @@
-"""
+﻿"""
 User Management Views - Admin endpoints for managing users, roles, departments.
 
 Endpoints:
@@ -30,11 +30,26 @@ from api.serializers.user_serializers import (
     RoleAssignmentSerializer, RoleRemovalSerializer, RoleUpdateSerializer, DepartmentChangeSerializer
 )
 from services.user_service import UserService
-from core.constants import AccountStatus, RoleIds
+from core.constants import AccountStatus, RoleIds, PermissionCodes
+from core.permissions.drf_permissions import user_has_any_permission, user_has_permission
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _get_request_user_department_id(user):
+    profile = getattr(user, 'user_profile', None)
+    department_id = getattr(profile, 'department_id', None)
+    return str(department_id) if department_id else None
+
+
+def _has_global_user_scope(user) -> bool:
+    """Permission-based scope bypass for organization-wide user management."""
+    return user_has_any_permission(user, [
+        PermissionCodes.SYSTEM_ADMIN,
+        PermissionCodes.DEPARTMENT_MANAGE,
+    ])
 
 
 # ============================================================
@@ -52,78 +67,29 @@ class UserPagination(PageNumberPagination):
 # ============================================================
 
 class IsAdmin(permissions.BasePermission):
-    """✅ Check if user has admin role - Uses cached roles from JWT token"""
+    """Permission-driven management guard kept for existing view wiring."""
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        
-        # ✅ IMPROVED: First try to use roles cached in JWT token (no DB query!)
-        if hasattr(request, 'auth') and request.auth:
-            roles = request.auth.get('roles', []) if request.auth else None
-            if roles and isinstance(roles, list):
-                # Roles from JWT: [{'id': '...', 'code': 'admin', 'name': 'Administrator'}]
-                # Prefer checking `code` (stable identifier) case-insensitively; fall back to name.
-                has_role = any(
-                    (r.get('code') and str(r.get('code')).upper() in ['ADMIN', 'MANAGER']) or
-                    (r.get('name') and str(r.get('name')).upper() in ['ADMIN', 'MANAGER'])
-                    for r in roles
-                )
-                if has_role:
-                    return True
-        
-        # Fallback: Query DB if not in JWT token (shouldn't happen normally)
-        try:
-            # Fallback: query by role.code to avoid relying on hard-coded UUIDs
-            exists = request.user.account_roles.filter(
-                role__code__in=['admin', 'manager'],
-                is_deleted=False
-            ).exists()
-            if not exists:
-                # Log contextual info to help debug permission failures
-                try:
-                    logger.debug('IsAdmin check failed for user', {
-                        'user_id': getattr(request.user, 'id', None),
-                        'request_auth': getattr(request, 'auth', None)
-                    })
-                except Exception:
-                    logger.debug('IsAdmin: failed to read request.auth or user id for debug log')
-            return exists
-        except Exception:
-            logger.exception('IsAdmin: error checking account_roles')
-            return False
+
+        required_permissions = getattr(view, 'required_permissions', [PermissionCodes.SYSTEM_ADMIN])
+        if isinstance(required_permissions, str):
+            required_permissions = [required_permissions]
+        return user_has_any_permission(request.user, required_permissions)
 
 
 class IsAdminOrOwner(permissions.BasePermission):
-    """✅ Check if user is admin OR viewing own profile - Uses cached JWT roles"""
+    """Allow users with the required permission, or the owner object."""
     def has_permission(self, request, view):
         return request.user and request.user.is_authenticated
-    
+
     def has_object_permission(self, request, view, obj):
-        # ✅ IMPROVED: Use cached roles from JWT first
-        if hasattr(request, 'auth') and request.auth:
-            roles = request.auth.get('roles', []) if request.auth else None
-            if roles and isinstance(roles, list):
-                is_admin = any(
-                    (r.get('code') and str(r.get('code')).upper() in ['ADMIN', 'MANAGER']) or
-                    (r.get('name') and str(r.get('name')).upper() in ['ADMIN', 'MANAGER'])
-                    for r in roles
-                )
-                if is_admin:
-                    return True
-        
-        # Fallback: Check DB if not in JWT
-        try:
-            if request.user.account_roles.filter(
-                role__code__in=['admin', 'manager'],
-                is_deleted=False
-            ).exists():
-                return True
-        except Exception:
-            logger.exception('IsAdminOrOwner: error checking account_roles for object permission')
-            pass
-        
-        # Owner can access own profile
-        return obj.id == request.user.id
+        required_permissions = getattr(view, 'required_permissions', [PermissionCodes.USER_READ])
+        if isinstance(required_permissions, str):
+            required_permissions = [required_permissions]
+        if user_has_any_permission(request.user, required_permissions):
+            return True
+        return str(obj.id) == str(request.user.id)
 
 
 # ============================================================
@@ -143,6 +109,7 @@ class UserListView(APIView):
     - page_size: Items per page (default: 20, max: 100)
     """
     permission_classes = [IsAdmin]
+    required_permissions = [PermissionCodes.USER_READ]
     pagination_class = UserPagination
     user_service = UserService()
     
@@ -152,6 +119,8 @@ class UserListView(APIView):
             search_query = request.query_params.get('search', '').strip()
             status_filter = request.query_params.get('status', '').strip()
             dept_filter = request.query_params.get('department_id', '').strip()
+            enforce_department_scope = not _has_global_user_scope(request.user)
+            scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
             
             # Validate status if provided
             if status_filter and status_filter not in ['active', 'blocked', 'inactive']:
@@ -162,22 +131,24 @@ class UserListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # ✅ FIXED: Use SERVICE instead of ORM direct query
+            # âœ… FIXED: Use SERVICE instead of ORM direct query
             # Service handles all business logic including filtering, searching, etc.
             users_list = self.user_service.list_users(
                 search=search_query,
                 department_id=dept_filter,
-                status=status_filter
+                status=status_filter,
+                scope_department_ids=scoped_department_ids,
+                enforce_department_scope=enforce_department_scope,
             )
             
             # Pagination
             paginator = self.pagination_class()
             paginated_queryset = paginator.paginate_queryset(users_list, request)
             
-            # ✅ FIXED: Use UserProfileListSerializer for UserProfile objects
+            # âœ… FIXED: Use UserProfileListSerializer for UserProfile objects
             serializer = UserProfileListSerializer(paginated_queryset, many=True)
             
-            page_size = paginator.page_size
+            page_size = paginator.page.paginator.per_page
             total_count = paginator.page.paginator.count
             
             return Response(
@@ -211,7 +182,7 @@ class UserDetailView(APIView):
     
     def get(self, request, account_id):
         try:
-            # ✅ FIXED: Use SERVICE instead of ORM direct
+            # âœ… FIXED: Use SERVICE instead of ORM direct
             try:
                 user = self.user_service.get_by_id(account_id)
             except Exception as e:
@@ -220,15 +191,11 @@ class UserDetailView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Permission check: admin or own account
-            is_admin = request.user.account_roles.filter(
-                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-                is_deleted=False
-            ).exists()
+            # Permission check: user_read permission or own account
+            can_read_users = user_has_permission(request.user, PermissionCodes.USER_READ)
+            is_own = str(request.user.id) == str(account_id)
             
-            is_own = request.user.id == account_id
-            
-            if not (is_admin or is_own):
+            if not (can_read_users or is_own):
                 return Response(
                     ResponseBuilder.error(message="You don't have permission to view this account"),
                     status=status.HTTP_403_FORBIDDEN
@@ -250,20 +217,15 @@ class UserDetailView(APIView):
     @transaction.atomic
     def delete(self, request, account_id):
         """Delete (soft-delete) an account - requires admin permission"""
-        # Check admin permission
-        is_admin = request.user.account_roles.filter(
-            role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-            is_deleted=False
-        ).exists()
-        
-        if not is_admin:
+        # Check delete permission
+        if not user_has_permission(request.user, PermissionCodes.USER_DELETE):
             return Response(
                 ResponseBuilder.error(message="You don't have permission to delete accounts"),
                 status=status.HTTP_403_FORBIDDEN
             )
         
         try:
-            # ✅ FIXED: Use SERVICE instead of ORM direct
+            # âœ… FIXED: Use SERVICE instead of ORM direct
             try:
                 user = self.user_service.get_by_id(account_id)
             except Exception as e:
@@ -273,13 +235,13 @@ class UserDetailView(APIView):
                 )
             
             # Prevent self-deletion
-            if request.user.id == account_id:
+            if str(request.user.id) == str(account_id):
                 return Response(
                     ResponseBuilder.error(message="Cannot delete your own account"),
                     status=status.HTTP_409_CONFLICT
                 )
             
-            # ✅ FIXED: Use SERVICE for deactivate instead of direct save
+            # âœ… FIXED: Use SERVICE for deactivate instead of direct save
             self.user_service.deactivate_account(account_id)
             
             # Log deletion
@@ -317,6 +279,7 @@ class UserStatusChangeView(APIView):
     Only admin can do this.
     """
     permission_classes = [IsAdmin]
+    required_permissions = [PermissionCodes.USER_CHANGE_STATUS]
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -325,7 +288,7 @@ class UserStatusChangeView(APIView):
     @transaction.atomic
     def post(self, request, account_id):
         try:
-            # ✅ FIXED: Use SERVICE instead of ORM direct
+            # âœ… FIXED: Use SERVICE instead of ORM direct
             try:
                 user = self.user_service.get_by_id(account_id)
             except Exception as e:
@@ -335,7 +298,7 @@ class UserStatusChangeView(APIView):
                 )
             
             # Prevent admin from blocking themselves
-            if request.user.id == account_id:
+            if str(request.user.id) == str(account_id):
                 return Response(
                     ResponseBuilder.error(message="Cannot change your own account status"),
                     status=status.HTTP_409_CONFLICT
@@ -348,7 +311,7 @@ class UserStatusChangeView(APIView):
             new_status = serializer.validated_data['status']
             reason = serializer.validated_data.get('reason', '')
             
-            # ✅ FIXED: Use SERVICE to change status instead of direct save
+            # âœ… FIXED: Use SERVICE to change status instead of direct save
             updated_user = self.user_service.change_account_status(account_id, new_status, reason)
             
             # Log status change via Service (which uses AuditLogRepository)
@@ -357,7 +320,7 @@ class UserStatusChangeView(APIView):
                     action='CHANGE_USER_STATUS',
                     user_id=request.user.id,
                     resource_id=str(account_id),
-                    query_text=f"Status changed for account {account_id}: {user.status if 'user' in locals() else 'unknown'} → {new_status}. Reason: {reason}",
+                    query_text=f"Status changed for account {account_id}: {user.status if 'user' in locals() else 'unknown'} â†’ {new_status}. Reason: {reason}",
                     ip_address=self._get_client_ip(request),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
@@ -411,7 +374,7 @@ class UserRolesView(APIView):
     
     def get(self, request, account_id):
         try:
-            # ✅ FIXED: Use SERVICE instead of direct ORM
+            # âœ… FIXED: Use SERVICE instead of direct ORM
             self.user_service = UserService()
             try:
                 user = self.user_service.get_by_id(account_id)
@@ -421,19 +384,17 @@ class UserRolesView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Permission check
-            is_admin = request.user.account_roles.filter(
-                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-                is_deleted=False
-            ).exists()
+            # Permission check: user_read permission or own account
+            can_read_users = user_has_permission(request.user, PermissionCodes.USER_READ)
+            is_own = str(request.user.id) == str(account_id)
             
-            if not (is_admin or request.user.id == account_id):
+            if not (can_read_users or is_own):
                 return Response(
                     ResponseBuilder.error(message="You don't have permission"),
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # ✅ FIXED: Get detailed roles via Service method (NOT direct ORM)
+            # âœ… FIXED: Get detailed roles via Service method (NOT direct ORM)
             try:
                 roles_data = self.user_service.get_user_roles_detailed(account_id)
             except ValidationError as e:
@@ -461,13 +422,8 @@ class UserRolesView(APIView):
     def post(self, request, account_id):
         """Assign a role to account (POST method on same endpoint)"""
         try:
-            # Check admin permission
-            is_admin = request.user.account_roles.filter(
-                role_id__in=[RoleIds.ADMIN, RoleIds.MANAGER],
-                is_deleted=False
-            ).exists()
-            
-            if not is_admin:
+            # Check role management permission
+            if not user_has_permission(request.user, PermissionCodes.USER_CHANGE_ROLE):
                 return Response(
                     ResponseBuilder.error(message="You don't have permission to assign roles"),
                     status=status.HTTP_403_FORBIDDEN
@@ -490,7 +446,7 @@ class UserRolesView(APIView):
             )
             
             # Get role for response
-            # ✅ CORRECT: ar already has role via FK - no ORM needed!
+            # âœ… CORRECT: ar already has role via FK - no ORM needed!
             role = ar.role
             
             # Log action via Service (which uses AuditLogRepository internally)
@@ -546,6 +502,7 @@ class UserRoleRemoveView(APIView):
     Only admin can do this. Cannot remove last role.
     """
     permission_classes = [IsAdmin]
+    required_permissions = [PermissionCodes.USER_CHANGE_ROLE]
     
     @transaction.atomic
     def delete(self, request, account_id, role_id):
@@ -554,7 +511,7 @@ class UserRoleRemoveView(APIView):
             self.user_service = UserService()
             self.user_service.remove_role_from_user(account_id, role_id)
             
-            # ✅ CORRECT: No ORM calls needed for success response
+            # âœ… CORRECT: No ORM calls needed for success response
             # Just acknowledge the deletion
             
             # Log action via Service
@@ -605,6 +562,7 @@ class UserRoleUpdateView(APIView):
     Replace a role for an account.
     """
     permission_classes = [IsAdmin]
+    required_permissions = [PermissionCodes.USER_CHANGE_ROLE]
     
     @transaction.atomic
     def patch(self, request, account_id, role_id):
@@ -623,7 +581,7 @@ class UserRoleUpdateView(APIView):
                 notes=new_notes
             )
             
-            # ✅ CORRECT: ar already has role via FK - no ORM needed!
+            # âœ… CORRECT: ar already has role via FK - no ORM needed!
             role = ar.role
             
             # Log action via Service
@@ -691,7 +649,7 @@ class UserRoleUpdateView(APIView):
                     status=status.HTTP_409_CONFLICT
                 )
             
-            # ✅ CORRECT: Use Service for ALL role replacement logic (NOT ORM direct calls)
+            # âœ… CORRECT: Use Service for ALL role replacement logic (NOT ORM direct calls)
             self.user_service = UserService()
             try:
                 new_ar = self.user_service.replace_user_role(
@@ -712,7 +670,7 @@ class UserRoleUpdateView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # ✅ CORRECT: Get data from Service response (NOT ORM)
+            # âœ… CORRECT: Get data from Service response (NOT ORM)
             new_role = new_ar.role
             account = new_ar.account
             
@@ -722,7 +680,7 @@ class UserRoleUpdateView(APIView):
                     action='REPLACE_ROLE',
                     user_id=request.user.id,
                     resource_id=str(account_id),
-                    query_text=f"Role replaced for account {account_id}: {role_id} → {new_role_id}. Notes: {notes}",
+                    query_text=f"Role replaced for account {account_id}: {role_id} â†’ {new_role_id}. Notes: {notes}",
                     ip_address=self._get_client_ip(request),
                     user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
                 )
@@ -773,6 +731,7 @@ class UserDepartmentChangeView(APIView):
     Note: Department info is on UserProfile, not Account.
     """
     permission_classes = [IsAdmin]
+    required_permissions = [PermissionCodes.USER_UPDATE]
     
     @transaction.atomic
     def patch(self, request, account_id):
@@ -791,7 +750,7 @@ class UserDepartmentChangeView(APIView):
                 department_id=new_dept_id
             )
             
-            # ✅ CORRECT: No ORM calls needed for response
+            # âœ… CORRECT: No ORM calls needed for response
             # user_profile already from Service and has department via FK
             
             # Log action via Service (which uses AuditLogRepository)
@@ -849,13 +808,19 @@ class UserDepartmentChangeView(APIView):
 
 class AdminCreateAccountView(APIView):
     """
-    Admin endpoint để tạo account mới cho user.
-    - GET /api/accounts/create: Danh sách account active
-    - POST /api/accounts/create: Tạo account mới + tự động generate temp password + gửi email + gán role
+    Admin endpoint Ä‘á»ƒ táº¡o account má»›i cho user.
+    - GET /api/accounts/create: Danh sÃ¡ch account active
+    - POST /api/accounts/create: Táº¡o account má»›i + tá»± Ä‘á»™ng generate temp password + gá»­i email + gÃ¡n role
     
-    Chỉ admin mới có quyền truy cập.
+    Chá»‰ admin má»›i cÃ³ quyá»n truy cáº­p.
     """
     permission_classes = [IsAdmin]
+
+    def get_permissions(self):
+        self.required_permissions = [
+            PermissionCodes.USER_CREATE if self.request.method == 'POST' else PermissionCodes.USER_READ
+        ]
+        return super().get_permissions()
     
     def get(self, request):
         """GET: List all active accounts"""
@@ -863,19 +828,25 @@ class AdminCreateAccountView(APIView):
             from services.user_service import UserService
             
             self.user_service = UserService()
-            
-            # ✅ FIXED: Use SERVICE instead of direct ORM
-            accounts = self.user_service.list_users(status='active')
+            enforce_department_scope = not _has_global_user_scope(request.user)
+            scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
+
+            # âœ… FIXED: Use SERVICE instead of direct ORM
+            accounts = self.user_service.list_users(
+                status='active',
+                scope_department_ids=scoped_department_ids,
+                enforce_department_scope=enforce_department_scope,
+            )
             
             # Convert model instances to dict for response
             paginator = UserPagination()
             page = paginator.paginate_queryset(accounts, request)
             if page is not None:
-                # ✅ FIXED: Use UserProfileListSerializer for UserProfile objects (not UserListSerializer)
+                # âœ… FIXED: Use UserProfileListSerializer for UserProfile objects (not UserListSerializer)
                 serializer = UserProfileListSerializer(page, many=True)
                 return paginator.get_paginated_response(serializer.data)
             
-            # ✅ FIXED: Use UserProfileListSerializer for UserProfile objects
+            # âœ… FIXED: Use UserProfileListSerializer for UserProfile objects
             serializer = UserProfileListSerializer(accounts, many=True)
             return Response(
                 ResponseBuilder.success(
@@ -899,8 +870,24 @@ class AdminCreateAccountView(APIView):
             from core.constants import RoleIds
             
             # Step 1: Extract department_id (OPTIONAL - default NULL)
-            # ✅ CORRECT: department_id is optional, only validate if provided
+            # âœ… CORRECT: department_id is optional, only validate if provided
             department_id = request.data.get('department_id')
+            enforce_department_scope = not _has_global_user_scope(request.user)
+
+            if enforce_department_scope:
+                scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
+                if not scoped_department_ids:
+                    return Response(
+                        ResponseBuilder.error(message="Your account has no managed department scope"),
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                if department_id and str(department_id) not in scoped_department_ids:
+                    return Response(
+                        ResponseBuilder.error(message="You can only create users in your managed department tree"),
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+                if not department_id:
+                    department_id = scoped_department_ids[0]
             
             try:
                 if department_id:
@@ -922,7 +909,7 @@ class AdminCreateAccountView(APIView):
                 )
             
             # Step 1.5: Extract role_id (OPTIONAL - default USER)
-            # ✅ NEW: role_id is optional, only validate if provided
+            # âœ… NEW: role_id is optional, only validate if provided
             role_id = request.data.get('role_id')
             role_obj = None
             
@@ -959,6 +946,25 @@ class AdminCreateAccountView(APIView):
             email = request.data.get('email', '').strip()
             first_name = request.data.get('first_name', '').strip()
             last_name = request.data.get('last_name', '').strip()
+
+            missing_fields = [
+                field_name
+                for field_name, value in {
+                    'username': username,
+                    'email': email,
+                    'first_name': first_name,
+                    'last_name': last_name,
+                }.items()
+                if not value
+            ]
+            if missing_fields:
+                return Response(
+                    ResponseBuilder.error(
+                        message=f"Missing required fields: {', '.join(missing_fields)}",
+                        status_code=400,
+                    ),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             
             # Generate temporary password
             temp_password = self._generate_temporary_password()
@@ -976,7 +982,7 @@ class AdminCreateAccountView(APIView):
                 account_data=account_data,
                 department=department,
                 role_id=role_id,
-                granted_by=request.user  # ✅ Track who created the account
+                granted_by=request.user  # âœ… Track who created the account
             )
             
             # Get role info

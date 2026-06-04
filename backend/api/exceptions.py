@@ -12,6 +12,7 @@ from rest_framework.exceptions import (
     NotFound,
     PermissionDenied,
     AuthenticationFailed,
+    NotAuthenticated,
     MethodNotAllowed,
     NotAcceptable,
     Throttled,
@@ -187,7 +188,7 @@ def global_exception_handler(exc, context) -> Response:
     if isinstance(exc, PermissionDenied):
         return Response(GlobalExceptionHandler.handle_drf_permission_denied(exc, request), status=status.HTTP_403_FORBIDDEN)
     
-    if isinstance(exc, AuthenticationFailed):
+    if isinstance(exc, (AuthenticationFailed, NotAuthenticated)):
         return Response(GlobalExceptionHandler.handle_drf_authentication_failed(exc, request), status=status.HTTP_401_UNAUTHORIZED)
     
     if isinstance(exc, Throttled):

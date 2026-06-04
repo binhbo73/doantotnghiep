@@ -3,29 +3,31 @@
 import { useRouter } from 'next/navigation'
 import { useAuthContext } from '@/context'
 import { useEffect } from 'react'
+import { useRBAC } from './useRBAC'
 
 /**
  * Hook để kiểm tra bảo vệ route
  * Tự động redirect nếu chưa xác thực hoặc không có quyền
  * 
- * @param requiredRole - (Optional) Role cần thiết, ví dụ 'admin'
+ * @param requiredPermissions - (Optional) permission codes required for the route
  * @returns { isProtected: boolean, isLoading: boolean }
  * 
  * @example
  * ```tsx
- * export default function AdminPage() {
- *     const { isProtected } = useProtectedRoute('admin')
+ * export default function PermissionedPage() {
+ *     const { isProtected } = useProtectedRoute(['system_admin'])
  *     
  *     if (!isProtected) return null
  *     
- *     return <AdminDashboard />
+ *     return <PermissionedDashboard />
  * }
  * ```
  */
-export function useProtectedRoute(requiredRole?: string) {
+export function useProtectedRoute(requiredPermissions?: string[]) {
     const router = useRouter()
     const { isAuthenticated, isLoading, user } = useAuthContext()
-    const hasRequiredRole = !requiredRole || user?.roles?.some((role) => role.code === requiredRole)
+    const { hasAnyPermission } = useRBAC()
+    const hasRequiredPermissions = !requiredPermissions || requiredPermissions.length === 0 || hasAnyPermission(requiredPermissions)
 
     useEffect(() => {
         if (isLoading) return
@@ -36,14 +38,13 @@ export function useProtectedRoute(requiredRole?: string) {
             return
         }
 
-        // Check role if required
-        if (requiredRole && !hasRequiredRole) {
+        if (!hasRequiredPermissions) {
             router.push('/dashboard')
             return
         }
-    }, [isAuthenticated, isLoading, requiredRole, hasRequiredRole, router])
+    }, [isAuthenticated, isLoading, hasRequiredPermissions, router])
 
-    const isProtected = isAuthenticated && hasRequiredRole
+    const isProtected = isAuthenticated && hasRequiredPermissions
 
     return {
         isProtected,
@@ -54,7 +55,7 @@ export function useProtectedRoute(requiredRole?: string) {
 
 /**
  * Hook để kiểm tra quyền admin
- * Wrapper tiện lợi cho useProtectedRoute('admin')
+ * Wrapper tiện lợi cho useProtectedRoute(['system_admin'])
  * 
  * @returns { isAdmin: boolean, isLoading: boolean }
  * 
@@ -65,7 +66,7 @@ export function useProtectedRoute(requiredRole?: string) {
  * ```
  */
 export function useAdminCheck() {
-    const { isProtected, isLoading, user } = useProtectedRoute('admin')
+    const { isProtected, isLoading, user } = useProtectedRoute(['system_admin'])
 
     return {
         isAdmin: isProtected,

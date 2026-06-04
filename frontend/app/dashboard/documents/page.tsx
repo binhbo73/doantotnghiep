@@ -3,10 +3,10 @@
 /**
  * Documents Page
  * RBAC:
- * - All authenticated users can browse documents (tab "Duyệt tài liệu")
- * - Admin or Manager (Trưởng phòng) can access the "Phân quyền" tab
- * - Upload button visibility: Admin + Manager can upload, User can only upload personal
- * - Create Folder: Admin + Manager + Users in their own department
+ * - document_read/folder_read: browse documents
+ * - document_share/document_update/folder_update/folder_delete: permissions tab
+ * - document_create: upload documents
+ * - folder_create: create folders
  */
 
 import React, { useEffect, useMemo, useState } from 'react'
@@ -21,7 +21,8 @@ import {
 import { DocumentsPermissionsWorkspace } from '@/components/features/documents/DocumentsPermissionsWorkspace'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useRBAC } from '@/hooks/useRBAC'
-import { useAuthContext } from '@/context'
+import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
+import { useRouter } from 'next/navigation'
 import {
     fetchSharedWithMeFoldersAndDocuments,
     FolderWithDocuments,
@@ -64,7 +65,7 @@ function PageTabButton({
                 <div className="min-w-0">
                     <p className="text-[13px] font-bold">{label}</p>
                     {disabled && (
-                        <p className="text-[10px] opacity-60">Yêu cầu quyền Admin</p>
+                        <p className="text-[10px] opacity-60">Yêu cầu quyền phân quyền tài liệu</p>
                     )}
                 </div>
             </div>
@@ -132,14 +133,15 @@ function filterOtherDocuments(
     }
 }
 
-export default function DocumentsPage() {
+function DocumentsPageContent() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
     const [sharedWithMe, setSharedWithMe] = useState<SharedDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
-    const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canReadDocuments = hasPermission('document_read')
+    const canReadFolders = hasPermission('folder_read')
 
-    const { user } = useAuthContext()
     const {
         tree,
         otherDocuments,
@@ -156,13 +158,22 @@ export default function DocumentsPage() {
         clearSelection,
         refetch,
         getStats,
-    } = useDocumentStore()
+    } = useDocumentStore({
+        enabled: canReadDocuments || canReadFolders,
+        canReadDocuments,
+        canReadFolders,
+    })
 
     const stats = getStats()
 
-    const shouldHideSharedItems = isTruongPhong() && !isAdmin()
+    const shouldHideSharedItems = false
 
     useEffect(() => {
+        if (!canReadDocuments) {
+            setSharedWithMe({ folders: [], unfoldered_documents: [] })
+            return
+        }
+
         let isMounted = true
 
         void fetchSharedWithMeFoldersAndDocuments()
@@ -181,7 +192,7 @@ export default function DocumentsPage() {
         return () => {
             isMounted = false
         }
-    }, [])
+    }, [canReadDocuments])
 
     const browseTree = useMemo(() => {
         if (!shouldHideSharedItems) {
@@ -203,9 +214,9 @@ export default function DocumentsPage() {
     }, [otherDocuments, sharedWithMe, shouldHideSharedItems])
 
     // Permissions for document page features
-    const canManagePermissions = isAdmin() || isTruongPhong()
-    const canCreateFolder = isAdmin() || isTruongPhong() || !!user?.department_id
-    const canUpload = isAdmin() || isTruongPhong() || hasGlobalPermission('create', 'document')
+    const canManagePermissions = hasAnyPermission(['document_share', 'document_update', 'folder_update', 'folder_delete'])
+    const canCreateFolder = hasPermission('folder_create')
+    const canUpload = hasPermission('document_create')
 
     // ── Loading State ──────────────────────────────────────
     if (isLoading) {
@@ -335,7 +346,7 @@ export default function DocumentsPage() {
                 }}
             />
 
-            {/* Create Folder Modal - Admin + Manager only */}
+            {/* Create Folder Modal */}
             {canCreateFolder && (
                 <CreateFolderModal
                     isOpen={isCreateFolderModalOpen}
@@ -347,4 +358,24 @@ export default function DocumentsPage() {
             )}
         </div>
     )
+}
+
+export default function DocumentsPage() {
+    const router = useRouter()
+    const { hasAnyPermission } = useRBAC()
+    const canBrowseDocuments = hasAnyPermission(['document_read', 'folder_read'])
+
+    if (!canBrowseDocuments) {
+        return (
+            <AccessDeniedPage
+                title="Truy cập bị hạn chế"
+                message="Bạn cần quyền document_read hoặc folder_read để truy cập Kho tài liệu."
+                icon="🔒"
+                showBackButton={true}
+                onGoBack={() => router.push('/dashboard')}
+            />
+        )
+    }
+
+    return <DocumentsPageContent />
 }

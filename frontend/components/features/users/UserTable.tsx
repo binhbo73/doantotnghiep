@@ -24,6 +24,9 @@ interface UserTableProps {
     sortBy?: string
     sortOrder?: 'asc' | 'desc'
     onSort?: (columnId: string) => void
+    canEdit?: boolean
+    canDelete?: boolean
+    canResetPassword?: boolean
 }
 
 const TABLE_COLUMNS = [
@@ -50,6 +53,9 @@ export function UserTable({
     sortBy,
     sortOrder = 'asc',
     onSort,
+    canEdit = true,
+    canDelete = true,
+    canResetPassword = true,
 }: UserTableProps) {
     if (!loading && users.length === 0) {
         return <EmptyState onAction={onAddUser} />
@@ -82,6 +88,9 @@ export function UserTable({
                                 onEdit={onEdit}
                                 onDelete={onDelete}
                                 onResetPassword={onResetPassword}
+                                canEdit={canEdit}
+                                canDelete={canDelete}
+                                canResetPassword={canResetPassword}
                                 isSelected={selectedUsers.has(user.id)}
                                 onSelect={onSelectUser}
                             />

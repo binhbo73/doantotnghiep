@@ -4,7 +4,6 @@
  */
 
 import React from 'react';
-import Link from 'next/link';
 
 interface InfoCardsSectionProps {
     deptId: string;
@@ -28,13 +27,14 @@ export default function InfoCardsSection({
                     <p className="text-xs font-medium text-slate-500 leading-snug">
                         Quy trình gia nhập cho nhân sự mới của {departmentName}.
                     </p>
-                    <Link
-                        href={`/dashboard/departments/${deptId}/onboarding`}
-                        className="inline-flex items-center gap-1.5 text-xs font-black text-[#9d4300] group-hover:gap-3 transition-all"
+                    <button
+                        type="button"
+                        disabled
+                        className="inline-flex cursor-not-allowed items-center gap-1.5 text-xs font-black text-[#9d4300]/60"
                     >
                         Truy cập
                         <span className="material-symbols-outlined text-base">arrow_forward</span>
-                    </Link>
+                    </button>
                 </div>
                 <span className="absolute -right-2 -bottom-2 text-5xl opacity-[0.03] text-[#9d4300]">article</span>
             </div>
@@ -51,13 +51,14 @@ export default function InfoCardsSection({
                     <p className="text-xs font-medium text-slate-500 leading-snug">
                         Thứ Hai hàng tuần lúc 09:00 AM tại phòng Apollo.
                     </p>
-                    <Link
-                        href={`/dashboard/departments/${deptId}/meetings`}
-                        className="inline-flex items-center gap-1.5 text-xs font-black text-blue-600 group-hover:gap-3 transition-all"
+                    <button
+                        type="button"
+                        disabled
+                        className="inline-flex cursor-not-allowed items-center gap-1.5 text-xs font-black text-blue-600/60"
                     >
                         Xem lịch
                         <span className="material-symbols-outlined text-base">arrow_forward</span>
-                    </Link>
+                    </button>
                 </div>
                 <span className="absolute -right-2 -bottom-2 text-5xl opacity-[0.03] text-blue-600">event</span>
             </div>
@@ -74,13 +75,14 @@ export default function InfoCardsSection({
                     <p className="text-xs font-medium text-slate-500 leading-snug">
                         Tiến độ dự án và chỉ số hoàn thành quý III.
                     </p>
-                    <Link
-                        href={`/dashboard/departments/${deptId}/kpi`}
-                        className="inline-flex items-center gap-1.5 text-xs font-black text-rose-500 group-hover:gap-3 transition-all"
+                    <button
+                        type="button"
+                        disabled
+                        className="inline-flex cursor-not-allowed items-center gap-1.5 text-xs font-black text-rose-500/60"
                     >
                         Báo cáo
                         <span className="material-symbols-outlined text-base">arrow_forward</span>
-                    </Link>
+                    </button>
                 </div>
                 <span className="absolute -right-2 -bottom-2 text-5xl opacity-[0.03] text-rose-500">monitoring</span>
             </div>

@@ -6,6 +6,10 @@ import { ExcelViewer } from '@/components/features/documents/ExcelViewer'
 import { PDFViewer } from '@/components/features/documents/PDFViewer'
 import { WordViewer } from '@/components/features/documents/WordViewer'
 import { buildApiUrl } from '@/config/api'
+import { getAuthToken } from '@/services/auth'
+import { logger } from '@/services/logger'
+import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
+import { useRBAC } from '@/hooks/useRBAC'
 
 type CitationViewerPayload = {
     document_id?: string
@@ -279,10 +283,13 @@ function CitationViewerContent() {
         if (storageKey && typeof window !== 'undefined') {
             try {
                 const raw = sessionStorage.getItem(storageKey)
-                console.log(`[CitationViewer] sessionStorage key=${storageKey}, raw payload:`, raw ? JSON.parse(raw) : 'NULL')
+                logger.debug('CitationViewer sessionStorage payload', {
+                    storageKey,
+                    payload: raw ? JSON.parse(raw) : 'NULL',
+                })
                 if (raw) return JSON.parse(raw)
             } catch (err) {
-                console.error('Failed to read citation payload:', err)
+                logger.error('Failed to read citation payload', err)
             }
         }
 
@@ -299,7 +306,14 @@ function CitationViewerContent() {
     const hasAsset = payload.type === 'asset' || Boolean(assetId)
     const shouldOpenAssetImage = hasAsset && payload.viewer_mode === 'asset'
 
-    console.log(`[CitationViewer] Payload analysis: document_id=${payload.document_id}, type=${payload.type}, asset_id=${assetId}, hasAsset=${hasAsset}, viewer_mode=${payload.viewer_mode}, shouldOpenAssetImage=${shouldOpenAssetImage}`)
+    logger.debug('CitationViewer payload analysis', {
+        document_id: payload.document_id,
+        type: payload.type,
+        assetId,
+        hasAsset,
+        viewer_mode: payload.viewer_mode,
+        shouldOpenAssetImage,
+    })
 
     useEffect(() => {
         if (shouldOpenAssetImage || !payload.document_id || !payload.chunk_id) {
@@ -310,7 +324,7 @@ function CitationViewerContent() {
         const controller = new AbortController()
         const loadChunkSource = async () => {
             try {
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const token = getAuthToken()
                 const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/chunks/${payload.chunk_id}`), {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -348,7 +362,7 @@ function CitationViewerContent() {
         const controller = new AbortController()
         const loadDocumentAssets = async () => {
             try {
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const token = getAuthToken()
                 const response = await fetch(buildApiUrl(`/documents/${payload.document_id}/assets`), {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -364,9 +378,9 @@ function CitationViewerContent() {
                 const body = await response.json()
                 const data = body?.data || body
                 const assetsArray = Array.isArray(data) ? data : []
-                console.log(`[CitationViewer] Loaded ${assetsArray.length} assets for document ${payload.document_id}:`)
-                assetsArray.forEach((a, idx) => {
-                    console.log(`  [${idx}] id=${a.id}, type=${a.asset_type}, page=${a.page_number}, sheet=${a.sheet_name}, anchor=${a.anchor_cell}, image_url=${a.image_url}`)
+                logger.debug('CitationViewer loaded assets', {
+                    document_id: payload.document_id,
+                    assetCount: assetsArray.length,
                 })
                 setDocumentAssets(assetsArray)
             } catch (err) {
@@ -426,7 +440,7 @@ function CitationViewerContent() {
     const title = payload.title || payload.asset_caption || payload.asset?.caption || 'Tai lieu nguon'
     const guessedKind = shouldOpenAssetImage ? 'image' : classifyFileType(payload.type, title)
     const excelAssetImages = useMemo(() => {
-        console.log(`[CitationViewer excelAssetImages] documentAssets:`, documentAssets)
+        logger.debug('CitationViewer excel asset images', { documentAssetsCount: documentAssets.length })
         const mapped = documentAssets.map((item) => ({
             id: item.id,
             pageNumber: item.page_number || undefined,
@@ -496,7 +510,12 @@ function CitationViewerContent() {
                 a.anchor_cell === targetAnchor
             )
             if (anchorMatch) {
-                console.log(`[CitationViewer] Found replacement for stale asset ${assetId} at ${targetSheet} ${targetAnchor}: ${anchorMatch.id}`)
+                logger.debug('CitationViewer found replacement for stale asset', {
+                    assetId,
+                    targetSheet,
+                    targetAnchor,
+                    replacementId: anchorMatch.id,
+                })
                 return {
                     id: anchorMatch.id,
                     pageNumber: anchorMatch.page_number || undefined,
@@ -542,7 +561,7 @@ function CitationViewerContent() {
             try {
                 setError(null)
                 setViewer(null)
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const token = getAuthToken()
                 if (shouldOpenAssetImage) {
                     const assetEndpoint = resolvedAssetId ? `/assets/${resolvedAssetId}/image` : normalizeApiEndpoint(payload.asset?.image_url)
                     const fallbackEndpoint = normalizeApiEndpoint(payload.asset?.thumbnail_url) || (resolvedAssetId ? `/assets/${resolvedAssetId}/thumbnail` : '')
@@ -572,7 +591,9 @@ function CitationViewerContent() {
                     return
                 }
 
-                const endpoint = payload.url || (payload.document_id ? `/documents/${payload.document_id}/download` : '')
+                const endpoint = payload.document_id
+                    ? `/documents/${payload.document_id}/preview`
+                    : payload.url || ''
                 if (!endpoint) {
                     throw new Error('Khong co document_id de mo nguon')
                 }
@@ -765,7 +786,10 @@ function CitationViewerContent() {
 
                 {!error && viewer?.kind === 'excel' && (
                     <>
-                        {console.log(`[CitationViewer] Rendering ExcelViewer with ${excelAssetImages.length} assetImages and currentAsset:`, currentAsset)}
+                        {logger.debug('CitationViewer rendering ExcelViewer', {
+                            excelAssetImagesCount: excelAssetImages.length,
+                            currentAsset,
+                        })}
                         {isAssetsLoading ? (
                             <div className="flex h-full items-center justify-center p-8 text-sm font-medium text-slate-500">
                                 Dang dong bo hinh anh...
@@ -795,6 +819,19 @@ function CitationViewerContent() {
 }
 
 export default function CitationViewerPage() {
+    const { hasPermission } = useRBAC()
+
+    if (!hasPermission('document_read')) {
+        return (
+            <AccessDeniedPage
+                title="Khong co quyen xem trich dan"
+                message="Ban can quyen document_read de xem nguon, preview, asset va noi dung tai lieu."
+                icon="lock"
+                onGoBack={() => window.history.back()}
+            />
+        )
+    }
+
     return (
         <Suspense fallback={<div className="p-8 text-sm text-slate-500">Dang tai...</div>}>
             <CitationViewerContent />

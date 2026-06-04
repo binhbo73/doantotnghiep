@@ -21,7 +21,7 @@ export const API_ENDPOINTS = {
     // Chat
     CHAT_CONVERSATIONS: '/chat/conversations',
     CHAT_MESSAGES: '/chat/messages',
-    CHAT_SEND: '/chat/send',
+    CHAT_SEND: '/chat/messages',
 
     // Departments
     DEPARTMENTS: '/departments',

@@ -8,10 +8,14 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+
 import { useDepartmentDocuments } from '@/hooks/departments/useDepartmentDetail';
 import Pagination from '@/components/common/Pagination';
 import TabLoading from '@/components/departments/loading/TabLoading';
 import { DocumentDetail, PaginatedResponse } from '@/types/departments';
+import { PreviewModal } from '@/components/features/documents/PreviewModal';
+import { api } from '@/services/api/client';
+import { toast } from 'sonner';
 
 interface StaffDocumentsTabProps {
     deptId: string;
@@ -21,6 +25,11 @@ interface StaffDocumentsTabProps {
 export default function StaffDocumentsTab({ deptId, initialData }: StaffDocumentsTabProps) {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
+    const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState<string>('');
+    const [previewFileType, setPreviewFileType] = useState<string>('');
+    const [previewDoc, setPreviewDoc] = useState<DocumentDetail | null>(null);
+    const [isPreviewing, setIsPreviewing] = useState(false);
 
     // API Hook: Fetch documents with pagination
     const hookResult = useDepartmentDocuments(
@@ -74,6 +83,33 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
         return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
     };
 
+    const handleOpenPreview = async (doc: DocumentDetail) => {
+        setIsPreviewing(true);
+        setPreviewDoc(doc);
+        const toastId = toast.loading('Đang chuẩn bị xem trước...');
+        try {
+            const endpoint = `/documents/${doc.id}/preview`;
+            const blob = await api.download(endpoint);
+            if (!blob || blob.size === 0) {
+                throw new Error('File rỗng hoặc không hợp lệ');
+            }
+            const blobType = blob.type?.toLowerCase() || '';
+            if (blobType.includes('application/json') || blobType.includes('text/html')) {
+                throw new Error('Phản hồi tải xuống không hợp lệ');
+            }
+            const url = URL.createObjectURL(blob);
+            setPreviewUrl(url);
+            setPreviewFileType(blob.type || doc.file_type);
+            setIsPreviewOpen(true);
+            toast.success('Đã mở bản xem trước', { id: toastId });
+        } catch (error) {
+            console.error('Preview failed:', error);
+            toast.error('Không thể xem trước tài liệu', { id: toastId });
+        } finally {
+            setIsPreviewing(false);
+        }
+    };
+
     return (
         <div className="space-y-4">
             {/* Documents Table */}
@@ -119,12 +155,13 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
                                     </span>
                                 </td>
                                 <td className="px-4 py-3">
-                                    <Link
-                                        href={`/dashboard/documents/${doc.id}`}
-                                        className="text-amber-600 hover:underline font-medium"
+                                    <button
+                                        onClick={() => handleOpenPreview(doc)}
+                                        disabled={isPreviewing}
+                                        className="text-amber-600 hover:underline font-medium disabled:opacity-50"
                                     >
                                         Mở →
-                                    </Link>
+                                    </button>
                                 </td>
                             </tr>
                         ))}
@@ -140,6 +177,25 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
                     pageSize={pageSize}
                     onPageChange={setPage}
                     onPageSizeChange={setPageSize}
+                />
+            )}
+
+            {/* Preview Modal */}
+            {previewDoc && (
+                <PreviewModal
+                    isOpen={isPreviewOpen}
+                    onClose={() => {
+                        setIsPreviewOpen(false);
+                        if (previewUrl.startsWith('blob:')) {
+                            URL.revokeObjectURL(previewUrl);
+                        }
+                        setPreviewUrl('');
+                        setPreviewFileType('');
+                    }}
+                    documentId={previewDoc.id}
+                    fileUrl={previewUrl}
+                    fileName={previewDoc.original_name || 'Tài liệu'}
+                    fileType={previewFileType || previewDoc.file_type}
                 />
             )}
         </div>

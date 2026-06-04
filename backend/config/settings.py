@@ -86,7 +86,7 @@ DATABASES = {
         "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "postgres"),
         "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
         "PORT": os.environ.get("POSTGRES_PORT", "5433"),
-        "CONN_MAX_AGE": int(os.environ.get("CONN_MAX_AGE", "60")),
+        "CONN_MAX_AGE": int(os.environ.get("CONN_MAX_AGE", "0")),
         "OPTIONS": {
             "sslmode": os.environ.get("POSTGRES_SSLMODE", "prefer"),
         },
@@ -377,7 +377,7 @@ EMAIL_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.environ.get("SMTP_PORT", "587"))
 EMAIL_USE_TLS = os.environ.get("SMTP_USE_TLS", "True").lower() in ["true", "1"]
 EMAIL_HOST_USER = os.environ.get("SMTP_USERNAME", "phuongbinh732004@gmail.com")
-EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "wtgr smng iswt twjm")
+EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "fabe nefa wgdp benz")
 DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER)
 
 FRONTEND_URL = os.environ.get("APP_URL", "http://localhost:3000")

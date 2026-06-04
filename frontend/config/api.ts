@@ -33,14 +33,19 @@ export function buildApiUrl(endpoint: string): string {
 }
 
 export function getDirectApiBaseUrl(): string {
-    const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim()
+    const publicBackendUrl = process.env.NEXT_PUBLIC_BACKEND_URL?.trim()
+    if (publicBackendUrl) {
+        return normalizeTrailingSlash(publicBackendUrl)
+    }
 
+    const configuredUrl = process.env.NEXT_PUBLIC_API_URL?.trim()
     if (configuredUrl && !configuredUrl.startsWith('/')) {
         return normalizeTrailingSlash(configuredUrl)
     }
 
     if (typeof window !== 'undefined') {
-        return `${window.location.protocol}//${window.location.hostname}:8000${DEFAULT_API_PATH}`
+        // Use same origin as the frontend in browser environments so requests go to the hosting backend
+        return `${window.location.origin}${DEFAULT_API_PATH}`
     }
 
     return `${DEFAULT_BACKEND_ORIGIN}${DEFAULT_API_PATH}`

@@ -6,6 +6,7 @@ import logging
 from typing import Optional, Dict, Any, List, Tuple
 from django.apps import apps
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from core.exceptions import (
     BusinessLogicError,
@@ -1361,9 +1362,17 @@ class UserService(BaseService):
             logger.error(f"Error getting current user with permissions: {str(e)}")
             raise
     
-    def list_users(self, search: str = None, department_id: str = None, status: str = None) -> List:
+    def list_users(
+        self,
+        search: str = None,
+        department_id: str = None,
+        status: str = None,
+        scope_department_id: str = None,
+        scope_department_ids: List[str] = None,
+        enforce_department_scope: bool = False,
+    ) -> List:
         """
-        List all user profiles with search and filters (Admin only).
+        List user profiles with search and filters for callers with user_read.
         
         Business Logic:
         1. Validate filters
@@ -1374,6 +1383,9 @@ class UserService(BaseService):
             search: Search query (username, email, full_name)
             department_id: Filter by department UUID
             status: Filter by account status (active, blocked, inactive)
+            scope_department_id: Caller department UUID for scoped managers
+            scope_department_ids: Caller department UUIDs for multi-department scoped managers
+            enforce_department_scope: Restrict results to caller department
         
         Returns:
             List of UserProfile objects
@@ -1385,6 +1397,29 @@ class UserService(BaseService):
             # Validate status filter if provided
             if status and status not in ['active', 'blocked', 'inactive']:
                 raise ValidationError(f"Invalid status: {status}. Must be active, blocked, or inactive")
+
+            if enforce_department_scope:
+                if scope_department_ids is None:
+                    scope_department_ids = self.get_department_and_descendant_ids(scope_department_id)
+
+                scope_department_ids = list(dict.fromkeys(str(dept_id) for dept_id in scope_department_ids if dept_id))
+
+                if not scope_department_ids:
+                    logger.info(
+                        f"Listed users blocked by empty department scope. "
+                        f"Filters: search={search}, dept={department_id}, status={status}"
+                    )
+                    return self.UserProfile.objects.none()
+
+                if department_id and str(department_id) not in scope_department_ids:
+                    logger.info(
+                        f"Listed users outside caller department scope denied. "
+                        f"requested_dept={department_id}, scope_depts={scope_department_ids}"
+                    )
+                    return self.UserProfile.objects.none()
+
+                if not department_id:
+                    department_id = None
             
             # Fetch profiles via repository
             profiles = self.profile_repository.search_profiles(
@@ -1392,10 +1427,106 @@ class UserService(BaseService):
                 department_id=department_id,
                 status=status
             )
+
+            if enforce_department_scope and not department_id:
+                profiles = profiles.filter(department_id__in=scope_department_ids)
             
-            logger.info(f"Listed users. Filters: search={search}, dept={department_id}, status={status}")
+            logger.info(
+                f"Listed users. Filters: search={search}, dept={department_id}, "
+                f"status={status}, scoped={enforce_department_scope}"
+            )
             return profiles
         
         except Exception as e:
             logger.error(f"Error listing users: {str(e)}")
             raise
+
+    def get_department_and_descendant_ids(self, department_id: str = None) -> List[str]:
+        """Return a department id plus all descendant department ids."""
+        if not department_id:
+            return []
+
+        try:
+            Department = apps.get_model('users', 'Department')
+            dept_ids = [str(department_id)]
+            queue = [str(department_id)]
+
+            while queue:
+                current_id = queue.pop(0)
+                child_ids = list(
+                    Department.objects.filter(
+                        parent_id=current_id,
+                        is_deleted=False,
+                    ).values_list('id', flat=True)
+                )
+                for child_id in child_ids:
+                    child_id_str = str(child_id)
+                    if child_id_str not in dept_ids:
+                        dept_ids.append(child_id_str)
+                        queue.append(child_id_str)
+
+            return dept_ids
+        except Exception as e:
+            logger.error(f"Error loading department descendants for {department_id}: {str(e)}")
+            return [str(department_id)]
+
+    def get_user_management_scope_department_ids(self, user) -> List[str]:
+        """
+        Return department IDs a scoped user manager may manage users in.
+
+        Sources:
+        - the user's own department
+        - departments where the user is the legacy manager FK
+        - departments where the user is in the managers M2M relation
+        - descendants of every source department
+        """
+        if not user:
+            return []
+
+        try:
+            Department = apps.get_model('users', 'Department')
+            base_qs = Department.objects.filter(is_deleted=False)
+            root_ids = []
+            seen_root_ids = set()
+
+            try:
+                profile = getattr(user, 'user_profile', None)
+                if profile and profile.department_id:
+                    department_id = str(profile.department_id)
+                    root_ids.append(department_id)
+                    seen_root_ids.add(department_id)
+            except Exception:
+                pass
+
+            managed_ids = base_qs.filter(
+                Q(manager_id=user.id) | Q(managers__id=user.id)
+            ).order_by('name').values_list('id', flat=True).distinct()
+            for dept_id in managed_ids:
+                dept_id = str(dept_id)
+                if dept_id not in seen_root_ids:
+                    root_ids.append(dept_id)
+                    seen_root_ids.add(dept_id)
+
+            if not root_ids:
+                return []
+
+            children_map: Dict[str, List[str]] = {}
+            for dept_id, parent_id in base_qs.values_list('id', 'parent_id'):
+                if parent_id:
+                    children_map.setdefault(str(parent_id), []).append(str(dept_id))
+
+            scoped_ids = []
+            seen_scoped_ids = set()
+            stack = list(root_ids)
+            while stack:
+                current_id = stack.pop(0)
+                if current_id in seen_scoped_ids:
+                    continue
+                scoped_ids.append(current_id)
+                seen_scoped_ids.add(current_id)
+                stack.extend(children_map.get(current_id, []))
+
+            return scoped_ids
+        except Exception as e:
+            logger.error(f"Error loading user management department scope for {getattr(user, 'id', None)}: {str(e)}")
+            return []

@@ -19,11 +19,22 @@ from rest_framework import status
 from django.http import FileResponse, HttpResponse
 from django.conf import settings
 
-from core.permissions.drf_permissions import IsAuthenticatedUser
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import IsAuthenticatedUser, user_has_permission
 from core.utils.response_builder import ResponseBuilder
 from core.exceptions import NotFoundError, PermissionDeniedError
 
 logger = logging.getLogger(__name__)
+
+
+def _document_read_forbidden():
+    return Response(
+        ResponseBuilder.error(
+            "You need document_read permission",
+            status_code=status.HTTP_403_FORBIDDEN,
+        ),
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 class DocumentAssetsListView(APIView):
@@ -33,6 +44,9 @@ class DocumentAssetsListView(APIView):
 
     def get(self, request, doc_id):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _document_read_forbidden()
+
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
             if not perm_manager.check_document_access(request.user.id, doc_id, action='read'):
@@ -75,6 +89,9 @@ class DocumentAssetDetailView(APIView):
 
     def get(self, request, asset_id):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _document_read_forbidden()
+
             from apps.documents.models import DocumentAsset
             from api.serializers.document_serializers import DocumentAssetSerializer
             from core.permissions import get_permission_manager
@@ -117,6 +134,9 @@ class DocumentAssetImageView(APIView):
 
     def get(self, request, asset_id):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _document_read_forbidden()
+
             from apps.documents.models import DocumentAsset
             from core.permissions import get_permission_manager
 
@@ -193,6 +213,9 @@ class DocumentAssetThumbnailView(APIView):
 
     def get(self, request, asset_id):
         try:
+            if not user_has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _document_read_forbidden()
+
             from PIL import Image
             from apps.documents.models import DocumentAsset
             from core.permissions import get_permission_manager

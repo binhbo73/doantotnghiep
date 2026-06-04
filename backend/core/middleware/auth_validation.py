@@ -47,6 +47,12 @@ class AuthValidationMiddleware(MiddlewareMixin):
         # Skip health check
         if request.path in ['/health', '/health/']:
             return None
+
+        # DRF authenticates this endpoint again inside the view. Skipping the
+        # middleware check here prevents duplicate DB hits during permission
+        # refresh bursts from multiple open dashboard tabs.
+        if request.path in ['/api/v1/auth/me', '/api/v1/auth/me/']:
+            return None
         
         try:
             # Extract JWT token

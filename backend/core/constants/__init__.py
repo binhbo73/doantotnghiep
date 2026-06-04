@@ -87,6 +87,8 @@ class PermissionCodes:
     USER_UPDATE = "user_update"
     USER_DELETE = "user_delete"
     USER_CHANGE_ROLE = "user_change_role"
+    USER_CHANGE_STATUS = "user_change_status"
+    USER_RESET_PASSWORD = "user_reset_password"
     
     # Document Permissions
     DOCUMENT_CREATE = "document_create"
@@ -97,6 +99,8 @@ class PermissionCodes:
     DOCUMENT_SHARE = "document_share"
     DOCUMENT_DOWNLOAD = "document_download"
     
+
+    
     # Folder Permissions
     FOLDER_CREATE = "folder_create"
     FOLDER_READ = "folder_read"
@@ -104,6 +108,7 @@ class PermissionCodes:
     FOLDER_DELETE = "folder_delete"
     
     # Department Permissions
+    DEPARTMENT_CREATE = "department_create"
     DEPARTMENT_READ = "department_read"
     DEPARTMENT_UPDATE = "department_update"
     DEPARTMENT_MANAGE = "department_manage"
@@ -115,6 +120,11 @@ class PermissionCodes:
     # AI/RAG Permissions
     RAG_QUERY = "rag_query"
     EMBEDDING_GENERATE = "embedding_generate"
+
+    # Chat Permissions
+    CHAT_CREATE = "chat_create"
+    CHAT_READ = "chat_read"
+    CHAT_SEND = "chat_send"
     
     # Audit & System
     AUDIT_LOG_VIEW = "audit_log_view"
@@ -128,6 +138,8 @@ ALL_PERMISSIONS = [
     PermissionCodes.USER_UPDATE,
     PermissionCodes.USER_DELETE,
     PermissionCodes.USER_CHANGE_ROLE,
+    PermissionCodes.USER_CHANGE_STATUS,
+    PermissionCodes.USER_RESET_PASSWORD,
     # Document
     PermissionCodes.DOCUMENT_CREATE,
     PermissionCodes.DOCUMENT_READ,
@@ -142,6 +154,7 @@ ALL_PERMISSIONS = [
     PermissionCodes.FOLDER_UPDATE,
     PermissionCodes.FOLDER_DELETE,
     # Department
+    PermissionCodes.DEPARTMENT_CREATE,
     PermissionCodes.DEPARTMENT_READ,
     PermissionCodes.DEPARTMENT_UPDATE,
     PermissionCodes.DEPARTMENT_MANAGE,
@@ -151,6 +164,10 @@ ALL_PERMISSIONS = [
     # RAG
     PermissionCodes.RAG_QUERY,
     PermissionCodes.EMBEDDING_GENERATE,
+    # Chat
+    PermissionCodes.CHAT_CREATE,
+    PermissionCodes.CHAT_READ,
+    PermissionCodes.CHAT_SEND,
     # Audit
     PermissionCodes.AUDIT_LOG_VIEW,
     PermissionCodes.SYSTEM_ADMIN,

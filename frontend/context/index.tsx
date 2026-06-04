@@ -1,7 +1,7 @@
 // context/index.tsx - Global App Context Providers
 'use client'
 
-import React, { createContext, useContext, useState, useEffect } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { authService } from '@/services/auth'
 import type { User } from '@/types'
@@ -103,9 +103,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (authService.isAuthenticated()) {
                 const newUser = loadUserFromStorage()
-                if (newUser && user?.id !== newUser.id) {
-                    // Different user logged in - update context
-                    console.log('🔄 User changed from', user?.id, 'to', newUser.id)
+                if (newUser) {
+                    console.log('🔄 User data refreshed from storage:', {
+                        from: user?.id,
+                        to: newUser.id,
+                        permissionCount: newUser.permissions.length,
+                    })
                     setUser(newUser)
                 }
             } else if (!isPublicRoute) {
@@ -127,8 +130,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
             if (authService.isAuthenticated()) {
                 const newUser = loadUserFromStorage()
-                if (newUser && user?.id !== newUser.id) {
-                    console.log('✅ User context updated:', { from: user?.id, to: newUser.id })
+                if (newUser) {
+                    console.log('✅ User context updated:', {
+                        from: user?.id,
+                        to: newUser.id,
+                        permissionCount: newUser.permissions.length,
+                    })
                     setUser(newUser)
                 }
             } else if (!isPublicRoute) {
@@ -141,9 +148,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         window.addEventListener('auth:user-changed', handleAuthChange)
         return () => window.removeEventListener('auth:user-changed', handleAuthChange)
-    }, [user?.id])
+    }, []) // Empty dependency array - listener should stay active throughout component lifetime
 
-    const logout = async () => {
+    const logout = useCallback(async () => {
         setIsLoading(true)
         try {
             await authService.logout()
@@ -151,23 +158,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } finally {
             setIsLoading(false)
         }
-    }
+    }, [])
 
     // Update user data during session (e.g., after permission/role changes)
-    const updateUser = (newUser: User) => {
-        const oldUserId = user?.id
-        setUser(newUser)
-        console.log('👤 User data updated:', {
-            from: oldUserId,
-            to: newUser.id,
-            roles: newUser.roles?.map((r: any) => r.code)
-        })
+    const updateUser = useCallback((newUser: User) => {
+        setUser((previousUser) => {
+            const oldUserId = previousUser?.id
+            console.log('👤 User data updated:', {
+                from: oldUserId,
+                to: newUser.id,
+                roles: newUser.roles?.map((r: any) => r.code)
+            })
 
-        // If user ID changed, notify dashboard to clear cache
-        if (oldUserId && oldUserId !== newUser.id) {
-            window.dispatchEvent(new Event('auth:user-changed'))
-        }
-    }
+            // If user ID changed, notify dashboard to clear cache
+            if (oldUserId && oldUserId !== newUser.id) {
+                window.dispatchEvent(new Event('auth:user-changed'))
+            }
+            return newUser
+        })
+    }, [])
 
     const value: AuthContextType = {
         user,

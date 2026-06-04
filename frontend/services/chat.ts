@@ -31,16 +31,29 @@ export interface FeedbackListResponse {
     feedbacks: Feedback[]
 }
 
+type BackendPaginatedResponse<T> = ApiResponse<{
+    items: T[]
+    pagination: {
+        page: number
+        page_size: number
+        total_items: number
+        total_pages: number
+        has_next: boolean
+        has_previous: boolean
+    }
+}>
+
 export const chatService = {
     async getMessages(conversationId: string, limit = 50, offset = 0): Promise<Message[]> {
-        const data = await api.get<ApiResponse<Message[]>>(
-            `/chat/messages?conversation_id=${conversationId}&limit=${limit}&offset=${offset}`
+        const page = Math.floor(offset / limit) + 1
+        const data = await api.get<BackendPaginatedResponse<Message>>(
+            `/chat/conversations/${conversationId}/messages?page=${page}&page_size=${limit}`
         )
-        return data.data
+        return data.data.items
     },
 
     async sendMessage(conversationId: string, content: string): Promise<Message> {
-        const data = await api.post<ApiResponse<Message>>('/chat/send', {
+        const data = await api.post<ApiResponse<Message>>('/chat/messages', {
             conversation_id: conversationId,
             content,
         })

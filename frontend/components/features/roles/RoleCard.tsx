@@ -79,13 +79,13 @@ export function RoleCard({ role, isSelected, onViewDetails, onEdit }: RoleCardPr
                 >
                     👁️ Chi tiết
                 </button>
-                <button
+                {onEdit && <button
                     onClick={() => onEdit?.(role.id)}
                     className="text-xs font-medium transition flex items-center justify-center gap-1 px-2 py-1 rounded-lg"
                     style={{ color: '#b75b00', backgroundColor: '#fff8f0' }}
                 >
                     ✏️ Chỉnh sửa
-                </button>
+                </button>}
             </div>
         </div>
     )

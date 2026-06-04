@@ -20,6 +20,7 @@ from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
@@ -104,6 +105,12 @@ class UserProfileSelfView(APIView):
         
         except ValidationError as e:
             logger.warning(f"Validation error for user {request.user.id}: {str(e)}")
+            return Response(
+                ResponseBuilder.error(message=str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except (ParseError, UnsupportedMediaType) as e:
+            logger.warning(f"Invalid avatar upload request for user {request.user.id}: {str(e)}")
             return Response(
                 ResponseBuilder.error(message=str(e)),
                 status=status.HTTP_400_BAD_REQUEST
@@ -285,6 +292,12 @@ class UserProfileAvatarView(APIView):
         
         except ValidationError as e:
             logger.warning(f"Validation error for user {request.user.id}: {str(e)}")
+            return Response(
+                ResponseBuilder.error(message=str(e)),
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except (ParseError, UnsupportedMediaType) as e:
+            logger.warning(f"Invalid avatar upload request for user {request.user.id}: {str(e)}")
             return Response(
                 ResponseBuilder.error(message=str(e)),
                 status=status.HTTP_400_BAD_REQUEST

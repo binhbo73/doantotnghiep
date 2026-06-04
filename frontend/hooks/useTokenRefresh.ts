@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { logger } from '@/services/logger'
+import { getAuthToken } from '@/services/auth'
 
 /**
  * Hook to proactively refresh JWT token before expiration
@@ -18,7 +19,7 @@ export function useTokenRefresh() {
             if (typeof window === 'undefined') return
 
             // Get token from localStorage if not provided
-            const authToken = token || localStorage.getItem('auth_token')
+            const authToken = token || getAuthToken()
             if (!authToken) {
                 logger.debug('No auth token found for refresh scheduling')
                 return

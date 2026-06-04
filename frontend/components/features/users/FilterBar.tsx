@@ -5,8 +5,10 @@
  * Provides search and filter options for users
  */
 
-import React, { useState } from 'react'
+import React, { useMemo, useState } from 'react'
 import { Search, X, Filter } from 'lucide-react'
+import { useDepartmentOptions, Department } from '@/hooks/useDepartmentOptions'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface FilterBarProps {
     onSearch?: (query: string) => void
@@ -26,11 +28,25 @@ export function FilterBar({
     onFilterChange,
     showAdvanced = true,
 }: FilterBarProps) {
+    const { hasAnyPermission } = useRBAC()
+    const canReadDepartments = hasAnyPermission(['department_read', 'department_update', 'department_manage'])
+    const { data: departmentTree } = useDepartmentOptions(showAdvanced && canReadDepartments)
     const [searchQuery, setSearchQuery] = useState('')
     const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
     const [filters, setFilters] = useState<FilterOptions>({
         status: 'all',
     })
+
+    const departmentOptions = useMemo(() => {
+        const flatten = (items: Department[], level = 0): Array<Department & { level: number }> => {
+            return items.flatMap((department) => [
+                { ...department, level },
+                ...flatten(department.sub_departments || [], level + 1),
+            ])
+        }
+
+        return departmentTree ? flatten(departmentTree) : []
+    }, [departmentTree])
 
     const handleSearch = (query: string) => {
         setSearchQuery(query)
@@ -145,9 +161,8 @@ export function FilterBar({
                         <label className="block text-sm font-medium mb-2" style={{ color: '#584237' }}>
                             Phòng ban
                         </label>
-                        <input
-                            type="text"
-                            placeholder="Tìm phòng ban..."
+                        <select
+                            value={filters.department || ''}
                             onChange={(e) =>
                                 handleFilterChange({
                                     ...filters,
@@ -160,7 +175,15 @@ export function FilterBar({
                                 borderColor: '#dce2f3',
                                 color: '#0d1c2e',
                             }}
-                        />
+                            disabled={!canReadDepartments || departmentOptions.length === 0}
+                        >
+                            <option value="">Tất cả phòng ban</option>
+                            {departmentOptions.map((department) => (
+                                <option key={department.id} value={department.id}>
+                                    {'--'.repeat(department.level)} {department.name}
+                                </option>
+                            ))}
+                        </select>
                     </div>
 
                     {/* Role Filter */}

@@ -3,6 +3,7 @@
 import React from 'react'
 import { Department } from '@/types/api'
 import { useUserList } from '@/hooks/useUserList'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface EditDepartmentDialogProps {
     isOpen: boolean
@@ -23,7 +24,9 @@ export function EditDepartmentDialog({
     isLoading = false,
     department,
 }: EditDepartmentDialogProps) {
-    const { data: users = [], loading: usersLoading } = useUserList()
+    const { hasPermission } = useRBAC()
+    const canReadUsers = hasPermission('user_read')
+    const { data: users = [], loading: usersLoading } = useUserList(100, isOpen && canReadUsers)
 
     const [formData, setFormData] = React.useState({
         name: '',

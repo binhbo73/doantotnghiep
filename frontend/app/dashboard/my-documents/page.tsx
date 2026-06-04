@@ -5,8 +5,10 @@ import { CreateFolderModal } from '@/components/features/documents/CreateFolderM
 import { DocumentSidebar } from '@/components/features/documents/DocumentSidebar'
 import { DocumentRow } from '@/components/features/documents/DocumentRow'
 import { UploadDocumentModal } from '@/components/features/documents/UploadDocumentModal'
+import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 import { useDepartmentOptions } from '@/hooks/useDepartmentOptions'
 import { useRBAC } from '@/hooks/useRBAC'
+import { useRouter } from 'next/navigation'
 import {
     fetchPersonalFoldersWithDocuments,
     fetchSharedWithMeFoldersAndDocuments,
@@ -16,7 +18,7 @@ import {
     SharedDocumentsOrganized,
 } from '@/services/folder'
 
-export default function MyDocumentsPage() {
+function MyDocumentsPageContent() {
     const [organizedData, setOrganizedData] = useState<PersonalDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
     const [sharedData, setSharedData] = useState<SharedDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
     const [selectedDocument, setSelectedDocument] = useState<FolderDocumentResponse | null>(null)
@@ -30,8 +32,11 @@ export default function MyDocumentsPage() {
     const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
     const [expandedSharedFolders, setExpandedSharedFolders] = useState<Set<string>>(new Set())
 
-    const { data: departments } = useDepartmentOptions()
-    const { isAdmin } = useRBAC()
+    const { hasPermission } = useRBAC()
+    const canReadDepartments = hasPermission('department_read')
+    const { data: departments } = useDepartmentOptions(canReadDepartments)
+    const canUploadPersonalDocument = hasPermission('document_create')
+    const canCreatePersonalFolder = hasPermission('folder_create')
 
     const loadPersonalDocuments = useCallback(async () => {
         setIsLoading(true)
@@ -175,13 +180,13 @@ export default function MyDocumentsPage() {
         )
     }
 
-    if (isAdmin()) {
+    if (hasPermission('system_admin')) {
         return (
             <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center px-4">
                 <div className="max-w-xl bg-white rounded-3xl shadow-sm ring-1 ring-slate-200 p-8 text-center">
                     <span className="material-symbols-outlined text-5xl text-[#9d4300] mb-4">lock</span>
-                    <h1 className="text-xl font-bold text-slate-900 mb-2">Trang này chỉ dành cho Nhân viên và Trưởng phòng</h1>
-                    <p className="text-sm text-slate-500">Quản trị viên không cần truy cập tab "Tài liệu của tôi". Vui lòng chọn một mục khác trong sidebar.</p>
+                    <h1 className="text-xl font-bold text-slate-900 mb-2">Trang này dành cho tài liệu cá nhân và tài liệu được chia sẻ</h1>
+                    <p className="text-sm text-slate-500">Tài khoản có quyền quản trị hệ thống nên sử dụng kho tài liệu chung hoặc các mục quản trị trong sidebar.</p>
                 </div>
             </div>
         )
@@ -201,7 +206,9 @@ export default function MyDocumentsPage() {
                                 <div className="rounded-3xl bg-[#f4f9ff] px-4 py-3 text-sm text-slate-600">
                                     {totalDocuments} tài liệu cá nhân • {totalSharedDocuments} tài liệu được chia sẻ
                                 </div>
+                                {(canUploadPersonalDocument || canCreatePersonalFolder) && (
                                 <div className="flex flex-col gap-2 sm:flex-row">
+                                    {canUploadPersonalDocument && (
                                     <button
                                         onClick={() => setIsUploadModalOpen(true)}
                                         className="inline-flex items-center justify-center gap-2 rounded-3xl bg-[#9d4300] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#b75b00]"
@@ -209,6 +216,8 @@ export default function MyDocumentsPage() {
                                         <span className="material-symbols-outlined text-base">upload_file</span>
                                         Tải lên cá nhân
                                     </button>
+                                    )}
+                                    {canCreatePersonalFolder && (
                                     <button
                                         onClick={() => setIsCreateFolderModalOpen(true)}
                                         className="inline-flex items-center justify-center gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -216,7 +225,9 @@ export default function MyDocumentsPage() {
                                         <span className="material-symbols-outlined text-base">create_new_folder</span>
                                         Tạo thư mục cá nhân
                                     </button>
+                                    )}
                                 </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -439,6 +450,7 @@ export default function MyDocumentsPage() {
                         onClose={clearSelection}
                     />
                 </div>
+                {canUploadPersonalDocument && (
                 <UploadDocumentModal
                     isOpen={isUploadModalOpen}
                     onClose={() => setIsUploadModalOpen(false)}
@@ -449,6 +461,8 @@ export default function MyDocumentsPage() {
                     defaultAccessScope="personal"
                     allowedScopes={['personal']}
                 />
+                )}
+                {canCreatePersonalFolder && (
                 <CreateFolderModal
                     isOpen={isCreateFolderModalOpen}
                     onClose={() => setIsCreateFolderModalOpen(false)}
@@ -459,7 +473,29 @@ export default function MyDocumentsPage() {
                     defaultAccessScope="personal"
                     allowedScopes={['personal']}
                 />
+                )}
             </main>
         </div>
     )
+}
+
+export default function MyDocumentsPage() {
+    const router = useRouter()
+    const { hasPermission } = useRBAC()
+    const canReadDocuments = hasPermission('document_read')
+    const canReadFolders = hasPermission('folder_read')
+
+    if (!canReadDocuments || !canReadFolders) {
+        return (
+            <AccessDeniedPage
+                title="Truy cập bị hạn chế"
+                message="Bạn cần quyền document_read để truy cập Tài liệu của tôi."
+                icon="🔒"
+                showBackButton={true}
+                onGoBack={() => router.push('/dashboard')}
+            />
+        )
+    }
+
+    return <MyDocumentsPageContent />
 }

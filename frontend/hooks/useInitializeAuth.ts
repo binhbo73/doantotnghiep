@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { initializeToken } from '@/services/token'
+import { logger } from '@/services/logger'
 
 /**
  * Initialize authentication on app load
@@ -13,14 +14,14 @@ export function useInitializeAuth() {
 
     useEffect(() => {
         try {
-            console.log('🔄 Initializing auth...')
+            logger.debug('Initializing auth on startup')
             initializeToken()
-            console.log('✅ Auth initialized successfully')
+            logger.debug('Auth initialized successfully')
             setIsInitialized(true)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Unknown error'
             setError(message)
-            console.error('❌ Auth initialization failed:', err)
+            logger.error('Auth initialization failed', err)
             setIsInitialized(true)
         }
     }, [])

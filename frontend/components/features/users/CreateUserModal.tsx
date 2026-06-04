@@ -5,11 +5,12 @@
  * Modal form for creating and editing users with proper dropdowns
  */
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { X } from 'lucide-react'
 import { User } from '@/services/users'
-import { useDepartmentOptions } from '@/hooks/useDepartmentOptions'
+import { useDepartmentOptions, Department } from '@/hooks/useDepartmentOptions'
 import { useRoleOptions } from '@/hooks/useRoleOptions'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface CreateUserModalProps {
     isOpen: boolean
@@ -35,6 +36,9 @@ export function CreateUserModal({
     editingUser,
     loading = false,
 }: CreateUserModalProps) {
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canReadDepartments = hasAnyPermission(['department_read', 'department_update', 'department_manage'])
+    const canAssignRoles = hasPermission('role_manage')
     const [formData, setFormData] = useState<CreateUserFormData>({
         username: '',
         email: '',
@@ -47,32 +51,26 @@ export function CreateUserModal({
     const [success, setSuccess] = useState('')
 
     // Fetch departments and roles
-    const { data: departmentsRaw, loading: deptsLoading } = useDepartmentOptions()
-    const { data: rolesRaw, loading: rolesLoading } = useRoleOptions()
+    const { data: departmentsRaw, loading: deptsLoading } = useDepartmentOptions(isOpen && canReadDepartments)
+    const { data: rolesRaw, loading: rolesLoading } = useRoleOptions(100, isOpen && canAssignRoles)
 
-    // Flatten nested departments for dropdown
-    const flattenDepartments = (depts: any[]): any[] => {
-        if (!depts) return []
-        const result: any[] = []
+    type SelectDepartment = Department & { indent: string }
 
-        const process = (list: any[], level = 0) => {
-            list.forEach((dept) => {
-                result.push({
+    const departments = useMemo<SelectDepartment[]>(() => {
+        const flattenDepartments = (depts: Department[], level = 0): SelectDepartment[] => {
+            return depts.flatMap((dept) => [
+                {
                     ...dept,
                     indent: '  '.repeat(level),
-                })
-                if (dept.sub_departments && dept.sub_departments.length > 0) {
-                    process(dept.sub_departments, level + 1)
-                }
-            })
+                },
+                ...flattenDepartments(dept.sub_departments || [], level + 1),
+            ])
         }
 
-        process(depts)
-        return result
-    }
-
-    const departments = flattenDepartments(departmentsRaw || [])
+        return flattenDepartments(departmentsRaw || [])
+    }, [departmentsRaw])
     const roles = rolesRaw || []
+    const canChooseDepartment = canReadDepartments && departments.length > 0
 
     useEffect(() => {
         if (editingUser) {
@@ -113,6 +111,20 @@ export function CreateUserModal({
         }
     }, [departments, editingUser, formData.department_id])
 
+    useEffect(() => {
+        if (!formData.department_id || departments.length === 0) return
+
+        const selectedDepartmentAllowed = departments.some(
+            (dept) => String(dept.id) === formData.department_id
+        )
+        if (!selectedDepartmentAllowed) {
+            setFormData((prev) => ({
+                ...prev,
+                department_id: '',
+            }))
+        }
+    }, [departments, formData.department_id])
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setError('')
@@ -121,6 +133,16 @@ export function CreateUserModal({
         try {
             if (!formData.username || !formData.email || !formData.first_name) {
                 setError('Vui lòng điền tất cả các trường bắt buộc')
+                return
+            }
+
+            if (canAssignRoles && !formData.role_id) {
+                setError('Vui lòng chọn vai trò')
+                return
+            }
+
+            if (canChooseDepartment && !formData.department_id) {
+                setError('Vui lÃ²ng chá»n phÃ²ng ban')
                 return
             }
 
@@ -346,8 +368,8 @@ export function CreateUserModal({
                                         borderColor: '#dce2f3',
                                         color: '#151c27',
                                     }}
-                                    disabled={loading || deptsLoading}
-                                    required
+                                    disabled={loading || deptsLoading || !canChooseDepartment}
+                                    required={canChooseDepartment}
                                 >
                                     <option value="">
                                         {deptsLoading ? 'Đang tải...' : 'Chọn phòng ban'}
@@ -375,11 +397,13 @@ export function CreateUserModal({
                                         borderColor: '#dce2f3',
                                         color: '#151c27',
                                     }}
-                                    disabled={loading || rolesLoading}
-                                    required
+                                    disabled={loading || rolesLoading || !canAssignRoles}
+                                    required={canAssignRoles}
                                 >
                                     <option value="">
-                                        {rolesLoading ? 'Đang tải...' : 'Chọn vai trò'}
+                                        {canAssignRoles
+                                            ? (rolesLoading ? 'Đang tải...' : 'Chọn vai trò')
+                                            : 'Mặc định: User'}
                                     </option>
                                     {roles.map((role) => (
                                         <option key={role.id} value={role.id}>

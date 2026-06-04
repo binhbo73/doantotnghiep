@@ -16,8 +16,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ParseError
 
-from core.permissions.drf_permissions import IsAdmin
+from core.constants import PermissionCodes
+from core.permissions.drf_permissions import HasAnyPermission
 from core.utils.response_builder import ResponseBuilder
 from core.exceptions import (
     ValidationError,
@@ -50,7 +52,8 @@ class PermissionListView(APIView):
     - PUT /api/v1/iam/permissions/{permission_id} - Update permission
     - DELETE /api/v1/iam/permissions/{permission_id} - Delete permission (soft delete)
     """
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.PERMISSION_MANAGE]
     
     def get(self, request, permission_id=None):
         """
@@ -66,7 +69,7 @@ class PermissionListView(APIView):
             
             # List permissions with pagination
             page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 20))
+            page_size = int(request.query_params.get('page_size', 100))
             search = request.query_params.get('search', '').strip() or None
             
             if page < 1 or page_size < 1 or page_size > 100:
@@ -151,6 +154,8 @@ class PermissionListView(APIView):
             return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except BusinessLogicError as e:
             return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except ParseError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error creating permission: {e}", exc_info=True)
             return Response(
@@ -221,6 +226,8 @@ class PermissionListView(APIView):
             return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except BusinessLogicError as e:
             return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except ParseError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error updating permission: {e}", exc_info=True)
             return Response(
@@ -270,7 +277,8 @@ class PermissionListView(APIView):
 
 class RoleManagementView(APIView):
     """API-06/07/08/09: GET|POST|PUT|DELETE /api/v1/iam/roles"""
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.ROLE_MANAGE]
     
     def get(self, request, role_id=None):
         try:
@@ -306,6 +314,8 @@ class RoleManagementView(APIView):
             result = role_service.create_role(data=serializer.validated_data, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
             
             return Response(ResponseBuilder.success(data=result, message="Role created successfully"), status=status.HTTP_201_CREATED)
+        except ParseError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error creating role: {e}", exc_info=True)
             return Response(ResponseBuilder.error("Failed to create role", status_code=500), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -325,6 +335,12 @@ class RoleManagementView(APIView):
             return Response(ResponseBuilder.success(data=result, message="Role updated successfully"), status=status.HTTP_200_OK)
         except NotFoundError as e:
             return Response(ResponseBuilder.error(str(e), status_code=404), status=status.HTTP_404_NOT_FOUND)
+        except PermissionDeniedError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=403), status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except ParseError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error updating role: {e}", exc_info=True)
             return Response(ResponseBuilder.error("Failed to update role", status_code=500), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -340,6 +356,10 @@ class RoleManagementView(APIView):
             return Response(ResponseBuilder.success(message="Role deleted successfully"), status=status.HTTP_204_NO_CONTENT)
         except NotFoundError as e:
             return Response(ResponseBuilder.error(str(e), status_code=404), status=status.HTTP_404_NOT_FOUND)
+        except PermissionDeniedError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=403), status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error deleting role: {e}", exc_info=True)
             return Response(ResponseBuilder.error("Failed to delete role", status_code=500), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -347,7 +367,8 @@ class RoleManagementView(APIView):
 
 class RolePermissionsView(APIView):
     """API-10/11/12: GET|POST|DELETE /api/v1/iam/roles/{role_id}/permissions"""
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.ROLE_MANAGE]
     
     def get(self, request, role_id=None, permission_id=None):
         if not role_id:
@@ -355,7 +376,7 @@ class RolePermissionsView(APIView):
         
         try:
             page = int(request.query_params.get('page', 1))
-            page_size = int(request.query_params.get('page_size', 20))
+            page_size = int(request.query_params.get('page_size', 100))
             search = request.query_params.get('search', '').strip() or None
             
             role_service = RoleService()
@@ -381,8 +402,14 @@ class RolePermissionsView(APIView):
             result = role_service.add_permission_to_role(role_id=role_id, permission_id=perm_id, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
             
             return Response(ResponseBuilder.success(data=result, message="Permission added to role"), status=status.HTTP_200_OK)
-        except (NotFoundError, ValidationError) as e:
+        except NotFoundError as e:
             return Response(ResponseBuilder.error(str(e), status_code=404), status=status.HTTP_404_NOT_FOUND)
+        except PermissionDeniedError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=403), status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except ParseError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error adding permission: {e}", exc_info=True)
             return Response(ResponseBuilder.error("Failed to add permission", status_code=500), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -396,8 +423,12 @@ class RolePermissionsView(APIView):
             role_service.remove_permission_from_role(role_id=role_id, permission_id=permission_id, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
             
             return Response(ResponseBuilder.success(message="Permission removed from role"), status=status.HTTP_204_NO_CONTENT)
-        except (NotFoundError, ValidationError) as e:
+        except NotFoundError as e:
             return Response(ResponseBuilder.error(str(e), status_code=404), status=status.HTTP_404_NOT_FOUND)
+        except PermissionDeniedError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=403), status=status.HTTP_403_FORBIDDEN)
+        except ValidationError as e:
+            return Response(ResponseBuilder.error(str(e), status_code=400), status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error removing permission: {e}", exc_info=True)
             return Response(ResponseBuilder.error("Failed to remove permission", status_code=500), status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -405,7 +436,8 @@ class RolePermissionsView(APIView):
 
 class CheckUserPermissionView(APIView):
     """API-13: POST /api/v1/iam/users/{user_id}/check-permission"""
-    permission_classes = [IsAuthenticated, IsAdmin]
+    permission_classes = [IsAuthenticated, HasAnyPermission]
+    required_permissions = [PermissionCodes.PERMISSION_MANAGE, PermissionCodes.ROLE_MANAGE]
     
     def post(self, request, user_id):
         try:

@@ -20,26 +20,78 @@ import type {
     UploadDocumentRequest,
 } from '@/types/api'
 
+type BackendPaginatedEnvelope<T> = {
+    success?: boolean
+    data?: {
+        items?: T[]
+        pagination?: {
+            page?: number
+            page_size?: number
+            total_items?: number
+            total_pages?: number
+            has_next?: boolean
+            has_prev?: boolean
+            has_previous?: boolean
+        }
+    } | T[]
+    items?: T[]
+    pagination?: {
+        page?: number
+        page_size?: number
+        total_items?: number
+        total_pages?: number
+        has_next?: boolean
+        has_prev?: boolean
+        has_previous?: boolean
+    }
+}
+
+function normalizePaginatedResponse<T>(
+    response: BackendPaginatedEnvelope<T>,
+    fallbackPage: number,
+    fallbackLimit: number
+) {
+    const data = response.data
+    const nestedItems = !Array.isArray(data) ? data?.items : undefined
+    const items = nestedItems || response.items || (Array.isArray(data) ? data : [])
+    const pagination = (!Array.isArray(data) ? data?.pagination : undefined) || response.pagination || {}
+    const total = pagination.total_items ?? items.length
+    const limit = pagination.page_size ?? fallbackLimit
+    const pages = pagination.total_pages ?? Math.max(1, Math.ceil(total / limit))
+
+    return {
+        items,
+        total,
+        page: pagination.page ?? fallbackPage,
+        limit,
+        pages,
+        has_next: pagination.has_next ?? fallbackPage < pages,
+        has_previous: pagination.has_prev ?? pagination.has_previous ?? fallbackPage > 1,
+    }
+}
+
 /**
  * List all documents with pagination
  */
 export async function listDocuments(
     params: ListDocumentsRequest
 ): Promise<ListDocumentsResponse> {
+    const limit = params.limit || 20
+    const page = Math.floor((params.offset || 0) / limit) + 1
     const queryParams = new URLSearchParams()
-    queryParams.set('limit', params.limit.toString())
-    queryParams.set('offset', params.offset.toString())
+    queryParams.set('page', page.toString())
+    queryParams.set('page_size', limit.toString())
 
     if (params.folder_id) queryParams.set('folder_id', params.folder_id)
     if (params.status) queryParams.set('status', params.status)
     if (params.file_type) queryParams.set('file_type', params.file_type)
     if (params.search) queryParams.set('search', params.search)
 
-    const response = await api.get<ListDocumentsResponse>(
+    const response = await api.get<BackendPaginatedEnvelope<Document>>(
         `/documents?${queryParams.toString()}`
     )
 
-    return response
+    return normalizePaginatedResponse(response, page, limit) as ListDocumentsResponse
 }
 
 /**
@@ -132,7 +184,7 @@ export async function uploadDocuments(
  * Delete document (soft delete)
  */
 export async function deleteDocument(documentId: string): Promise<void> {
-    await api.delete(`/documents/${documentId}`)
+    await api.delete(`/documents/${documentId}/delete`)
     logger.info('Document deleted', { documentId })
 }
 
@@ -140,20 +192,20 @@ export async function deleteDocument(documentId: string): Promise<void> {
  * Hard delete document (permanent)
  */
 export async function hardDeleteDocument(documentId: string): Promise<void> {
-    await api.delete(`/documents/${documentId}?hard=true`)
-    logger.info('Document hard deleted', { documentId })
+    logger.warn('Hard delete document is not supported by the current backend API', { documentId })
+    throw new Error('Hard delete document is not supported by the current backend API')
 }
 
 /**
  * Move document to folder (or root if folderId=null)
  */
 export async function moveDocument(documentId: string, folderId: string | null): Promise<Document> {
-    const response = await api.patch<ApiResponse<Document>>(
+    const response = await api.patch<Document>(
         `/documents/${documentId}/move`,
         { folder_id: folderId }
     )
     logger.info('Document moved', { documentId, folderId })
-    return response.data
+    return response
 }
 
 /**
@@ -162,18 +214,20 @@ export async function moveDocument(documentId: string, folderId: string | null):
 export async function listFolders(
     params: ListFoldersRequest
 ): Promise<ListFoldersResponse> {
+    const limit = params.limit || 20
+    const page = Math.floor((params.offset || 0) / limit) + 1
     const queryParams = new URLSearchParams()
-    queryParams.set('limit', params.limit.toString())
-    queryParams.set('offset', params.offset.toString())
+    queryParams.set('page', page.toString())
+    queryParams.set('page_size', limit.toString())
 
     if (params.parent_id) queryParams.set('parent_id', params.parent_id)
     if (params.department_id) queryParams.set('department_id', params.department_id)
 
-    const response = await api.get<ListFoldersResponse>(
+    const response = await api.get<BackendPaginatedEnvelope<Folder>>(
         `/folders?${queryParams.toString()}`
     )
 
-    return response
+    return normalizePaginatedResponse(response, page, limit) as ListFoldersResponse
 }
 
 /**
@@ -217,8 +271,8 @@ export async function deleteFolder(folderId: string): Promise<void> {
  * List tags
  */
 export async function listTags(): Promise<Tag[]> {
-    const response = await api.get<Tag[]>('/tags')
-    return response
+    logger.warn('Tag list is not supported by the current backend API')
+    throw new Error('Tag list is not supported by the current backend API')
 }
 
 /**
@@ -229,9 +283,10 @@ export async function createTag(data: {
     color?: string
     description?: string
 }): Promise<Tag> {
-    const response = await api.post<Tag>('/tags', data)
-    logger.info('Tag created', { tagId: response.id })
-    return response
+    logger.warn('Tag creation is not supported by the current backend API', {
+        tagName: data.name,
+    })
+    throw new Error('Tag creation is not supported by the current backend API')
 }
 
 /**

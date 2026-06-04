@@ -4,8 +4,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'
 
 export interface User {
-    id: string              // This is account_id (Account.id)
-    account_id: string      // For clarity
+    id: string
+    account_id: string
     username: string
     email: string
     full_name: string
@@ -20,24 +20,25 @@ interface UseUserListState {
     refetch: () => Promise<void>
 }
 
-export function useUserList(pageSize: number = 100): UseUserListState {
+export function useUserList(pageSize: number = 100, enabled: boolean = true): UseUserListState {
     const [data, setData] = useState<User[] | null>(null)
-    const [loading, setLoading] = useState(true)
+    const [loading, setLoading] = useState(enabled)
     const [error, setError] = useState<string | null>(null)
 
     const fetchUsers = useCallback(async () => {
+        if (!enabled) {
+            setLoading(false)
+            setError(null)
+            return
+        }
+
         try {
             setLoading(true)
             setError(null)
 
-            // API: GET /api/v1/users?page=1&page_size=100
-            const url = `/users?page=1&page_size=${pageSize}`
+            const response = await api.get<any>(`/users?page=1&page_size=${pageSize}`)
 
-            const response = await api.get<any>(url)
-
-            // Defensive parsing - handle different response formats
             let items = []
-
             if (response?.data?.items) {
                 items = response.data.items
             } else if (response?.items) {
@@ -47,12 +48,10 @@ export function useUserList(pageSize: number = 100): UseUserListState {
             }
 
             if (response.success !== false || Array.isArray(response?.data?.items)) {
-                // Map UserProfile to User format
-                // IMPORTANT: Use account_id for manager_id, not UserProfile.id
                 const mappedUsers = items
                     .filter((u: any) => u.is_active !== false && u.account_id)
                     .map((u: any) => ({
-                        id: u.account_id,         // Use account_id as id for backend compatibility
+                        id: u.account_id,
                         account_id: u.account_id,
                         username: u.username,
                         email: u.email,
@@ -72,7 +71,7 @@ export function useUserList(pageSize: number = 100): UseUserListState {
         } finally {
             setLoading(false)
         }
-    }, [pageSize])
+    }, [pageSize, enabled])
 
     useEffect(() => {
         fetchUsers()

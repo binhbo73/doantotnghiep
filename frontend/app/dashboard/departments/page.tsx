@@ -2,10 +2,10 @@
 
 /**
  * Departments Management Page
- * RBAC: 
- * - Admin: Full CRUD (create, edit, delete departments) with access to all departments
- * - Manager (Trưởng phòng): View-only access, can see department tree and their own department details
- * - Regular users: Can see the tree view of their own department only
+ * RBAC:
+ * - department_manage: create/delete departments and access the full department tree
+ * - department_update: edit departments within the backend-approved scope
+ * - department_read: view departments within the backend-approved scope
  */
 
 import React, { useEffect, useState } from 'react'
@@ -22,15 +22,15 @@ import { useRBAC } from '@/hooks/useRBAC'
 import { useAuthContext } from '@/context'
 import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 import { useRouter } from 'next/navigation'
-import { canEditDepartment, filterVisibleDepartments } from '@/lib/departmentAccess'
 import type { Department } from '@/types/api'
 
 function DepartmentManagementContent() {
-    const { isAdmin, isTruongPhong, isNhanVien } = useRBAC()
+    const { hasPermission, hasAnyPermission } = useRBAC()
     const { user } = useAuthContext()
-    const isAdminUser = isAdmin()
-    const isManagerUser = isTruongPhong()
-    const isRegularUser = isNhanVien() && !isManagerUser && !isAdminUser
+    const canReadDepartments = hasPermission('department_read')
+    const canUpdateDepartments = hasAnyPermission(['department_update', 'department_manage'])
+    const canManageDepartments = hasPermission('department_manage')
+    const canCreateDepartments = hasAnyPermission(['department_create', 'department_manage'])
 
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
@@ -43,49 +43,31 @@ function DepartmentManagementContent() {
         isLoading,
         addDepartment,
         updateDepartment,
-    } = useDepartments({ page_size: 100 })
+    } = useDepartments({ page_size: 100 }, canReadDepartments)
 
-    // Determine if user can edit/create/delete departments
-    const canCreateOrDelete = isAdminUser
+    // Determine if user has full management rights
+    const isFullManager = canManageDepartments
 
-    const displayedDepartments: Department[] = filterVisibleDepartments({
-        user,
-        departments,
-        isAdmin: isAdminUser,
-        isTruongPhong: isManagerUser,
-    })
+    const displayedDepartments: Department[] = canReadDepartments ? departments : []
 
     // Auto-select department when data loads
     useEffect(() => {
         if (!Array.isArray(displayedDepartments) || displayedDepartments.length === 0 || selectedDepartmentId) return
 
-        if (isManagerUser) {
-            const myManaged = displayedDepartments.find((d) => canEditDepartment({
-                user,
-                targetDeptId: d.id,
-                departments: displayedDepartments,
-                isAdmin: isAdminUser,
-                isTruongPhong: isManagerUser,
-            }))
+        if (canUpdateDepartments) {
+            const myManaged = displayedDepartments.find((d) => d.id === user?.department_id) || displayedDepartments[0]
             setSelectedDepartmentId(myManaged?.id ?? null)
             return
         }
 
         setSelectedDepartmentId(displayedDepartments[0].id)
-    }, [displayedDepartments, selectedDepartmentId, isAdminUser, isManagerUser, user])
+    }, [displayedDepartments, selectedDepartmentId, canUpdateDepartments, user?.department_id])
 
     const selectedDepartment: Department | null = (Array.isArray(displayedDepartments) ? displayedDepartments : []).find((d) => d.id === selectedDepartmentId) ?? null
-    const canEditSelectedDepartment: boolean = selectedDepartment ? canEditDepartment({
-        user,
-        targetDeptId: selectedDepartment.id,
-        departments: displayedDepartments,
-        isAdmin: isAdminUser,
-        isTruongPhong: isManagerUser,
-    }) : false
+    const canEditSelectedDepartment: boolean = !!selectedDepartment && canUpdateDepartments
 
     const handleSelectDepartment = (deptId: string) => {
-        // Regular users can only select their own department
-        if (isRegularUser && deptId !== user?.department_id) {
+        if (!canReadDepartments) {
             return
         }
         setSelectedDepartmentId(deptId)
@@ -163,7 +145,7 @@ function DepartmentManagementContent() {
                     onViewModeChange={setViewMode}
                 />
 
-                {!canCreateOrDelete && (
+                {!isFullManager && (
                     <div
                         className="mb-4 px-4 py-2 rounded-lg text-sm flex items-center gap-2"
                         style={{
@@ -174,9 +156,9 @@ function DepartmentManagementContent() {
                     >
                         <span>ℹ️</span>
                         <span>
-                            {isRegularUser
+                            {!canUpdateDepartments
                                 ? 'Bạn đang xem phòng ban của mình — chỉ có thể xem chi tiết cho phòng ban này.'
-                                : 'Bạn đang xem với quyền Trưởng phòng — chỉ có thể xem và chỉnh sửa trong phạm vi cây phòng ban được giao.'}
+                                : 'Bạn đang xem với phạm vi quyền được cấp — chỉ có thể xem và chỉnh sửa trong cây phòng ban được phân quyền.'}
                         </span>
                     </div>
                 )}
@@ -203,7 +185,7 @@ function DepartmentManagementContent() {
                                 <div className="rounded-xl border border-slate-100 bg-white p-6">
                                     <div className="flex flex-col items-start gap-3">
                                         <h3 className="text-sm font-bold">Tổng quan Phòng ban</h3>
-                                        <p className="text-xs text-slate-500">Bạn đang xem chế độ giới hạn. Trưởng phòng chỉ có thể xem chi tiết cho phòng ban của mình.</p>
+                                        <p className="text-xs text-slate-500">Bạn đang xem chế độ giới hạn. Chỉ các phòng ban nằm trong phạm vi được cấp quyền mới hiển thị chi tiết.</p>
                                     </div>
                                 </div>
                             )}
@@ -212,7 +194,7 @@ function DepartmentManagementContent() {
                 ) : (
                     <DepartmentList
                         departments={displayedDepartments}
-                        onAdd={canCreateOrDelete ? () => setIsDialogOpen(true) : undefined}
+                        onAdd={canCreateDepartments ? () => setIsDialogOpen(true) : undefined}
                         onEdit={(dept) => {
                             setSelectedDepartmentId(dept.id)
                             setIsEditDialogOpen(true)
@@ -221,7 +203,7 @@ function DepartmentManagementContent() {
                     />
                 )}
 
-                {canCreateOrDelete && (
+                {canCreateDepartments && (
                     <AddDepartmentDialog
                         isOpen={isDialogOpen}
                         onClose={() => setIsDialogOpen(false)}
@@ -231,7 +213,7 @@ function DepartmentManagementContent() {
                     />
                 )}
 
-                {canCreateOrDelete && (
+                {canUpdateDepartments && (
                     <EditDepartmentDialog
                         isOpen={isEditDialogOpen}
                         onClose={() => setIsEditDialogOpen(false)}
@@ -242,7 +224,7 @@ function DepartmentManagementContent() {
                 )}
             </main>
 
-            {canCreateOrDelete && (
+            {canCreateDepartments && (
                 <button
                     onClick={() => setIsDialogOpen(true)}
                     className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
@@ -256,11 +238,10 @@ function DepartmentManagementContent() {
 }
 
 export default function DepartmentsPage() {
-    const { isAdmin, isTruongPhong } = useRBAC()
-    const { user, isLoading } = useAuthContext()
+    const { hasPermission } = useRBAC()
+    const { isLoading } = useAuthContext()
     const router = useRouter()
-    const isAdminUser = isAdmin()
-    const isManagerUser = isTruongPhong()
+    const canReadDepartments = hasPermission('department_read')
 
     if (isLoading) {
         return (
@@ -272,11 +253,11 @@ export default function DepartmentsPage() {
         )
     }
 
-    if (!isAdminUser && !isManagerUser && !user?.department_id) {
+    if (!canReadDepartments) {
         return (
             <AccessDeniedPage
                 title="Truy cập bị hạn chế"
-                message="Bạn cần được gán cho một phòng ban để truy cập trang này."
+                message="Bạn cần quyền department_read để truy cập trang Phòng ban."
                 icon="🏢"
                 showBackButton={true}
                 onGoBack={() => router.push('/dashboard')}

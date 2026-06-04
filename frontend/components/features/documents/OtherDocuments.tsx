@@ -82,9 +82,9 @@ export function OtherDocuments({
     departmentMap = {},
     showPersonal = true,
 }: OtherDocumentsProps & { showPersonal?: boolean }) {
-    const { isAdmin } = useRBAC()
+    const { hasPermission } = useRBAC()
 
-    const effectiveShowPersonal = showPersonal || isAdmin()
+    const effectiveShowPersonal = showPersonal || hasPermission('system_admin')
     const totalOtherDocs =
         otherDocuments.departmentDocs.length +
         (effectiveShowPersonal ? otherDocuments.personalDocs.length : 0) +

@@ -66,6 +66,12 @@ export interface DocumentStoreState {
     searchQuery: string
 }
 
+interface UseDocumentStoreOptions {
+    enabled?: boolean
+    canReadFolders?: boolean
+    canReadDocuments?: boolean
+}
+
 // ─── Helper: Flatten all sub_folders recursively ────────────
 
 function flattenAllFolders(folders: FolderResponse[]): FolderResponse[] {
@@ -196,7 +202,10 @@ function updateTreeNode(
 
 // ─── Hook ──────────────────────────────────────────────────
 
-export function useDocumentStore() {
+export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
+    const enabled = options.enabled ?? true
+    const canReadFolders = options.canReadFolders ?? true
+    const canReadDocuments = options.canReadDocuments ?? true
     const [folders, setFolders] = useState<FolderResponse[]>([])
     const [tree, setTree] = useState<FolderTreeNode[]>([])
     const [otherDocuments, setOtherDocuments] = useState<OtherDocumentsNode>({
@@ -212,7 +221,7 @@ export function useDocumentStore() {
     const [allDocuments, setAllDocuments] = useState<FolderDocumentResponse[]>([])
     const [selectedDocument, setSelectedDocument] = useState<FolderDocumentResponse | null>(null)
     const [selectedFolder, setSelectedFolder] = useState<FolderResponse | null>(null)
-    const [isLoading, setIsLoading] = useState(true)
+    const [isLoading, setIsLoading] = useState(enabled && (canReadFolders || canReadDocuments))
     const [error, setError] = useState<string | null>(null)
     const [searchQuery, setSearchQuery] = useState('')
 
@@ -220,12 +229,18 @@ export function useDocumentStore() {
 
     // ── Load all folders and other documents on mount ──────────────────────────
     const loadFolders = useCallback(async () => {
+        if (!enabled || (!canReadFolders && !canReadDocuments)) {
+            setIsLoading(false)
+            setError(null)
+            return
+        }
+
         setIsLoading(true)
         setError(null)
         try {
             const [folderData, documentData] = await Promise.all([
-                fetchAllFolders(),
-                fetchAllDocuments({ page_size: 100 }),
+                canReadFolders ? fetchAllFolders() : Promise.resolve([]),
+                canReadDocuments ? fetchAllDocuments({ page_size: 100 }) : Promise.resolve({ items: [], pagination: null }),
             ])
 
             setFolders(folderData)
@@ -242,14 +257,20 @@ export function useDocumentStore() {
         } finally {
             setIsLoading(false)
         }
-    }, [])
+    }, [enabled, canReadFolders, canReadDocuments])
 
     useEffect(() => {
+        if (!enabled || (!canReadFolders && !canReadDocuments)) {
+            setIsLoading(false)
+            setError(null)
+            return
+        }
+
         if (!hasLoadedRef.current) {
             hasLoadedRef.current = true
             loadFolders()
         }
-    }, [loadFolders])
+    }, [enabled, canReadFolders, canReadDocuments, loadFolders])
 
     // ── Toggle folder expand/collapse ──────────────────────
     const toggleFolder = useCallback(async (folderId: string) => {
@@ -287,7 +308,8 @@ export function useDocumentStore() {
             return updateTreeNode(prev, folderId, (node) => ({
                 ...node,
                 isExpanded: true,
-                isLoadingDocs: true,
+                isLoadingDocs: canReadDocuments,
+                hasLoadedDocs: canReadDocuments ? node.hasLoadedDocs : true,
             }))
         })
 
@@ -305,7 +327,7 @@ export function useDocumentStore() {
         const targetNode = findNode(currentTree)
 
         // Only fetch documents if not already loaded and first time expanding
-        if (targetNode && !targetNode.hasLoadedDocs) {
+        if (targetNode && !targetNode.hasLoadedDocs && canReadDocuments) {
             try {
                 const { items } = await fetchFolderDocuments(folderId)
                 setTree((prev) =>
@@ -320,11 +342,11 @@ export function useDocumentStore() {
                 console.error(`❌ Failed to load documents for folder ${folderId}:`, err)
                 // Log full ApiError data for debugging 500 errors
                 if (err instanceof ApiError) {
-                    console.error(`API Error Status: ${err.status}, Message: ${err.message}`)
+                    console.error(`API Error Status: ${err.statusCode}, Message: ${err.message}`)
                     console.error('API Error Data:', JSON.stringify(err.data, null, 2))
                 }
                 const message = err instanceof ApiError
-                    ? err.message || (err.data && (err.data as any).message) || `Server error ${(err as any).status}`
+                    ? err.message || (err.data && (err.data as any).message) || `Server error ${(err as any).statusCode}`
                     : err instanceof Error
                         ? err.message
                         : 'Failed to load documents for folder'
@@ -337,7 +359,7 @@ export function useDocumentStore() {
                 )
             }
         }
-    }, [tree])
+    }, [tree, canReadDocuments])
 
     // ── Toggle "Other Documents" section ───────────────────
     const toggleOtherDocuments = useCallback(() => {
@@ -361,6 +383,13 @@ export function useDocumentStore() {
 
     // ── Stats ──────────────────────────────────────────────
     const getStats = useCallback(() => {
+        if (allDocuments.length > 0) {
+            return {
+                totalFolders: folders.length,
+                totalDocuments: allDocuments.length,
+            }
+        }
+
         let totalDocuments = 0
 
         // Count documents in folders
@@ -382,7 +411,7 @@ export function useDocumentStore() {
             totalFolders: folders.length,
             totalDocuments,
         }
-    }, [folders, tree, otherDocuments])
+    }, [folders, tree, otherDocuments, allDocuments])
 
     return {
         folders,

@@ -11,6 +11,8 @@ import {
     ShieldCheck,
 } from 'lucide-react'
 import { buildApiUrl } from '@/config/api'
+import { getAuthToken } from '@/services/auth'
+import { logger } from '@/services/logger'
 import type { CitationAttribution } from './ChatMessages'
 
 interface Citation {
@@ -170,7 +172,7 @@ function AuthenticatedAssetImage({ citation, className = '' }: { citation: Citat
 
         const load = async () => {
             try {
-                const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
+                const token = getAuthToken()
                 const response = await fetch(buildApiUrl(endpoint), {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -180,8 +182,11 @@ function AuthenticatedAssetImage({ citation, className = '' }: { citation: Citat
                 const blob = await response.blob()
                 objectUrl = URL.createObjectURL(blob)
                 if (!cancelled) setSrc(objectUrl)
-            } catch {
-                if (!cancelled) setFailed(true)
+            } catch (err) {
+                if (!cancelled) {
+                    logger.error('Failed to load asset thumbnail', err)
+                    setFailed(true)
+                }
             }
         }
 
@@ -302,7 +307,7 @@ export const KnowledgeCard: React.FC<KnowledgeCardProps> = ({
                                         <ExternalLink size={14} className={`${hideContent ? 'mt-0' : 'mt-0.5'} shrink-0 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 dark:text-slate-500`} />
                                     </div>
 
-                                    
+
 
                                     {!hideContent && excerpt && (
                                         <p className="mt-2 line-clamp-3 text-[11px] leading-5 text-slate-600 dark:text-slate-300">

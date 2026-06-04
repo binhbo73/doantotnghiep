@@ -1,9 +1,10 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import Image from 'next/image'
-import { useDepartmentOptions } from '@/hooks/useDepartmentOptions'
+import { useDepartmentOptions, Department } from '@/hooks/useDepartmentOptions'
 import { useRoleOptions } from '@/hooks/useRoleOptions'
+import { useRBAC } from '@/hooks/useRBAC'
 
 interface AddEmployeeDialogProps {
     isOpen: boolean
@@ -25,6 +26,9 @@ export default function AddEmployeeDialog({
     onClose,
     onSubmit,
 }: AddEmployeeDialogProps) {
+    const { hasPermission, hasAnyPermission } = useRBAC()
+    const canReadDepartments = hasAnyPermission(['department_read', 'department_update', 'department_manage'])
+    const canAssignRoles = hasPermission('role_manage')
     const [formData, setFormData] = useState<FormData>({
         username: '',
         email: '',
@@ -38,39 +42,26 @@ export default function AddEmployeeDialog({
     const [error, setError] = useState<string | null>(null)
 
     // Fetch departments and roles
-    const { data: departmentsRaw, loading: deptsLoading, error: deptsError } = useDepartmentOptions()
-    const { data: rolesRaw, loading: rolesLoading, error: rolesError } = useRoleOptions()
+    const { data: departmentsRaw, loading: deptsLoading, error: deptsError } = useDepartmentOptions(isOpen && canReadDepartments)
+    const { data: rolesRaw, loading: rolesLoading, error: rolesError } = useRoleOptions(100, isOpen && canAssignRoles)
 
-    console.log('🎨 [AddEmployeeDialog] Roles data:', rolesRaw)
-    console.log('🎨 [AddEmployeeDialog] Roles loading:', rolesLoading)
-    console.log('🎨 [AddEmployeeDialog] Roles error:', rolesError)
-    console.log('🎨 [AddEmployeeDialog] Departments data:', departmentsRaw)
-    console.log('🎨 [AddEmployeeDialog] Departments loading:', deptsLoading)
-    console.log('🎨 [AddEmployeeDialog] Departments error:', deptsError)
+    type SelectDepartment = Department & { indent: string }
 
-    // Flatten nested departments for dropdown
-    const flattenDepartments = (depts: any[]): any[] => {
-        if (!depts) return []
-        const result: any[] = []
-
-        const process = (list: any[], level = 0) => {
-            list.forEach((dept) => {
-                result.push({
+    const departments = useMemo<SelectDepartment[]>(() => {
+        const flattenDepartments = (depts: Department[], level = 0): SelectDepartment[] => {
+            return depts.flatMap((dept) => [
+                {
                     ...dept,
                     indent: '  '.repeat(level),
-                })
-                if (dept.sub_departments && dept.sub_departments.length > 0) {
-                    process(dept.sub_departments, level + 1)
-                }
-            })
+                },
+                ...flattenDepartments(dept.sub_departments || [], level + 1),
+            ])
         }
 
-        process(depts)
-        return result
-    }
-
-    const departments = flattenDepartments(departmentsRaw || [])
+        return flattenDepartments(departmentsRaw || [])
+    }, [departmentsRaw])
     const roles = rolesRaw || []
+    const canChooseDepartment = canReadDepartments && departments.length > 0
 
     const handleInputChange = (
         e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
@@ -78,6 +69,20 @@ export default function AddEmployeeDialog({
         const { name, value } = e.target
         setFormData((prev) => ({ ...prev, [name]: value }))
     }
+
+    useEffect(() => {
+        if (!formData.department || departments.length === 0) return
+
+        const selectedDepartmentAllowed = departments.some(
+            (dept) => String(dept.id) === formData.department
+        )
+        if (!selectedDepartmentAllowed) {
+            setFormData((prev) => ({
+                ...prev,
+                department: '',
+            }))
+        }
+    }, [departments, formData.department])
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault()
@@ -89,8 +94,8 @@ export default function AddEmployeeDialog({
             !formData.email ||
             !formData.firstName ||
             !formData.lastName ||
-            !formData.department ||
-            !formData.role
+            (canChooseDepartment && !formData.department) ||
+            (canAssignRoles && !formData.role)
         ) {
             setError('Vui lòng điền đầy đủ các trường bắt buộc')
             return
@@ -304,8 +309,8 @@ export default function AddEmployeeDialog({
                                         maxHeight: '200px',
                                         overflowY: 'auto',
                                     }}
-                                    disabled={deptsLoading}
-                                    required
+                                    disabled={deptsLoading || !canChooseDepartment}
+                                    required={canChooseDepartment}
                                 >
                                     <option value="">
                                         {deptsLoading ? 'Đang tải...' : 'Chọn phòng ban'}
@@ -344,8 +349,8 @@ export default function AddEmployeeDialog({
                                         maxHeight: '200px',
                                         overflowY: 'auto',
                                     }}
-                                    disabled={rolesLoading}
-                                    required
+                                    disabled={rolesLoading || !canAssignRoles}
+                                    required={canAssignRoles}
                                 >
                                     <option value="">
                                         {rolesLoading ? 'Đang tải...' : 'Chọn vai trò'}

@@ -6,6 +6,7 @@ from typing import List, Optional, Dict, Tuple
 from django.db.models import Q, Count, Prefetch
 from django.apps import apps
 from apps.documents.models import Document, DocumentChunk, Folder
+from core.constants import PermissionCodes
 from .base_repository import BaseRepository
 import logging
 
@@ -22,6 +23,17 @@ class DocumentRepository(BaseRepository):
     model_class = Document
     default_select_related = ['uploader', 'department', 'folder']  # FK
     default_prefetch_related = ['tags']  # M2M
+
+    def _has_system_admin_permission(self, user) -> bool:
+        """Check system administrator bypass by permission code."""
+        if getattr(user, 'is_superuser', False):
+            return True
+        try:
+            from repositories.permission_repository import PermissionRepository
+            return PermissionRepository().check_user_has_permission(user.id, PermissionCodes.SYSTEM_ADMIN)
+        except Exception as e:
+            logger.warning(f"Could not check system_admin permission for {getattr(user, 'id', None)}: {e}")
+            return False
     
     # ============================================================
     # DOCUMENT-SPECIFIC QUERIES
@@ -172,12 +184,12 @@ class DocumentRepository(BaseRepository):
             can_read = repo.check_user_can_read(doc_id, user_id)
         """
         try:
-            from apps.users.models import Account, UserProfile, RoleIds
+            from apps.users.models import Account, UserProfile
             doc = self.get_by_id(doc_id)
             user = Account.objects.get(pk=user_id)
 
-            # Admin users can read everything
-            if user.has_role(RoleIds.ADMIN):
+            # System administrators can read everything.
+            if self._has_system_admin_permission(user):
                 return True
 
             user_department_id = None
@@ -210,14 +222,14 @@ class DocumentRepository(BaseRepository):
             can_write = repo.check_user_can_write(doc_id, user_id)
         """
         try:
-            from apps.users.models import Account, RoleIds
+            from apps.users.models import Account
             doc = self.get_by_id(doc_id)
             user = Account.objects.get(pk=user_id)
 
-            # Owner or admin can edit/manage this document
+            # Owner or system administrator can edit/manage this document.
             if doc.uploader_id == user_id:
                 return True
-            if user.is_superuser or user.has_role(RoleIds.ADMIN):
+            if self._has_system_admin_permission(user):
                 return True
 
             return False
@@ -233,7 +245,7 @@ class DocumentRepository(BaseRepository):
             can_delete = repo.check_user_can_delete(doc_id, user_id)
         """
         try:
-            from apps.users.models import Account, RoleIds
+            from apps.users.models import Account
             doc = self.get_by_id(doc_id)
             user = Account.objects.get(pk=user_id)
             
@@ -241,8 +253,8 @@ class DocumentRepository(BaseRepository):
             if doc.uploader_id == user_id:
                 return True
             
-            # Admin can delete
-            if user.has_role(RoleIds.ADMIN):
+            # System administrators can delete.
+            if self._has_system_admin_permission(user):
                 return True
             
             return False
@@ -392,14 +404,14 @@ class DocumentRepository(BaseRepository):
             docs = repo.get_accessible_documents(user_id)
         """
         try:
-            from apps.users.models import UserProfile, Account, RoleIds
+            from apps.users.models import UserProfile, Account
             from django.db.models import Q
             
-            # Check if user is admin (has admin role)
+            # Check if user has system administrator permission.
             try:
                 user = Account.objects.get(pk=user_id)
-                # Admin users see ALL documents regardless of access_scope
-                if user.has_role(RoleIds.ADMIN):
+                # System administrators see ALL documents regardless of access_scope.
+                if self._has_system_admin_permission(user):
                     return self.get_base_queryset()
             except Exception:
                 pass

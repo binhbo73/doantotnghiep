@@ -9,7 +9,6 @@ import React, { useState } from 'react';
 import Image from 'next/image';
 import { useDepartmentUsers } from '@/hooks/departments/useDepartmentDetail';
 import { useRBAC } from '@/hooks/useRBAC';
-import { useAuthContext } from '@/context';
 import Pagination from '@/components/common/Pagination';
 import TabLoading from '@/components/departments/loading/TabLoading';
 import { UserDetail, PaginatedResponse } from '@/types/departments';
@@ -29,8 +28,7 @@ const STATUSES = [
 export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProps) {
     const [page, setPage] = useState(1);
     const [pageSize, setPageSize] = useState(10);
-    const { isAdmin, hasGlobalPermission } = useRBAC();
-    const { user } = useAuthContext();
+    const { hasAnyPermission } = useRBAC();
 
     // API Hook: Fetch users with pagination
     // Only call hook if we're not on page 1 OR if initialData wasn't provided
@@ -46,7 +44,7 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
     const error = hookResult.error;
 
     // Check if user can edit/delete users
-    const canManageUsers = isAdmin() || hasGlobalPermission('update', 'user') || hasGlobalPermission('delete', 'user');
+    const canManageUsers = hasAnyPermission(['user_update', 'user_delete', 'user_change_role', 'user_change_status']);
 
     if (loading) {
         return <TabLoading />;

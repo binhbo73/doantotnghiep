@@ -23,7 +23,6 @@ function getCookie(name: string): string | null {
  */
 export function getAuthToken(): string | null {
     if (typeof window === 'undefined') {
-        console.warn('⚠️ [getAuthToken] Called on server-side (window is undefined)')
         return null
     }
 
@@ -154,31 +153,30 @@ export function setAuthData(data: LoginData) {
         console.error('❌ [setAuthData] Error storing user data:', err)
     }
 
-    if (permissions && permissions.length > 0) {
-        try {
-            localStorage.setItem('user_permissions', JSON.stringify(permissions))
-            console.log('✅ [setAuthData] Permissions stored in localStorage')
-        } catch (err) {
-            console.error('❌ [setAuthData] Error storing permissions:', err)
-        }
+    try {
+        localStorage.setItem('user_permissions', JSON.stringify(Array.isArray(permissions) ? permissions : []))
+        console.log('✅ [setAuthData] Permissions stored in localStorage')
+    } catch (err) {
+        console.error('❌ [setAuthData] Error storing permissions:', err)
     }
 
-    if (roles) {
-        try {
-            localStorage.setItem('user_roles', JSON.stringify(roles))
-            console.log('✅ [setAuthData] Roles stored in localStorage')
-        } catch (err) {
-            console.error('❌ [setAuthData] Error storing roles:', err)
-        }
+    try {
+        localStorage.setItem('user_roles', JSON.stringify(Array.isArray(roles) ? roles : []))
+        console.log('✅ [setAuthData] Roles stored in localStorage')
+    } catch (err) {
+        console.error('❌ [setAuthData] Error storing roles:', err)
     }
 
-    if (department_id) {
-        try {
+    try {
+        if (department_id) {
             localStorage.setItem('user_department_id', department_id)
             console.log('✅ [setAuthData] Department ID stored in localStorage')
-        } catch (err) {
-            console.error('❌ [setAuthData] Error storing department_id:', err)
+        } else {
+            localStorage.removeItem('user_department_id')
+            console.log('✅ [setAuthData] Department ID cleared from localStorage')
         }
+    } catch (err) {
+        console.error('❌ [setAuthData] Error storing department_id:', err)
     }
 
     // Set in cookies (for middleware access)
@@ -208,15 +206,16 @@ export function setAuthData(data: LoginData) {
         accessTokenIsPlaceholder: verifyAccess?.includes('placeholder') ? '⚠️ Yes' : '✅ No',
     })
 
-    // Emit event for same-tab auth change detection (only if user ID changed)
+    // Emit event for same-tab auth/permission change detection.
     if (oldUserId && oldUserId !== newUserId) {
         console.log('🔄 User changed from', oldUserId, 'to', newUserId, '- emitting auth:user-changed event')
-        window.dispatchEvent(new Event('auth:user-changed'))
     } else if (!oldUserId && newUserId) {
         // First login
         console.log('🔄 User logged in:', newUserId, '- emitting auth:user-changed event')
-        window.dispatchEvent(new Event('auth:user-changed'))
+    } else {
+        console.log('🔄 Auth data refreshed for current user:', newUserId, '- emitting auth:user-changed event')
     }
+    window.dispatchEvent(new Event('auth:user-changed'))
 }
 
 /**

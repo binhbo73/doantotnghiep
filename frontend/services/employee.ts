@@ -87,7 +87,7 @@ export async function getEmployee(employeeId: string): Promise<EmployeeResponse>
 
 /**
  * Update employee details
- * PUT /api/v1/users/{id}
+ * PATCH /api/v1/users/{id}
  */
 export async function updateEmployee(
     employeeId: string,
@@ -96,7 +96,7 @@ export async function updateEmployee(
     try {
         console.log('📤 Updating employee:', employeeId)
 
-        const response = await api.put<{
+        const response = await api.patch<{
             success: boolean
             data: EmployeeResponse
             message: string

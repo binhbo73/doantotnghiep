@@ -10,14 +10,14 @@ Endpoints:
 
 Flow: View → Service → Repository → ORM
 Each view:
-1. Permission check (IsAdmin)
+1. Permission check (permission code)
 2. Input validation (Serializer)
 3. Call Service (business logic)
 4. Serialize response
 5. Return standard response
 """
 
-from rest_framework import status, permissions
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -25,9 +25,9 @@ from django.db import transaction
 from django.utils import timezone
 import logging
 
-from core.permissions.drf_permissions import IsAdmin, IsAuthenticatedUser
+from core.permissions.drf_permissions import IsAuthenticatedUser, user_has_any_permission, user_has_permission
 from core.utils.response_builder import ResponseBuilder
-from core.constants import RoleIds
+from core.constants import PermissionCodes
 from core.exceptions import (
     ValidationError,
     NotFoundError,
@@ -48,6 +48,27 @@ from api.serializers.department_serializers import (
 
 logger = logging.getLogger(__name__)
 
+DEPARTMENT_READ_PERMISSIONS = [
+    PermissionCodes.DEPARTMENT_READ,
+    PermissionCodes.DEPARTMENT_UPDATE,
+    PermissionCodes.DEPARTMENT_MANAGE,
+]
+
+
+def _has_department_read(user):
+    return user_has_any_permission(user, DEPARTMENT_READ_PERMISSIONS)
+
+
+def _has_permission(user, permission_code):
+    return user_has_permission(user, permission_code)
+
+
+def _forbidden(message="You don't have permission to access this department"):
+    return Response(
+        ResponseBuilder.error(message, status_code=403),
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
 
 # ============================================================
 # CUSTOM PAGINATION
@@ -64,7 +85,7 @@ class DepartmentListTreeView(APIView):
     API - Department List & Create
     
     GET  /api/v1/departments       - Get all departments with pagination (authenticated users)
-    POST /api/v1/departments       - Create new department (admin only)
+    POST /api/v1/departments       - Create new department (department_manage only)
     
     Query Parameters (GET):
     - page: Page number (default: 1)
@@ -103,6 +124,9 @@ class DepartmentListTreeView(APIView):
     def get(self, request):
         """GET: Get all departments with pagination"""
         try:
+            if not user_has_any_permission(request.user, DEPARTMENT_READ_PERMISSIONS):
+                return _forbidden("You need department_read permission to view departments")
+
             service = DepartmentService()
 
             # Restrict the list to departments the current user is allowed to see.
@@ -146,10 +170,10 @@ class DepartmentListTreeView(APIView):
     
     @transaction.atomic()
     def post(self, request):
-        """POST: Create new department (admin only)"""
+        """POST: Create new department (department_create or department_manage)"""
         try:
-            # Note: DRF permission class (IsAdmin) already verified this is admin user
-            # No need to check again
+            if not user_has_any_permission(request.user, [PermissionCodes.DEPARTMENT_CREATE, PermissionCodes.DEPARTMENT_MANAGE]):
+                return _forbidden("You need department_create or department_manage permission to create departments")
             
             # Validate input
             serializer = DepartmentCreateUpdateSerializer(data=request.data)
@@ -273,12 +297,12 @@ class DepartmentDetailView(APIView):
         }
         """
         try:
+            if not user_has_any_permission(request.user, DEPARTMENT_READ_PERMISSIONS):
+                return _forbidden("You need department_read permission to view departments")
+
             service = DepartmentService()
             if not service.can_access_department(request.user, dept_id):
-                return Response(
-                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return _forbidden()
             dept = service.get_department_detail_with_counts(dept_id)
             
             # Serialize with counts
@@ -317,12 +341,15 @@ class DepartmentDetailView(APIView):
     def put(self, request, dept_id):
         """PUT: Update department"""
         try:
+            if not user_has_any_permission(
+                request.user,
+                [PermissionCodes.DEPARTMENT_UPDATE, PermissionCodes.DEPARTMENT_MANAGE],
+            ):
+                return _forbidden("You need department_update permission to update departments")
+
             service = DepartmentService()
             if not service.can_edit_department(request.user, dept_id):
-                return Response(
-                    ResponseBuilder.error("You don't have permission to update this department", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return _forbidden("You don't have permission to update this department")
 
             # Validate input
             serializer = DepartmentCreateUpdateSerializer(data=request.data)
@@ -387,11 +414,8 @@ class DepartmentDetailView(APIView):
     def delete(self, request, dept_id):
         """DELETE: Soft delete department"""
         try:
-            if not (request.user and (request.user.is_superuser or request.user.has_role(RoleIds.ADMIN))):
-                return Response(
-                    ResponseBuilder.error("Admin access required", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+            if not user_has_permission(request.user, PermissionCodes.DEPARTMENT_MANAGE):
+                return _forbidden("You need department_manage permission to delete departments")
 
             # Get department (for response)
             service = DepartmentService()
@@ -494,12 +518,12 @@ class DepartmentDetailExpandView(APIView):
     def get(self, request, dept_id):
         """GET: Get department detail with expanded data"""
         try:
+            if not _has_department_read(request.user):
+                return _forbidden("You need department_read permission to view departments")
+
             service = DepartmentService()
             if not service.can_access_department(request.user, dept_id):
-                return Response(
-                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return _forbidden()
 
             # Parse query parameters
             expand_str = request.query_params.get('expand', '')
@@ -512,6 +536,18 @@ class DepartmentDetailExpandView(APIView):
             # Validate expand fields
             valid_fields = {'users', 'folders', 'documents'}
             expand_fields = [f for f in expand_fields if f in valid_fields]
+
+            missing_permissions = []
+            if 'users' in expand_fields and not _has_permission(request.user, PermissionCodes.USER_READ):
+                missing_permissions.append(PermissionCodes.USER_READ)
+            if 'folders' in expand_fields and not _has_permission(request.user, PermissionCodes.FOLDER_READ):
+                missing_permissions.append(PermissionCodes.FOLDER_READ)
+            if 'documents' in expand_fields and not _has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                missing_permissions.append(PermissionCodes.DOCUMENT_READ)
+            if missing_permissions:
+                return _forbidden(
+                    f"You need these permissions for expanded department data: {', '.join(missing_permissions)}"
+                )
             
             data = service.get_department_with_expanded_data(
                 dept_id=dept_id,
@@ -600,12 +636,14 @@ class DepartmentUsersView(APIView):
     def get(self, request, dept_id):
         """GET: Get users in department with pagination"""
         try:
+            if not _has_department_read(request.user):
+                return _forbidden("You need department_read permission to view department users")
+            if not _has_permission(request.user, PermissionCodes.USER_READ):
+                return _forbidden("You need user_read permission to view department users")
+
             service = DepartmentService()
             if not service.can_access_department(request.user, dept_id):
-                return Response(
-                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return _forbidden()
 
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
@@ -692,12 +730,14 @@ class DepartmentFoldersView(APIView):
     def get(self, request, dept_id):
         """GET: Get folders in department with pagination"""
         try:
+            if not _has_department_read(request.user):
+                return _forbidden("You need department_read permission to view department folders")
+            if not _has_permission(request.user, PermissionCodes.FOLDER_READ):
+                return _forbidden("You need folder_read permission to view department folders")
+
             service = DepartmentService()
             if not service.can_access_department(request.user, dept_id):
-                return Response(
-                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return _forbidden()
 
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
@@ -787,12 +827,14 @@ class DepartmentDocumentsView(APIView):
     def get(self, request, dept_id):
         """GET: Get documents in department with pagination"""
         try:
+            if not _has_department_read(request.user):
+                return _forbidden("You need department_read permission to view department documents")
+            if not _has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view department documents")
+
             service = DepartmentService()
             if not service.can_access_department(request.user, dept_id):
-                return Response(
-                    ResponseBuilder.error("You don't have permission to access this department", status_code=403),
-                    status=status.HTTP_403_FORBIDDEN
-                )
+                return _forbidden()
 
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
@@ -882,12 +924,17 @@ class FolderDocumentsView(APIView):
     def get(self, request, folder_id):
         """GET: Get documents in folder with pagination"""
         try:
+            if not _has_permission(request.user, PermissionCodes.FOLDER_READ):
+                return _forbidden("You need folder_read permission to view folder documents")
+            if not _has_permission(request.user, PermissionCodes.DOCUMENT_READ):
+                return _forbidden("You need document_read permission to view folder documents")
+
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
             page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
             
             service = DepartmentService()
-            is_admin = request.user.is_superuser or request.user.has_role(RoleIds.ADMIN)
+            is_admin = user_has_permission(request.user, PermissionCodes.DEPARTMENT_MANAGE)
             
             data = service.get_folder_documents_paginated(
                 folder_id=folder_id,

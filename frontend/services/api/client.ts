@@ -219,6 +219,7 @@ class ApiClient {
                 method,
                 headers,
                 body,
+                credentials: 'include',
                 signal: controller.signal,
             })
 
@@ -338,7 +339,8 @@ class ApiClient {
 
             logger.debug(`Uploading to ${endpoint}`, { requestId })
 
-            const response = await fetch(enrichedRequest)
+            const requestWithCredentials = new Request(enrichedRequest, { credentials: 'include' })
+            const response = await fetch(requestWithCredentials)
 
             clearTimeout(timeoutId)
 
@@ -388,7 +390,8 @@ class ApiClient {
 
             logger.debug(`Downloading from ${endpoint}`, { requestId })
 
-            const response = await fetch(enrichedRequest)
+            const requestWithCredentials = new Request(enrichedRequest, { credentials: 'include' })
+            const response = await fetch(requestWithCredentials)
 
             clearTimeout(timeoutId)
 

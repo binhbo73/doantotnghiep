@@ -11,7 +11,6 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useRBAC } from '@/hooks/useRBAC'
-import { useAuthContext } from '@/context'
 import DepartmentDetailLayout from '@/components/departments/layout/DepartmentDetailLayout';
 import DepartmentDetailHeader from '@/components/departments/sections/DepartmentDetailHeader';
 import ManagerCard from '@/components/departments/sections/ManagerCard';
@@ -21,25 +20,48 @@ import StaffTableSection from '@/components/departments/sections/StaffTableSecti
 import LoadingSkeletons from '@/components/departments/loading/LoadingSkeletons';
 import ErrorBoundary from '@/components/common/ErrorBoundary';
 import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail';
-import { useDepartments } from '@/hooks/useDepartments';
-import { canAccessDepartmentDetail } from '@/lib/departmentAccess';
 
 export default function DepartmentDetailPage() {
     const params = useParams();
     const deptId = params.id as string;
 
-    const { isAdmin, isTruongPhong } = useRBAC()
-    const { user } = useAuthContext()
-    const { departments, isLoading: departmentsLoading } = useDepartments({ page_size: 100 })
+    const { hasPermission } = useRBAC()
+    const canReadDepartment = hasPermission('department_read')
+    const canReadUsers = hasPermission('user_read')
+    const canReadFolders = hasPermission('folder_read')
+    const canReadDocuments = hasPermission('document_read')
 
     const [activeTab, setActiveTab] = useState<'users' | 'folders' | 'documents'>('users');
+    const expand = [
+        canReadUsers ? 'users' as const : null,
+        canReadFolders && canReadDocuments ? 'folders' as const : null,
+        canReadDocuments ? 'documents' as const : null,
+    ].filter(Boolean) as Array<'users' | 'folders' | 'documents'>;
 
     // API Hook: Fetch department detail with counts
     const {
         data: departmentDetail,
         loading,
         error,
-    } = useDepartmentDetail(deptId);
+    } = useDepartmentDetail(deptId, { enabled: canReadDepartment, expand });
+
+    const canAccessDepartment = canReadDepartment
+
+    // RBAC: backend permissions decide whether this page is visible.
+    if (!canAccessDepartment) {
+        return (
+            <div className="min-h-screen flex items-center justify-center p-6">
+                <div className="text-center max-w-lg bg-white rounded-2xl p-8 shadow-sm border">
+                    <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
+                        <span className="material-symbols-outlined text-3xl text-slate-400">lock</span>
+                    </div>
+                    <h3 className="text-lg font-bold mb-2">Quyền truy cập bị giới hạn</h3>
+                    <p className="text-sm text-slate-500 mb-4">Bạn chỉ có thể xem chi tiết phòng ban mình quản lý hoặc phòng ban trực thuộc nó.</p>
+                    <button onClick={() => window.history.back()} className="px-4 py-2 rounded bg-[#9d4300] text-white">Quay lại</button>
+                </div>
+            </div>
+        )
+    }
 
     if (loading) {
         return <LoadingSkeletons />;
@@ -56,35 +78,6 @@ export default function DepartmentDetailPage() {
 
     if (!departmentDetail) {
         return <div className="p-8 text-center text-red-500 font-bold">Phòng ban không tồn tại</div>;
-    }
-
-    const canAccessDepartment = canAccessDepartmentDetail({
-        user,
-        targetDeptId: deptId,
-        departments,
-        isAdmin: isAdmin(),
-        isTruongPhong: isTruongPhong(),
-    })
-
-    if (departmentsLoading) {
-        return <LoadingSkeletons />;
-    }
-
-    // RBAC: allow admins, allow managers for their own department and all descendant departments,
-    // deny regular employees outside their exact department.
-    if (!canAccessDepartment) {
-        return (
-            <div className="min-h-screen flex items-center justify-center p-6">
-                <div className="text-center max-w-lg bg-white rounded-2xl p-8 shadow-sm border">
-                    <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
-                        <span className="material-symbols-outlined text-3xl text-slate-400">lock</span>
-                    </div>
-                    <h3 className="text-lg font-bold mb-2">Quyền truy cập bị giới hạn</h3>
-                    <p className="text-sm text-slate-500 mb-4">Bạn chỉ có thể xem chi tiết phòng ban mình quản lý hoặc phòng ban trực thuộc nó.</p>
-                    <button onClick={() => window.history.back()} className="px-4 py-2 rounded bg-[#9d4300] text-white">Quay lại</button>
-                </div>
-            </div>
-        )
     }
 
     return (

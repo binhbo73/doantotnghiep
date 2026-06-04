@@ -7,7 +7,6 @@ import React from 'react';
 import Link from 'next/link';
 import { DepartmentDetail } from '@/types/departments';
 import { useRBAC } from '@/hooks/useRBAC'
-import { useAuthContext } from '@/context'
 
 interface DepartmentDetailHeaderProps {
     department: DepartmentDetail;
@@ -18,8 +17,8 @@ export default function DepartmentDetailHeader({
     department,
     deptId,
 }: DepartmentDetailHeaderProps) {
-    const { isAdmin, isTruongPhong, hasGlobalPermission } = useRBAC()
-    const { user } = useAuthContext()
+    const { hasAnyPermission } = useRBAC()
+    const canEditDepartment = hasAnyPermission(['department_update', 'department_manage'])
     return (
         <div className="space-y-4">
             {/* Breadcrumb Navigation - Compact */}
@@ -50,7 +49,7 @@ export default function DepartmentDetailHeader({
                         Tài liệu
                     </button>
 
-                    {(isAdmin() || hasGlobalPermission('edit', 'department') || (isTruongPhong() && department.id === user?.department_id)) && (
+                    {canEditDepartment && (
                         <Link
                             href={`/dashboard/department/${deptId}/edit`}
                             className="flex items-center gap-1.5 px-4 py-2.5 bg-[#9d4300] text-white text-xs font-bold rounded-xl hover:bg-[#853900] transition-all shadow-md active:scale-95"

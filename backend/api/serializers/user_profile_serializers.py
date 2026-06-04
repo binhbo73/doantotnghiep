@@ -78,6 +78,7 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
     email = serializers.SerializerMethodField()
     first_name = serializers.SerializerMethodField()
     last_name = serializers.SerializerMethodField()
+    department_id = serializers.SerializerMethodField()
     department_name = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     is_active = serializers.SerializerMethodField()
@@ -91,7 +92,7 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
         fields = [
             # User Profile Fields
             'id', 'account_id', 'username', 'email', 'first_name', 'last_name',
-            'full_name', 'avatar_url', 'address', 'birthday', 'department_name',
+            'full_name', 'avatar_url', 'address', 'birthday', 'department_id', 'department_name',
             'metadata',
             # Account Fields (Status & Activity)
             'status', 'is_active',
@@ -125,6 +126,10 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
     def get_last_name(self, obj):
         """Get last name from Account"""
         return obj.account.last_name if obj.account else None
+
+    def get_department_id(self, obj):
+        """Get department ID if exists"""
+        return str(obj.department_id) if obj.department_id else None
     
     def get_department_name(self, obj):
         """Get department name if exists"""

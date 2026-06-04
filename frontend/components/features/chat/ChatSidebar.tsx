@@ -334,7 +334,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                 <div className="p-6 border-b border-outline-variant/10">
                     <button
                         onClick={onNewChat}
-                        disabled={isLoading}
+                        disabled={!onNewChat || isLoading}
                         className="w-full py-3 px-4 bg-primary text-on-primary rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/20 active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-primary/30"
                     >
                         <Plus size={18} />
