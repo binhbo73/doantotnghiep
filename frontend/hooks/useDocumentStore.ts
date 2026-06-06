@@ -200,6 +200,15 @@ function updateTreeNode(
     })
 }
 
+function removeTreeNode(tree: FolderTreeNode[], folderId: string): FolderTreeNode[] {
+    return tree
+        .filter((node) => node.folder.id !== folderId)
+        .map((node) => ({
+            ...node,
+            children: removeTreeNode(node.children, folderId),
+        }))
+}
+
 // ─── Hook ──────────────────────────────────────────────────
 
 export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
@@ -253,7 +262,7 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Không thể tải danh sách thư mục'
             setError(message)
-            console.error('❌ Failed to load folders:', err)
+            console.warn('Failed to load folders:', err)
         } finally {
             setIsLoading(false)
         }
@@ -339,12 +348,7 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
                     }))
                 )
             } catch (err) {
-                console.error(`❌ Failed to load documents for folder ${folderId}:`, err)
-                // Log full ApiError data for debugging 500 errors
-                if (err instanceof ApiError) {
-                    console.error(`API Error Status: ${err.statusCode}, Message: ${err.message}`)
-                    console.error('API Error Data:', JSON.stringify(err.data, null, 2))
-                }
+                console.warn(`Failed to load documents for folder ${folderId}:`, err)
                 const message = err instanceof ApiError
                     ? err.message || (err.data && (err.data as any).message) || `Server error ${(err as any).statusCode}`
                     : err instanceof Error
@@ -379,6 +383,11 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
     const clearSelection = useCallback(() => {
         setSelectedDocument(null)
         setSelectedFolder(null)
+    }, [])
+
+    const removeFolder = useCallback((folderId: string) => {
+        setFolders((current) => current.filter((folder) => folder.id !== folderId))
+        setTree((current) => removeTreeNode(current, folderId))
     }, [])
 
     // ── Stats ──────────────────────────────────────────────
@@ -428,6 +437,7 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
         toggleOtherDocuments,
         selectDocument,
         clearSelection,
+        removeFolder,
         refetch: loadFolders,
         getStats,
     }

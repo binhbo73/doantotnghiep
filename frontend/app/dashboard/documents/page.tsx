@@ -162,6 +162,7 @@ function DocumentsPageContent() {
         toggleOtherDocuments,
         selectDocument,
         clearSelection,
+        removeFolder,
         refetch,
         getStats,
     } = useDocumentStore({
@@ -189,7 +190,7 @@ function DocumentsPageContent() {
                 }
             })
             .catch((err) => {
-                console.error('❌ Failed to load shared documents for filtering:', err)
+                console.warn('Failed to load shared documents for filtering:', err)
                 if (isMounted) {
                     setSharedWithMe({ folders: [], unfoldered_documents: [] })
                 }
@@ -233,13 +234,15 @@ function DocumentsPageContent() {
     const handleDeleteFolder = async () => {
         if (!folderToDelete || !canDeleteFolder) return
 
+        const deletedFolder = folderToDelete
         setIsDeletingFolder(true)
         try {
-            await deleteFolder(folderToDelete.id)
+            await deleteFolder(deletedFolder.id)
             clearSelection()
-            await refetch()
-            toast.success(`Đã xóa thư mục "${folderToDelete.name}"`)
+            removeFolder(deletedFolder.id)
             setFolderToDelete(null)
+            setFolderDeleteBlockers([])
+            toast.success(`Đã xóa thư mục "${deletedFolder.name}"`)
         } catch (err) {
             const blockers = getSafeDeleteBlockers(err)
             if (blockers) {

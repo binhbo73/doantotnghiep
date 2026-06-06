@@ -159,17 +159,18 @@ function DepartmentManagementContent() {
     const handleDeleteDepartment = async () => {
         if (!departmentToDelete || !canManageDepartments) return
 
+        const deletedDepartment = departmentToDelete
         setIsDeletingDepartment(true)
         try {
-            await deleteDepartment(departmentToDelete.id)
-            await refetch({ page_size: 100 })
+            await deleteDepartment(deletedDepartment.id)
 
-            if (selectedDepartmentId === departmentToDelete.id) {
+            if (selectedDepartmentId === deletedDepartment.id) {
                 setSelectedDepartmentId(null)
             }
 
-            toast.success(`Đã xóa phòng ban "${departmentToDelete.name}"`)
             setDepartmentToDelete(null)
+            setDepartmentDeleteBlockers([])
+            toast.success(`Đã xóa phòng ban "${deletedDepartment.name}"`)
         } catch (err) {
             const blockers = getSafeDeleteBlockers(err)
             if (blockers) {

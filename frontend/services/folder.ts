@@ -101,7 +101,7 @@ export async function fetchAllFolders(): Promise<FolderResponse[]> {
         return []
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch folders'
-        console.error('❌ Error fetching folders:', err)
+        console.warn('Error fetching folders:', err)
         if (err instanceof ApiError) {
             throw err
         }
@@ -148,7 +148,7 @@ export async function fetchFolderDocuments(
         return { items, pagination }
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch folder documents'
-        console.error(`❌ Error fetching documents for folder ${folderId}:`, err)
+        console.warn(`Error fetching documents for folder ${folderId}:`, err)
         if (err instanceof ApiError) {
             throw err
         }
@@ -193,7 +193,7 @@ export async function fetchAllDocuments(
         return { items, pagination }
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch all documents'
-        console.error('❌ Error fetching all documents:', err)
+        console.warn('Error fetching all documents:', err)
         if (err instanceof ApiError) {
             throw err
         }
@@ -243,7 +243,7 @@ export async function fetchPersonalFoldersWithDocuments(
             params: any,
             context: string
         ): Promise<FolderDocumentResponse[]> => {
-            let allItems: FolderDocumentResponse[] = []
+            const allItems: FolderDocumentResponse[] = []
             let page = 1
             let hasNext = true
 
@@ -323,7 +323,7 @@ export async function fetchPersonalFoldersWithDocuments(
         }
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch personal folders and documents'
-        console.error('❌ Error fetching organized personal documents:', err)
+        console.warn('Error fetching organized personal documents:', err)
         if (err instanceof ApiError) {
             throw err
         }
@@ -356,7 +356,7 @@ export async function fetchSharedWithMeFoldersAndDocuments(): Promise<SharedDocu
         return { folders: [], unfoldered_documents: [] }
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to fetch shared documents'
-        console.error('❌ Error fetching shared-with-me documents:', err)
+        console.warn('Error fetching shared-with-me documents:', err)
         if (err instanceof ApiError) {
             throw err
         }

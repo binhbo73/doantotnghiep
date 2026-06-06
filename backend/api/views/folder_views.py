@@ -401,7 +401,7 @@ class FolderDetailView(APIView):
         Response:
         {
             "success": true,
-            "status_code": 204
+            "status_code": 200
         }
         """
         try:
@@ -420,10 +420,11 @@ class FolderDetailView(APIView):
             
             return Response(
                 ResponseBuilder.success(
-                    data=None,
-                    message="Folder deleted successfully"
+                    data={"id": str(folder_id)},
+                    message="Folder deleted successfully",
+                    status_code=200,
                 ),
-                status=status.HTTP_204_NO_CONTENT
+                status=status.HTTP_200_OK
             )
         
         except NotFoundError as e:

@@ -17,7 +17,6 @@ import type {
     ListFoldersRequest,
     ListFoldersResponse,
     CreateFolderRequest,
-    UploadDocumentRequest,
 } from '@/types/api'
 
 type BackendPaginatedEnvelope<T> = {
@@ -263,7 +262,9 @@ export async function updateFolder(
  * Delete folder
  */
 export async function deleteFolder(folderId: string): Promise<void> {
-    await api.delete(`/folders/${folderId}`)
+    // Do not retry destructive requests automatically. A proxy/network error can
+    // happen after the backend has already committed the deletion.
+    await api.delete(`/folders/${folderId}`, { retries: 1 })
     logger.info('Folder deleted', { folderId })
 }
 
