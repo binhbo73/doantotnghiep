@@ -27,7 +27,8 @@ from api.views.user_management_views import (
     UserRolesView,
     UserRoleUpdateView,
     UserDepartmentChangeView,
-    AdminCreateAccountView
+    AdminCreateAccountView,
+    AdminBulkCreateAccountView,
 )
 from api.views.iam_views import (
     PermissionListView,
@@ -155,6 +156,9 @@ urlpatterns = [
     
     # user_create: create new account + send email
     re_path(r"^accounts/create/?$", AdminCreateAccountView.as_view(), name="account_create"),
+
+    # user_create: create many accounts in one request
+    re_path(r"^accounts/bulk-create/?$", AdminBulkCreateAccountView.as_view(), name="account_bulk_create"),
     
     # Get single account detail (GET) / Update account (PATCH) 
     re_path(rf"^accounts/(?P<account_id>{UUID_PATTERN})/?$", UserDetailView.as_view(), name="account_detail"),

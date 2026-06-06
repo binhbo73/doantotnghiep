@@ -5,7 +5,7 @@ Responsibilities:
 - Folder CRUD operations
 - Hierarchical tree building
 - Permission checking
-- Recursive deletion with cascade
+- Safe folder deletion
 - Audit logging
 
 Flow: View → Service → Repository → ORM
@@ -27,6 +27,7 @@ from core.exceptions import (
     NotFoundError,
     BusinessLogicError,
     PermissionDeniedError,
+    ConflictError,
 )
 from core.constants import PermissionCodes
 from core.permissions.drf_permissions import user_has_any_permission, user_has_permission
@@ -646,7 +647,7 @@ class FolderService(BaseService):
             raise BusinessLogicError(f"Failed to update folder: {str(e)}")
     
     # ============================================================
-    # DELETE FOLDER (SOFT DELETE - RECURSIVE)
+    # DELETE FOLDER (SAFE SOFT DELETE)
     # ============================================================
     
     @transaction.atomic
@@ -656,15 +657,16 @@ class FolderService(BaseService):
         user_id: str,
     ) -> None:
         """
-        Delete folder and all contents (soft delete).
+        Safely soft-delete an empty folder.
         
         Business Logic:
         1. Get folder
         2. Check user has delete permission
-        3. Get all descendants (folders + documents)
-        4. Soft delete all in transaction
-        5. Invalidate caches
-        6. Log AuditLog
+        3. Check all descendant folders
+        4. Check documents in this folder and all descendants
+        5. Reject with conflict when any dependent content exists
+        6. Soft-delete only the selected empty folder
+        7. Log AuditLog
         
         Args:
             folder_id: Folder to delete
@@ -673,6 +675,7 @@ class FolderService(BaseService):
         Raises:
             NotFoundError: If folder not found
             PermissionDeniedError: If user not authorized
+            ConflictError: If the folder contains active child folders or documents
         """
         try:
             folder = self.repository.get_by_id(folder_id)
@@ -683,20 +686,42 @@ class FolderService(BaseService):
                 logger.warning(f"User {user_id} attempted to delete folder {folder_id} created by {folder.created_by_id}")
                 raise PermissionDeniedError("You don't have delete permission on this folder")
             
-            # Get all descendant folder IDs
-            folder_ids_to_delete = self.repository.get_all_folder_ids_for_cascade_delete(folder_id)
-            
-            # Soft delete all folders
-            self.Folder.objects.filter(id__in=folder_ids_to_delete).update(
-                is_deleted=True,
-                deleted_at=timezone.now(),
-            )
-            
-            # TODO: Handle documents inside those folders
-            # - Get all document IDs in those folders
-            # - Soft delete documents
-            # - Sync Qdrant to remove vectors
-            # - Invalidate UserDocumentCache
+            descendant_folders = self.repository.get_all_descendants(folder_id)
+            descendant_folder_ids = [str(item.id) for item in descendant_folders]
+            folder_tree_ids = [str(folder.id), *descendant_folder_ids]
+
+            Document = apps.get_model('documents', 'Document')
+            document_count = Document.objects.filter(
+                folder_id__in=folder_tree_ids,
+                is_deleted=False,
+            ).count()
+
+            blockers = {
+                'child_folders': len(descendant_folder_ids),
+                'documents': document_count,
+            }
+            if blockers['child_folders'] > 0 or blockers['documents'] > 0:
+                active_blockers = []
+                if blockers['child_folders'] > 0:
+                    active_blockers.append(f"{blockers['child_folders']} child folder(s)")
+                if blockers['documents'] > 0:
+                    active_blockers.append(f"{blockers['documents']} document(s)")
+
+                raise ConflictError(
+                    (
+                        f"Cannot delete folder '{folder.name}' because it still contains "
+                        f"{', '.join(active_blockers)}. Move or delete these resources first."
+                    ),
+                    detail={
+                        'folder_id': str(folder.id),
+                        'folder_name': folder.name,
+                        'blockers': blockers,
+                    },
+                )
+
+            folder.is_deleted = True
+            folder.deleted_at = timezone.now()
+            folder.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
             
             # Log audit
             try:
@@ -705,14 +730,14 @@ class FolderService(BaseService):
                     account=user_account,
                     action='DELETE_FOLDER',
                     resource_id=str(folder_id),
-                    query_text=f"Deleted folder recursively (affected {len(folder_ids_to_delete)} folders)",
+                    query_text="Safely deleted empty folder",
                 )
             except Exception as e:
                 logger.warning(f"Failed to log DELETE_FOLDER action: {str(e)}")
             
-            logger.info(f"Folder deleted recursively: {folder_id} by user {user_id} (affected {len(folder_ids_to_delete)} folders)")
+            logger.info(f"Empty folder safely deleted: {folder_id} by user {user_id}")
             
-        except (NotFoundError, PermissionDeniedError):
+        except (NotFoundError, PermissionDeniedError, ConflictError):
             raise
         except Exception as e:
             logger.error(f"Error deleting folder: {str(e)}")

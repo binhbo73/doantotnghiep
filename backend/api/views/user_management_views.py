@@ -16,6 +16,7 @@ from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import PermissionDenied
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
@@ -30,6 +31,7 @@ from api.serializers.user_serializers import (
     RoleAssignmentSerializer, RoleRemovalSerializer, RoleUpdateSerializer, DepartmentChangeSerializer
 )
 from services.user_service import UserService
+from core.exceptions import ValidationError as ServiceValidationError
 from core.constants import AccountStatus, RoleIds, PermissionCodes
 from core.permissions.drf_permissions import user_has_any_permission, user_has_permission
 
@@ -867,129 +869,90 @@ class AdminCreateAccountView(APIView):
         """POST: Create new account + generate temp password + send email"""
         try:
             self.user_service = UserService()
-            from core.constants import RoleIds
-            
-            # Step 1: Extract department_id (OPTIONAL - default NULL)
-            # âœ… CORRECT: department_id is optional, only validate if provided
-            department_id = request.data.get('department_id')
-            enforce_department_scope = not _has_global_user_scope(request.user)
+            created_account = self._create_account_from_payload(
+                request=request,
+                payload=request.data,
+                send_email=True,
+            )
 
-            if enforce_department_scope:
-                scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
-                if not scoped_department_ids:
-                    return Response(
-                        ResponseBuilder.error(message="Your account has no managed department scope"),
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-                if department_id and str(department_id) not in scoped_department_ids:
-                    return Response(
-                        ResponseBuilder.error(message="You can only create users in your managed department tree"),
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-                if not department_id:
-                    department_id = scoped_department_ids[0]
-            
-            try:
-                if department_id:
-                    # Validate department exists if provided
-                    department = self.user_service.department_repository.get_by_id(department_id)
-                    if not department:
-                        return Response(
-                            ResponseBuilder.error(message=f"Department '{department_id}' not found"),
-                            status=status.HTTP_404_NOT_FOUND
-                        )
-                else:
-                    # department_id is OPTIONAL - set to None (default NULL in User model)
-                    department = None
-            except Exception as e:
-                logger.error(f"Error resolving department: {str(e)}")
-                return Response(
-                    ResponseBuilder.error(message="Error resolving department"),
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Step 1.5: Extract role_id (OPTIONAL - default USER)
-            # âœ… NEW: role_id is optional, only validate if provided
-            role_id = request.data.get('role_id')
-            role_obj = None
-            
-            try:
-                if not role_id:
-                    # role_id is OPTIONAL - default to USER
-                    role_id = RoleIds.USER
-                else:
-                    # Validate role exists if provided
-                    import uuid
-                    # Try to parse as UUID or accept as is
-                    if isinstance(role_id, str):
-                        try:
-                            role_id = uuid.UUID(role_id)
-                        except ValueError:
-                            pass
-                
-                # Get role object (validate exists)
-                role_obj = self.user_service.role_repository.get_by_id(role_id)
-                if not role_obj:
-                    return Response(
-                        ResponseBuilder.error(message=f"Role '{role_id}' not found"),
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-            except Exception as e:
-                logger.error(f"Error resolving role: {str(e)}")
-                return Response(
-                    ResponseBuilder.error(message="Error resolving role"),
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-            
-            # Step 2: Extract account fields
-            username = request.data.get('username', '').strip()
-            email = request.data.get('email', '').strip()
-            first_name = request.data.get('first_name', '').strip()
-            last_name = request.data.get('last_name', '').strip()
-
-            missing_fields = [
-                field_name
-                for field_name, value in {
-                    'username': username,
-                    'email': email,
-                    'first_name': first_name,
-                    'last_name': last_name,
-                }.items()
-                if not value
-            ]
-            if missing_fields:
-                return Response(
-                    ResponseBuilder.error(
-                        message=f"Missing required fields: {', '.join(missing_fields)}",
-                        status_code=400,
+            return Response(
+                ResponseBuilder.created(
+                    data=created_account,
+                    message=(
+                        f"Account '{created_account['username']}' created successfully "
+                        f"with role '{created_account['role_name']}'. Email: {created_account['email_status']}"
                     ),
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            
-            # Generate temporary password
-            temp_password = self._generate_temporary_password()
-            
-            # Step 3: Call Service to create account
-            account_data = {
+                ),
+                status=status.HTTP_201_CREATED,
+            )
+
+        except PermissionDenied as e:
+            return Response(
+                ResponseBuilder.error(message=str(e)),
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        except (serializers.ValidationError, ServiceValidationError) as e:
+            detail = e.detail if hasattr(e, 'detail') else str(e)
+            return Response(
+                ResponseBuilder.error(message=f"Validation: {detail}"),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.error(f"Error creating account: {str(e)}", exc_info=True)
+            return Response(
+                ResponseBuilder.error(message=f"Error creating account: {str(e)}"),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _create_account_from_payload(self, request, payload, send_email=True):
+        """Create one account using the same validation rules for single and bulk APIs."""
+        if not hasattr(self, 'user_service'):
+            self.user_service = UserService()
+
+        department = self._resolve_create_department(request, payload.get('department_id'))
+        role_id, role_obj = self._resolve_create_role(payload.get('role_id'))
+
+        if role_obj.code == 'admin' and department is not None:
+            raise serializers.ValidationError(
+                "Admin role is company-wide and must not be assigned to a department"
+            )
+
+        username = str(payload.get('username', '')).strip()
+        email = str(payload.get('email', '')).strip()
+        first_name = str(payload.get('first_name', '')).strip()
+        last_name = str(payload.get('last_name', '')).strip()
+
+        missing_fields = [
+            field_name
+            for field_name, value in {
                 'username': username,
                 'email': email,
                 'first_name': first_name,
                 'last_name': last_name,
-                'password': temp_password
-            }
-            
-            user = self.user_service.register_account_admin(
-                account_data=account_data,
-                department=department,
-                role_id=role_id,
-                granted_by=request.user  # âœ… Track who created the account
-            )
-            
-            # Get role info
-            role_id_str = str(role_id) if role_id else None
-            role_name = role_obj.code if role_obj else "unknown"
-            
-            # Step 4: Send email
+            }.items()
+            if not value
+        ]
+        if missing_fields:
+            raise serializers.ValidationError(f"Missing required fields: {', '.join(missing_fields)}")
+
+        temp_password = self._generate_temporary_password()
+        account_data = {
+            'username': username,
+            'email': email,
+            'first_name': first_name,
+            'last_name': last_name,
+            'password': temp_password,
+        }
+
+        user = self.user_service.register_account_admin(
+            account_data=account_data,
+            department=department,
+            role_id=role_id,
+            granted_by=request.user,
+        )
+
+        email_status = "skipped"
+        if send_email:
             try:
                 from services.email_service import EmailService
                 email_sent = EmailService.send_account_creation_email(user, temp_password)
@@ -997,61 +960,81 @@ class AdminCreateAccountView(APIView):
             except Exception as e:
                 logger.error(f"Failed to send email: {str(e)}")
                 email_status = "error"
-            
-            # Step 5: Log action via Service (which uses AuditLogRepository)
-            # TODO: Fix action choices in AuditLog model to support CREATE_ACCOUNT
-            try:
-                self.user_service.audit_log_action(
-                    action='UPLOAD',  # Temp: using UPLOAD as placeholder since CREATE_ACCOUNT not in choices
-                    user_id=request.user.id,
-                    resource_id=str(user.id),
-                    query_text=f"Admin created account: {username} ({email}) with role '{role_name}'. Email status: {email_status}",
-                    ip_address=self._get_client_ip(request),
-                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500]
-                )
-            except Exception as e:
-                logger.error(f"Failed to log account creation: {str(e)}")
-            
-            # Get user profile to access department info
-            user_profile = user.user_profile
-            department_id = None
-            department_name = None
-            if user_profile and user_profile.department_id:
-                department_id = str(user_profile.department_id)
-                department_name = user_profile.department.name if user_profile.department else None
-            
-            return Response(
-                ResponseBuilder.created(
-                    data={
-                        'id': str(user.id),
-                        'username': user.username,
-                        'email': user.email,
-                        'first_name': user.first_name,
-                        'last_name': user.last_name,
-                        'status': user.status,
-                        'department_id': department_id,
-                        'department_name': department_name,
-                        'role_id': role_id_str,
-                        'role_name': role_name,
-                        'created_at': user.created_at,
-                        'email_sent': email_status == "sent"
-                    },
-                    message=f"Account '{username}' created successfully with role '{role_name}'. Email: {email_status}"
-                ),
-                status=status.HTTP_201_CREATED
-            )
-        
-        except ValidationError as e:
-            return Response(
-                ResponseBuilder.error(message=f"Validation: {str(e)}"),
-                status=status.HTTP_400_BAD_REQUEST
+
+        role_name = role_obj.code
+        try:
+            self.user_service.audit_log_action(
+                action='UPLOAD',
+                user_id=request.user.id,
+                resource_id=str(user.id),
+                query_text=f"Admin created account: {username} ({email}) with role '{role_name}'. Email status: {email_status}",
+                ip_address=self._get_client_ip(request),
+                user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
             )
         except Exception as e:
-            logger.error(f"Error creating account: {str(e)}", exc_info=True)
-            return Response(
-                ResponseBuilder.error(message=f"Error creating account: {str(e)}"),
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"Failed to log account creation: {str(e)}")
+
+        user_profile = getattr(user, 'user_profile', None)
+        department_id = None
+        department_name = None
+        if user_profile and user_profile.department_id:
+            department_id = str(user_profile.department_id)
+            department_name = user_profile.department.name if user_profile.department else None
+
+        return {
+            'id': str(user.id),
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'status': user.status,
+            'department_id': department_id,
+            'department_name': department_name,
+            'role_id': str(role_id),
+            'role_name': role_name,
+            'created_at': user.created_at,
+            'email_sent': email_status == "sent",
+            'email_status': email_status,
+        }
+
+    def _resolve_create_department(self, request, department_id):
+        department_id = str(department_id).strip() if department_id else None
+        enforce_department_scope = not _has_global_user_scope(request.user)
+
+        if enforce_department_scope:
+            scoped_department_ids = self.user_service.get_user_management_scope_department_ids(request.user)
+            if not scoped_department_ids:
+                raise PermissionDenied("Your account has no managed department scope")
+            if department_id and str(department_id) not in scoped_department_ids:
+                raise PermissionDenied("You can only create users in your managed department tree")
+            if not department_id:
+                department_id = scoped_department_ids[0]
+
+        if not department_id:
+            return None
+
+        department = self.user_service.department_repository.get_by_id(department_id)
+        if not department:
+            raise serializers.ValidationError(f"Department '{department_id}' not found")
+        return department
+
+    def _resolve_create_role(self, role_id):
+        from core.constants import RoleIds
+        import uuid
+
+        if not role_id:
+            role_id = RoleIds.USER
+        elif isinstance(role_id, str):
+            role_id = role_id.strip()
+            try:
+                role_id = uuid.UUID(role_id)
+            except ValueError:
+                pass
+
+        role_obj = self.user_service.role_repository.get_by_id(role_id)
+        if not role_obj:
+            raise serializers.ValidationError(f"Role '{role_id}' not found")
+        return role_id, role_obj
     
     def _get_client_ip(self, request):
         """Extract client IP from request headers"""
@@ -1088,3 +1071,151 @@ class AdminCreateAccountView(APIView):
         secrets.SystemRandom().shuffle(password)
         
         return ''.join(password)
+
+
+class AdminBulkCreateAccountView(AdminCreateAccountView):
+    """
+    Admin endpoint to create many accounts in one request.
+
+    POST /api/accounts/bulk-create
+    Body:
+    {
+      "accounts": [
+        {"username": "...", "email": "...", "first_name": "...", "last_name": "...", "department_id": "...", "role_id": "..."}
+      ],
+      "department_id": "optional common department",
+      "role_id": "optional common role",
+      "send_email": true
+    }
+    """
+    permission_classes = [IsAdmin]
+    required_permissions = [PermissionCodes.USER_CREATE]
+    max_bulk_accounts = 100
+
+    def post(self, request):
+        self.user_service = UserService()
+
+        raw_accounts = request.data.get('accounts', request.data.get('users'))
+        if not isinstance(raw_accounts, list):
+            return Response(
+                ResponseBuilder.error(message="Field 'accounts' must be a list"),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not raw_accounts:
+            return Response(
+                ResponseBuilder.error(message="Field 'accounts' must contain at least one account"),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(raw_accounts) > self.max_bulk_accounts:
+            return Response(
+                ResponseBuilder.error(message=f"Cannot create more than {self.max_bulk_accounts} accounts at once"),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        common_department_id = request.data.get('department_id')
+        common_role_id = request.data.get('role_id')
+        send_email = request.data.get('send_email', True)
+        send_email = False if str(send_email).lower() in ['false', '0', 'no'] else bool(send_email)
+
+        created = []
+        errors = []
+        seen_usernames = {}
+        seen_emails = {}
+
+        for index, raw_account in enumerate(raw_accounts):
+            if not isinstance(raw_account, dict):
+                errors.append({
+                    'index': index,
+                    'identifier': None,
+                    'message': "Account item must be an object",
+                })
+                continue
+
+            username = str(raw_account.get('username', '')).strip().lower()
+            email = str(raw_account.get('email', '')).strip().lower()
+            duplicate_message = None
+
+            if username:
+                if username in seen_usernames:
+                    duplicate_message = f"Duplicate username in request; first seen at index {seen_usernames[username]}"
+                else:
+                    seen_usernames[username] = index
+
+            if email and not duplicate_message:
+                if email in seen_emails:
+                    duplicate_message = f"Duplicate email in request; first seen at index {seen_emails[email]}"
+                else:
+                    seen_emails[email] = index
+
+            if duplicate_message:
+                errors.append({
+                    'index': index,
+                    'identifier': raw_account.get('email') or raw_account.get('username'),
+                    'message': duplicate_message,
+                })
+                continue
+
+            payload = dict(raw_account)
+            if not payload.get('department_id') and common_department_id:
+                payload['department_id'] = common_department_id
+            if not payload.get('role_id') and common_role_id:
+                payload['role_id'] = common_role_id
+
+            try:
+                created_account = self._create_account_from_payload(
+                    request=request,
+                    payload=payload,
+                    send_email=send_email,
+                )
+                created.append({
+                    'index': index,
+                    **created_account,
+                })
+            except PermissionDenied as e:
+                errors.append({
+                    'index': index,
+                    'identifier': raw_account.get('email') or raw_account.get('username'),
+                    'message': str(e),
+                })
+            except (serializers.ValidationError, ServiceValidationError) as e:
+                detail = e.detail if hasattr(e, 'detail') else str(e)
+                errors.append({
+                    'index': index,
+                    'identifier': raw_account.get('email') or raw_account.get('username'),
+                    'message': str(detail),
+                })
+            except Exception as e:
+                logger.error(f"Bulk account create failed at index {index}: {str(e)}", exc_info=True)
+                errors.append({
+                    'index': index,
+                    'identifier': raw_account.get('email') or raw_account.get('username'),
+                    'message': str(e),
+                })
+
+        response_data = {
+            'created': created,
+            'errors': errors,
+            'created_count': len(created),
+            'error_count': len(errors),
+            'requested_count': len(raw_accounts),
+        }
+
+        if not created:
+            return Response(
+                ResponseBuilder.error(
+                    message="No accounts were created",
+                    data=response_data,
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            ResponseBuilder.success(
+                data=response_data,
+                message=f"Created {len(created)} of {len(raw_accounts)} accounts",
+                status_code=status.HTTP_201_CREATED if not errors else 207,
+            ),
+            status=status.HTTP_201_CREATED if not errors else 207,
+        )

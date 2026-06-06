@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useMemo } from 'react'
+import { Trash2 } from 'lucide-react'
 import { useRBAC } from '@/hooks/useRBAC'
 import { Department } from '@/types/api'
 
@@ -9,6 +10,8 @@ interface DepartmentTreeProps {
     selectedId?: string | null
     onSelect?: (id: string) => void
     onEdit?: (id: string) => void
+    onDelete?: (id: string) => void
+    deletingId?: string | null
 }
 
 const getIconForName = (name: string) => {
@@ -21,10 +24,9 @@ const getIconForName = (name: string) => {
     return { icon: 'business', color: 'text-slate-600', bg: 'bg-slate-100' }
 }
 
-export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: DepartmentTreeProps) {
-    const { hasPermission, hasAnyPermission } = useRBAC()
+export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDelete, deletingId }: DepartmentTreeProps) {
+    const { hasAnyPermission } = useRBAC()
     const canUpdateDepartments = hasAnyPermission(['department_update', 'department_manage'])
-    const canDeleteDepartments = hasPermission('department_manage')
 
     const visibleDepartments = useMemo(
         () => departments.filter((d) => !d.is_deleted),
@@ -43,7 +45,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: De
         onSelect?.(id)
     }
 
-    const canEditNode = (_node: Department) => canUpdateDepartments
+    const canEditNode = () => canUpdateDepartments
 
     const renderNode = (node: Department, depth: number = 0) => {
         const children = getChildren(node.id)
@@ -74,6 +76,36 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: De
                                 <span className="material-symbols-outlined text-[10px]">{icon}</span>
                             </div>
                             <span className="text-xs font-medium text-slate-800">{node.name}</span>
+                            <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                {canEditNode() && onEdit && (
+                                    <button
+                                        type="button"
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            onEdit(node.id)
+                                        }}
+                                        className="p-1 text-slate-400 transition-colors hover:text-[#9d4300]"
+                                        title="Chỉnh sửa phòng ban"
+                                    >
+                                        <span className="material-symbols-outlined text-sm">edit</span>
+                                    </button>
+                                )}
+                                {onDelete && (
+                                    <button
+                                        type="button"
+                                        disabled={deletingId === node.id}
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            onDelete(node.id)
+                                        }}
+                                        className="p-1 text-slate-400 transition-colors hover:text-red-600 disabled:cursor-wait disabled:opacity-50"
+                                        title="Xóa phòng ban"
+                                        aria-label={`Xóa phòng ban ${node.name}`}
+                                    >
+                                        <Trash2 size={14} aria-hidden="true" />
+                                    </button>
+                                )}
+                            </div>
                         </>
                     ) : (
                         <div className="flex items-center justify-between w-full">
@@ -88,7 +120,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: De
                             </div>
 
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {canEditNode(node) && onEdit && (
+                                {canEditNode() && onEdit && (
                                     <button
                                         type="button"
                                         onClick={(event) => {
@@ -101,8 +133,20 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit }: De
                                         <span className="material-symbols-outlined text-sm">edit</span>
                                     </button>
                                 )}
-                                {canDeleteDepartments && isRoot && (
-                                    <button className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-500 transition-colors"><span className="material-symbols-outlined text-sm">delete</span></button>
+                                {onDelete && (
+                                    <button
+                                        type="button"
+                                        disabled={deletingId === node.id}
+                                        onClick={(event) => {
+                                            event.stopPropagation()
+                                            onDelete(node.id)
+                                        }}
+                                        className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-red-600 transition-colors disabled:cursor-wait disabled:opacity-50"
+                                        title="Xóa phòng ban"
+                                        aria-label={`Xóa phòng ban ${node.name}`}
+                                    >
+                                        <Trash2 size={14} aria-hidden="true" />
+                                    </button>
                                 )}
                                 {!isRoot && (
                                     <span className={`material-symbols-outlined text-lg ${isSelected ? 'text-[#9d4300]' : 'text-slate-300'}`}>

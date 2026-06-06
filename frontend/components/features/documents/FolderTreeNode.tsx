@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { Trash2 } from 'lucide-react'
 import { FolderTreeNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { DocumentRow } from './DocumentRow'
@@ -12,6 +13,8 @@ interface FolderTreeNodeProps {
     selectedDocId: string | null
     onToggleFolder: (folderId: string) => void
     onSelectDocument: (doc: FolderDocumentResponse, folder: FolderResponse) => void
+    onDeleteFolder?: (folder: FolderResponse) => void
+    deletingFolderId?: string | null
     searchQuery?: string
     departmentMap?: Record<string, string>
     showPersonal?: boolean
@@ -70,6 +73,8 @@ export function FolderTreeNodeComponent({
     selectedDocId,
     onToggleFolder,
     onSelectDocument,
+    onDeleteFolder,
+    deletingFolderId,
     searchQuery = '',
     departmentMap = {},
     showPersonal = true,
@@ -108,7 +113,6 @@ export function FolderTreeNodeComponent({
     // Hide personal-scoped folders when showPersonal is false, except for system admins.
     if (folder.access_scope === 'personal' && !showPersonal && !hasPermission('system_admin')) return null
 
-    const hasContent = children.length > 0 || (hasLoadedDocs && documents.length > 0)
     const docCount = documents.length
     const subfolderCount = toSafeCount(children.length, folder.subfolder_count)
     const documentCount = toSafeCount(docCount, folder.document_count)
@@ -172,6 +176,22 @@ export function FolderTreeNodeComponent({
 
                 {/* Counts Badges */}
                 <div className="flex items-center gap-1.5 ml-auto">
+                    {onDeleteFolder && (
+                        <button
+                            type="button"
+                            disabled={deletingFolderId === folder.id}
+                            onClick={(event) => {
+                                event.stopPropagation()
+                                onDeleteFolder(folder)
+                            }}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-slate-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100 disabled:cursor-wait disabled:opacity-50"
+                            title="Xóa thư mục"
+                            aria-label={`Xóa thư mục ${folder.name}`}
+                        >
+                            <Trash2 size={15} aria-hidden="true" />
+                        </button>
+                    )}
+
                     {/* Sub-folder Count */}
                     {subfolderCount > 0 && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-50 rounded-md text-[10px] font-bold text-blue-600 border border-blue-100">
@@ -231,6 +251,8 @@ export function FolderTreeNodeComponent({
                                     selectedDocId={selectedDocId}
                                     onToggleFolder={onToggleFolder}
                                     onSelectDocument={onSelectDocument}
+                                    onDeleteFolder={onDeleteFolder}
+                                    deletingFolderId={deletingFolderId}
                                     searchQuery={searchQuery}
                                     departmentMap={departmentMap}
                                     showPersonal={showPersonal}

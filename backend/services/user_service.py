@@ -590,6 +590,25 @@ class UserService(BaseService):
                 from apps.users.models import UserProfile
                 profile = UserProfile.objects.create(account_id=account_id)
                 logger.info(f"Created new UserProfile for account {account_id}")
+
+            requested_role = None
+            if update_data.get('role_id'):
+                requested_role = self.role_repository.get_by_id(update_data['role_id'])
+                if not requested_role:
+                    raise ValidationError(f"Role {update_data['role_id']} not found")
+
+            effective_department_id = (
+                update_data['department_id']
+                if 'department_id' in update_data
+                else profile.department_id
+            )
+            has_effective_admin_role = (
+                requested_role.code == 'admin'
+                if requested_role
+                else account.account_roles.filter(role__code='admin', is_deleted=False).exists()
+            )
+            if has_effective_admin_role and effective_department_id:
+                raise ValidationError("Admin role is company-wide and must not be assigned to a department")
             
             # STEP 2c: Update profile fields and department via profile_repository
             profile_data_to_update = {}
@@ -638,10 +657,7 @@ class UserService(BaseService):
                 role_id = update_data['role_id']
                 if role_id:
                     try:
-                        # Validate role exists via repository
-                        role = self.role_repository.get_by_id(role_id)
-                        if not role:
-                            raise ValidationError(f"Role {role_id} not found")
+                        role = requested_role
                         
                         # Get old roles via user_repository
                         old_roles = self.repository.get_all_account_roles(account_id)
@@ -796,6 +812,9 @@ class UserService(BaseService):
             account = self.get_by_id(account_id)
             if not account:
                 raise ValidationError(f"Account {account_id} not found")
+
+            if department_id and account.account_roles.filter(role__code='admin', is_deleted=False).exists():
+                raise ValidationError("Admin role is company-wide and must not be assigned to a department")
             
             # Update department via repository
             updated_profile = self.profile_repository.update_department(account_id, department_id)
@@ -838,6 +857,14 @@ class UserService(BaseService):
             user = self.get_by_id(account_id)
             if not user:
                 raise ValidationError(f"Account {account_id} not found")
+
+            new_role = self.role_repository.get_by_id(new_role_id)
+            if not new_role:
+                raise ValidationError(f"Role {new_role_id} not found")
+
+            profile = self.profile_repository.get_profile_by_account_id(account_id)
+            if new_role.code == 'admin' and profile and profile.department_id:
+                raise ValidationError("Admin role is company-wide and must not be assigned to a department")
             
             # Delete old assignment via repository
             if not self.repository.delete_account_role(account_id, old_role_id):
@@ -888,6 +915,14 @@ class UserService(BaseService):
             user = self.get_by_id(account_id)
             if not user:
                 raise ValidationError(f"Account {account_id} not found")
+
+            role = self.role_repository.get_by_id(role_id)
+            if not role:
+                raise ValidationError(f"Role {role_id} not found")
+
+            profile = self.profile_repository.get_profile_by_account_id(account_id)
+            if role.code == 'admin' and profile and profile.department_id:
+                raise ValidationError("Admin role is company-wide and must not be assigned to a department")
             
             # Check if role already assigned via repository
             existing = self.repository.get_account_role(account_id, role_id)
@@ -1236,6 +1271,12 @@ class UserService(BaseService):
             
             if self.repository.check_email_exists(email):
                 raise ValidationError(f"Email '{email}' already exists")
+
+            if not role_id:
+                role_id = RoleIds.USER
+            role = self.role_repository.get_by_id(role_id)
+            if role and role.code == 'admin' and department is not None:
+                raise ValidationError("Admin role is company-wide and must not be assigned to a department")
             
             # Create user via repository
             user = self.Account.objects.create_user(

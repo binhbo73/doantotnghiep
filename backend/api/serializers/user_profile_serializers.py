@@ -10,6 +10,7 @@ Used in:
 """
 
 from rest_framework import serializers
+from django.db.models import Q
 from apps.users.models import UserProfile, Department, Account
 from .user_serializers import AccountSerializer, DepartmentSerializer
 
@@ -84,6 +85,7 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
     is_active = serializers.SerializerMethodField()
     roles = serializers.SerializerMethodField()
     permission_codes = serializers.SerializerMethodField()
+    managed_departments = serializers.SerializerMethodField()
     date_joined = serializers.SerializerMethodField()
     last_login = serializers.SerializerMethodField()
     
@@ -97,7 +99,7 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
             # Account Fields (Status & Activity)
             'status', 'is_active',
             # Roles & Permissions
-            'roles', 'permission_codes',
+            'roles', 'permission_codes', 'managed_departments',
             # Timestamps
             'created_at', 'updated_at', 'date_joined', 'last_login'
         ]
@@ -134,6 +136,25 @@ class EnhancedUserProfileReadSerializer(serializers.ModelSerializer):
     def get_department_name(self, obj):
         """Get department name if exists"""
         return obj.department.name if obj.department else None
+
+    def get_managed_departments(self, obj):
+        """Get departments where this account is assigned as manager."""
+        if not obj.account_id:
+            return []
+
+        departments = Department.objects.filter(
+            Q(manager_id=obj.account_id) | Q(managers__id=obj.account_id),
+            is_deleted=False,
+        ).distinct().order_by('name')
+
+        return [
+            {
+                'id': str(dept.id),
+                'name': dept.name,
+                'parent_id': str(dept.parent_id) if dept.parent_id else None,
+            }
+            for dept in departments
+        ]
     
     # ============================================================
     # ACCOUNT FIELDS (Status & Activity)

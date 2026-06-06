@@ -31,6 +31,7 @@ from django.utils import timezone
 from django.db.models import Q
 
 from repositories.department_repository import DepartmentRepository
+from repositories.role_repository import RoleRepository
 from repositories.user_repository import UserRepository
 from services.audit_service import AuditService
 from services.base_service import BaseService
@@ -72,10 +73,79 @@ class DepartmentService(BaseService):
         super().__init__()
         self.department_repo = self.repository
         self.user_repo = UserRepository()
+        self.role_repo = RoleRepository()
         self.audit_service = AuditService()
         # Profile repository to update user's department when assigned as manager
         from repositories.user_profile_repository import UserProfileRepository
         self.profile_repository = UserProfileRepository()
+
+    def _ensure_department_manager_role(self, account_id, granted_by=None) -> None:
+        """
+        Ensure the selected department manager has the manager role.
+
+        Admin is company-wide and must not be attached to a department. When a
+        regular user becomes a department manager, replace the basic user role
+        with manager while preserving any custom roles.
+        """
+        manager_role = self.role_repo.get_by_code('manager')
+        if not manager_role:
+            raise ValidationError("Manager role was not found in the database")
+
+        active_roles = self.user_repo.get_all_account_roles(account_id)
+        has_manager_role = False
+        user_role_ids = []
+
+        for assignment in active_roles:
+            role_code = getattr(assignment.role, 'code', None)
+            if role_code == 'admin':
+                raise ValidationError("Admin role is company-wide and must not be assigned as a department manager")
+            if role_code == 'manager':
+                has_manager_role = True
+            if role_code == 'user':
+                user_role_ids.append(assignment.role_id)
+
+        for role_id in user_role_ids:
+            self.user_repo.delete_account_role(account_id, role_id)
+
+        if not has_manager_role:
+            granted_by_account = None
+            if granted_by:
+                try:
+                    granted_by_account = self.user_repo.get_by_id(granted_by)
+                except Exception:
+                    granted_by_account = None
+
+            self.user_repo.create_account_role(
+                account_id=account_id,
+                role_id=manager_role.id,
+                granted_by=granted_by_account,
+                notes='Auto assigned when set as department manager',
+            )
+
+        logger.info(f"Ensured manager role for department manager account: {account_id}")
+
+    def _sync_removed_manager_profile_department(self, account_id, removed_department_id) -> None:
+        """
+        Clear or move the old manager's profile department after manager update.
+
+        A profile can only store one department. If the removed manager's profile
+        points to the department they no longer manage, move it to another
+        department they still manage, otherwise clear it.
+        """
+        profile = self.profile_repository.get_profile_by_account_id(account_id)
+        if not profile or str(profile.department_id) != str(removed_department_id):
+            return
+
+        remaining_department = Department.objects.filter(
+            Q(manager_id=account_id) | Q(managers__id=account_id),
+            is_deleted=False,
+        ).exclude(id=removed_department_id).distinct().order_by('name').first()
+
+        next_department_id = remaining_department.id if remaining_department else None
+        self.profile_repository.update_department(account_id, next_department_id)
+        logger.info(
+            f"Synced removed manager profile department: {account_id} -> {next_department_id}"
+        )
     
     # ============================================================================
     # TREE STRUCTURE
@@ -340,13 +410,11 @@ class DepartmentService(BaseService):
             )
             # Keep the legacy manager FK and the new M2M relation in sync.
             if manager is not None:
-                try:
-                    dept.managers.add(manager)
-                    logger.info(f"Added manager to department.managers: {manager.id} -> {dept.id}")
-                    self.profile_repository.update_department(manager.id, dept.id)
-                    logger.info(f"Assigned manager's profile department updated: {manager.id} → {dept.id}")
-                except Exception as e:
-                    logger.warning(f"Failed to update manager's profile department for {manager.id}: {e}")
+                dept.managers.add(manager)
+                logger.info(f"Added manager to department.managers: {manager.id} -> {dept.id}")
+                self.profile_repository.update_department(manager.id, dept.id)
+                logger.info(f"Assigned manager's profile department updated: {manager.id} -> {dept.id}")
+                self._ensure_department_manager_role(manager.id, granted_by=requested_by_user_id)
             
             return dept
         
@@ -398,6 +466,7 @@ class DepartmentService(BaseService):
             dept = self.department_repo.get_by_id(dept_id)
             if not dept:
                 raise NotFoundError(f"Department {dept_id} not found")
+            previous_manager_id = str(dept.manager_id) if dept.manager_id else None
             
             # ========== STEP 2: VALIDATE UPDATES ==========
             updates = {}
@@ -423,7 +492,6 @@ class DepartmentService(BaseService):
                     updates['manager_id'] = None
             
             # ========== STEP 3: UPDATE ==========
-                    previous_manager_id = str(dept.manager_id) if dept.manager_id else None
             dept = self.department_repo.update(dept_id, **updates)
             
             logger.info(f"Department updated: {dept_id} with updates: {updates}")
@@ -440,26 +508,17 @@ class DepartmentService(BaseService):
 
             # If manager changed to a specific user, update their profile.department
             if 'manager_id' in updates:
-                try:
-                    new_manager_id = updates.get('manager_id')
-                    if previous_manager_id:
-                        try:
-                            dept.managers.remove(previous_manager_id)
-                        except Exception:
-                            logger.debug("Could not remove prior manager from dept.managers")
+                new_manager_id = updates.get('manager_id')
+                if previous_manager_id:
+                    dept.managers.remove(previous_manager_id)
+                    self._sync_removed_manager_profile_department(previous_manager_id, dept.id)
 
-                    if new_manager_id:
-                        try:
-                            new_manager = self.user_repo.get_by_id(new_manager_id)
-                            if new_manager:
-                                dept.managers.add(new_manager)
-                        except Exception:
-                            logger.debug("Could not add to dept.managers during update (maybe migrations not applied yet)")
-
-                        self.profile_repository.update_department(new_manager_id, dept.id)
-                        logger.info(f"Updated manager's profile department: {new_manager_id} → {dept.id}")
-                except Exception as e:
-                    logger.warning(f"Failed to update manager's profile department for {updates.get('manager_id')}: {e}")
+                if new_manager_id:
+                    new_manager = self.user_repo.get_by_id(new_manager_id)
+                    dept.managers.add(new_manager)
+                    self.profile_repository.update_department(new_manager_id, dept.id)
+                    logger.info(f"Updated manager's profile department: {new_manager_id} -> {dept.id}")
+                    self._ensure_department_manager_role(new_manager_id, granted_by=requested_by_user_id)
             
             return dept
         
@@ -492,15 +551,15 @@ class DepartmentService(BaseService):
         
         Workflow:
         1. Check department exists
-        2. Check for users in this department
-        3. Check for sub-departments
-        4. Soft delete (is_deleted=True, deleted_at=now)
-        5. Log audit
+        2. Check for direct users in this department
+        3. Check for active child departments
+        4. Check for active folders and documents
+        5. Soft delete only when the department is empty
+        6. Log audit
         
         Note:
-        - Users assigned to this department MUST be re-assigned first
-        - Sub-departments will be kept (not deleted) but become orphans
-        - Option: Could cascade delete sub-departments if needed
+        - This is a safe delete: no users, child departments, folders, or
+          documents are moved, detached, archived, or deleted automatically.
         """
         try:
             # ========== STEP 1: GET DEPARTMENT ==========
@@ -508,42 +567,65 @@ class DepartmentService(BaseService):
             if not dept:
                 raise NotFoundError(f"Department {dept_id} not found")
             
-            # ========== STEP 2: CHECK FOR USERS ==========
+            # ========== STEP 2: CHECK ALL DEPENDENCIES ==========
+            from apps.documents.models import Document
+
             users_in_dept = dept.get_all_members(include_subdepts=False).count()
-            
-            if users_in_dept > 0:
-                raise ConflictError(
-                    f"Cannot delete department '{dept.name}' - {users_in_dept} user(s) assigned. "
-                    f"Please re-assign users to another department first."
-                )
-            
-            # ========== STEP 3: CHECK SUB-DEPARTMENTS (WARNING, NOT ERROR) ==========
             sub_depts = dept.sub_departments.filter(is_deleted=False).count()
-            
-            if sub_depts > 0:
-                logger.warning(
-                    f"Deleting department {dept_id} has {sub_depts} sub-departments. "
-                    f"Sub-departments will become orphans (parent_id=NULL)."
+            folders_in_dept = dept.folders.filter(is_deleted=False).count()
+            documents_in_dept = Document.objects.filter(
+                Q(department=dept) | Q(folder__department=dept),
+                is_deleted=False,
+            ).distinct().count()
+
+            blockers = {
+                'users': users_in_dept,
+                'child_departments': sub_depts,
+                'folders': folders_in_dept,
+                'documents': documents_in_dept,
+            }
+            active_blockers = {
+                key: count for key, count in blockers.items() if count > 0
+            }
+
+            if active_blockers:
+                blocker_labels = {
+                    'users': 'direct user(s)',
+                    'child_departments': 'child department(s)',
+                    'folders': 'folder(s)',
+                    'documents': 'document(s)',
+                }
+                blocker_summary = ', '.join(
+                    f"{count} {blocker_labels[key]}"
+                    for key, count in active_blockers.items()
                 )
-                
-                # Option: Could cascade delete or reparent
-                # For now, just log the warning and let them become orphans
-            
-            # ========== STEP 4: SOFT DELETE ==========
+                raise ConflictError(
+                    (
+                        f"Cannot delete department '{dept.name}' because it still contains "
+                        f"{blocker_summary}. Reassign or remove these resources first."
+                    ),
+                    detail={
+                        'department_id': str(dept.id),
+                        'department_name': dept.name,
+                        'blockers': blockers,
+                    },
+                )
+
+            # ========== STEP 3: SOFT DELETE ==========
             dept.is_deleted = True
             dept.deleted_at = timezone.now()
             dept.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
             
             logger.info(f"Department soft-deleted: {dept_id} (name={dept.name})")
             
-            # ========== STEP 5: AUDIT LOG ==========
+            # ========== STEP 4: AUDIT LOG ==========
             self.audit_log_action(
                 action='DELETE',
                 user_id=requested_by_user_id,
                 resource_id=str(dept_id),
                 resource_type='Department',
                 query_text=f"Deleted department: {dept.name}",
-                details={'users_affected': users_in_dept, 'sub_departments': sub_depts}
+                details={'safe_delete_checks': blockers}
             )
         
         except (NotFoundError, ConflictError, BusinessLogicError, ValidationError):

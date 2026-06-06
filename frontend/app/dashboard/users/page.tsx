@@ -11,6 +11,7 @@ import {
     getAllUsers,
     getUserById,
     createUser,
+    createUsersBulk,
     updateUser,
     deleteUser,
     resetUserPassword,
@@ -29,6 +30,7 @@ import {
     LoadingSkeleton,
     type FilterOptions,
     type CreateUserFormData,
+    type CreateUsersBulkFormData,
 } from '@/components/features/users'
 import { useRBAC } from '@/hooks/useRBAC'
 import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
@@ -138,12 +140,12 @@ export default function UsersPage() {
                     first_name: data.first_name,
                     last_name: data.last_name,
                     full_name: `${data.first_name} ${data.last_name}`.trim(),
-                    department_id: data.department_id,
+                    department_id: data.role_code === 'admin' ? null : data.department_id || null,
                     role_id: data.role_id,
                 }
                 // Filter out empty values
                 const filteredPayload = Object.fromEntries(
-                    Object.entries(updatePayload).filter(([_, value]) => value !== '' && value !== null)
+                    Object.entries(updatePayload).filter(([key, value]) => value !== '' && (value !== null || key === 'department_id'))
                 ) as UpdateUserPayload
                 await updateUser(editingUser.id, filteredPayload)
                 setSuccess('Người dùng đã được cập nhật thành công')
@@ -173,6 +175,44 @@ export default function UsersPage() {
             const message = err instanceof Error ? err.message : 'Failed to save user'
             setError(message)
             console.error('Error saving user:', err)
+        } finally {
+            setModalLoading(false)
+        }
+    }
+
+    const handleBulkUserSubmit = async (data: CreateUsersBulkFormData) => {
+        if (!canCreateUser) throw new Error('Báº¡n khÃ´ng cÃ³ quyá»n táº¡o ngÆ°á»i dÃ¹ng')
+
+        try {
+            setModalLoading(true)
+            const result = await createUsersBulk({
+                accounts: data.accounts,
+                department_id: data.role_code === 'admin' ? undefined : data.department_id || undefined,
+                role_id: data.role_id || undefined,
+                send_email: true,
+            })
+
+            const errorSuffix = result.error_count > 0 ? `, ${result.error_count} lỗi` : ''
+            setSuccess(`Đã tạo ${result.created_count}/${result.requested_count} tài khoản${errorSuffix}`)
+
+            if (result.error_count > 0) {
+                const firstErrors = result.errors
+                    .slice(0, 3)
+                    .map((item) => `Dòng ${item.index + 1}: ${item.message}`)
+                    .join('; ')
+                setError(firstErrors)
+            }
+
+            setIsModalOpen(false)
+            setEditingUser(null)
+            setCurrentPage(1)
+            fetchUsers()
+            setTimeout(() => setSuccess(null), 3000)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to create users'
+            setError(message)
+            console.error('Error bulk creating users:', err)
+            throw err
         } finally {
             setModalLoading(false)
         }
@@ -419,6 +459,7 @@ export default function UsersPage() {
                         setEditingUser(null)
                     }}
                     onSubmit={handleUserSubmit}
+                    onBulkSubmit={handleBulkUserSubmit}
                     editingUser={editingUser}
                     loading={modalLoading}
                 />

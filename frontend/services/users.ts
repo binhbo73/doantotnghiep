@@ -21,6 +21,11 @@ export interface User {
     birthday: string | null
     department_name: string | null
     department_id?: string
+    managed_departments?: Array<{
+        id: string
+        name: string
+        parent_id: string | null
+    }>
     metadata: Record<string, unknown>
     status: 'active' | 'blocked' | 'inactive'
     is_active: boolean
@@ -69,8 +74,42 @@ export interface CreateUserPayload {
     email: string
     first_name: string
     last_name: string
-    department_id: string
-    role_id: string
+    department_id?: string
+    role_id?: string
+}
+
+export interface BulkCreateUserPayload {
+    accounts: CreateUserPayload[]
+    department_id?: string
+    role_id?: string
+    send_email?: boolean
+}
+
+export interface BulkCreateUserResult {
+    created: Array<{
+        index: number
+        id: string
+        username: string
+        email: string
+        first_name: string
+        last_name: string
+        status: string
+        department_id: string | null
+        department_name: string | null
+        role_id: string
+        role_name: string
+        created_at: string
+        email_sent: boolean
+        email_status: string
+    }>
+    errors: Array<{
+        index: number
+        identifier: string | null
+        message: string
+    }>
+    created_count: number
+    error_count: number
+    requested_count: number
 }
 
 /**
@@ -81,7 +120,7 @@ export interface UpdateUserPayload {
     first_name?: string
     last_name?: string
     full_name?: string
-    department_id?: string
+    department_id?: string | null
     role_id?: string
     is_active?: boolean
 }
@@ -187,6 +226,30 @@ export async function createUser(payload: CreateUserPayload): Promise<User> {
     } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to create user'
         console.error('❌ Error creating user:', err)
+        throw new Error(message)
+    }
+}
+
+/**
+ * Create many users in one request
+ * POST /api/v1/accounts/bulk-create
+ */
+export async function createUsersBulk(payload: BulkCreateUserPayload): Promise<BulkCreateUserResult> {
+    try {
+        const response = await api.post<{
+            success: boolean
+            message?: string
+            data: BulkCreateUserResult
+        }>('/accounts/bulk-create', payload)
+
+        if (!response.success && !response.data) {
+            throw new Error(response.message || 'Failed to create users')
+        }
+
+        return response.data
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to create users'
+        console.error('âŒ Error bulk creating users:', err)
         throw new Error(message)
     }
 }

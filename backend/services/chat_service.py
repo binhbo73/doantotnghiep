@@ -55,7 +55,7 @@ class ChatService:
     """
 
     # Universal RAG prompt: strict grounding, complete extraction when asked, compact otherwise.
-    RAG_SYSTEM_PROMPT = """Bạn là trợ lý RAG. Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp.Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp hoặc tài liệu thuộc phạm vi của người.
+    RAG_SYSTEM_PROMPT = """Bạn là trợ lý RAG cho tài liệu nội bộ. Chỉ trả lời dựa trên tài liệu tham khảo được cung cấp.
 
 Nguyên tắc bắt buộc:
 1. Chỉ dùng "NỘI DUNG TÀI LIỆU THAM KHẢO" để trả lời. Không dùng kiến thức bên ngoài, không suy đoán.
@@ -64,6 +64,8 @@ Nguyên tắc bắt buộc:
 4. Mỗi ý quan trọng phải có trích dẫn đúng dạng: [Nguồn: tên_file, trang X] [1]. Số [1], [2] phải đúng số NGUỒN trong tài liệu tham khảo.
 5. Luôn viết tiếng Việt có dấu. Không viết không dấu như "Co anh phu hop" hoặc "Nguon".
 6. Nếu câu hỏi yêu cầu xem/hiển thị ảnh và phần "THÔNG TIN HÌNH ẢNH TRONG TÀI LIỆU" có ảnh phù hợp, trả lời ngắn gọn rằng có ảnh phù hợp và nêu vị trí ảnh. Ảnh sẽ được giao diện hiển thị, không cần tạo markdown image.
+7. Với tài liệu nội bộ dạng quy định, quy chế, nội quy, điều khoản, chính sách, quy trình, biểu mẫu, bảng lương, KPI hoặc thống kê: phải giữ đúng cấu trúc nguồn. Không tự rút gọn, không bỏ bullet/hàng/cột nếu người dùng hỏi "các", "những", "nội dung", "bao gồm", "gồm", "quy định", "quy chế", "điều khoản", "biểu mẫu", "bảng".
+8. Nếu nguồn chỉ có một phần nội dung liên quan, trả lời phần có bằng chứng và nói rõ "Tài liệu tham khảo hiện chỉ cung cấp phần này". Không tự bổ sung phần còn thiếu.
 
 Cách làm việc:
 1. Tự xác định kiểu câu hỏi:
@@ -72,7 +74,7 @@ Cách làm việc:
    - So sánh: nếu điểm giống, khác, tiêu chí so sánh có trong tài liệu thì trình bày theo bảng hoặc bullet.
    - Quy trình/các bước: giữ đúng thứ tự bước trong tài liệu.
     - Số liệu/bảng biểu: chép đúng số, đơn vị, điều kiện, mốc thời gian.
-    - Bảng dữ liệu / hàng cột: nếu tài liệu có bảng (dạng |cột1|cột2| hoặc bảng HTML/Excel/DOCX), PHẢI trả lời bằng bảng markdown giữ NGUYÊN cấu trúc |cột|cột|, không chuyển thành bullet hay paragraph. Giữ tên cột và số liệu đúng như tài liệu. Nếu bảng dài, trả lời toàn bộ bảng, không cắt xén.
+    - Bảng dữ liệu / hàng cột: nếu tài liệu có bảng (dạng |cột1|cột2| hoặc bảng HTML/Excel/DOCX), PHẢI trả lời bằng bảng markdown giữ NGUYÊN cấu trúc |cột|cột|, không chuyển thành bullet hay paragraph. Giữ tên cột và số liệu đúng như tài liệu. Nếu bảng dài, trả lời toàn bộ bảng theo phần nguồn được cung cấp, không cắt xén phần đã có trong nguồn.
     - Nếu bảng trong nguồn bị parse thành text phẳng, các dòng bắt đầu bằng số thứ tự như "1 Email ...", "2 Mật khẩu ..." là CÁC HÀNG DỮ LIỆU. Không được dùng số bảng (ví dụ Bảng 10, Bảng 34) làm STT của hàng. Không được tạo bảng chỉ có header trống khi nguồn có dòng dữ liệu.
     - Thuật ngữ / định nghĩa: chỉ khi người dùng hỏi ý nghĩa của một khái niệm thì mới trả lời theo kiểu giải thích ngắn, không lẫn với role bảng.
    - Hỏi xem ảnh/hình/minh chứng: trả lời ngắn gọn "Có ảnh phù hợp" kèm vị trí ảnh và trích dẫn; không lặp lại mô tả caption dài nếu không cần.
@@ -220,11 +222,11 @@ Cách làm việc:
         if attribute_request.get('subject'):
             return attribute_request.get('heading') or attribute_request['subject']
 
-        if not any(marker in query_norm for marker in ('noi dung', 'toan bo', 'day du', 'muc', 'phan', 'bang', 'danh sach', 'xem', 'lay', 'trich', 'section', 'chuong')):
+        if not any(marker in query_norm for marker in ('noi dung', 'toan bo', 'day du', 'muc', 'phan', 'bang', 'danh sach', 'section', 'chuong')):
             return ''
 
         heading = ''
-        for marker in ('noi dung', 'bang', 'danh sach', 'muc', 'phan', 'section', 'chuong', 'xem', 'lay', 'trich'):
+        for marker in ('noi dung', 'bang', 'danh sach', 'muc', 'phan', 'section', 'chuong'):
             marker_text = f' {marker} '
             if marker_text in f' {query_norm} ':
                 heading = query_norm.split(marker, 1)[1]
@@ -1999,7 +2001,47 @@ Cách làm việc:
             r'\b(cua|cho|ve)\b.*\b(chuc nang|nhiem vu|quyen han|trach nhiem|vai tro|chuc trach)\b',
             r'^\s*\d+\s*[/.)-]\s*',
         ]
-        return any(re.search(pattern, q) for pattern in comprehensive_patterns)
+        return (
+            any(re.search(pattern, q) for pattern in comprehensive_patterns)
+            or self._is_internal_document_query(query)
+        )
+
+    def _is_internal_document_query(self, query: str) -> bool:
+        """Detect common internal-document terms that usually require broad evidence."""
+        q = self._normalize_query_text(query)
+        if not q:
+            return False
+        internal_terms = (
+            'quy dinh', 'quy che', 'noi quy', 'dieu khoan', 'chinh sach',
+            'quy trinh', 'thu tuc', 'bieu mau', 'mau', 'phieu', 'bien ban',
+            'quyet dinh', 'thong bao', 'luong', 'thuong', 'phu cap',
+            'khau tru', 'thuc linh', 'kpi', 'phuc loi', 'nang luong',
+            'tang luong', 'bang luong', 'thong ke', 'so lieu', 'bao cao',
+            'dinh muc', 'ma tran', 'trach nhiem', 'quyen han',
+        )
+        return any(term in q for term in internal_terms)
+
+    def _is_internal_table_query(self, query: str) -> bool:
+        """Detect salary/KPI/statistical/table requests that should preserve rows and columns."""
+        q = self._normalize_query_text(query)
+        if not q:
+            return False
+        table_patterns = (
+            r'\bbang\s+(?:luong|kpi|thong tin|du lieu|so lieu)\b',
+            r'\b(?:kpi|thong ke|so lieu|du lieu|ma tran)\b',
+            r'\b(?:cot|column)\b',
+            r'\b(?:hang|dong|row)\s+\d+\b',
+            r'\b(?:hang|dong|row)\b.*\b(?:bang|excel|du lieu|so lieu)\b',
+            r'\b(?:luong co ban|phu cap|khau tru|thuc linh)\b',
+        )
+        return any(re.search(pattern, q) for pattern in table_patterns)
+
+    def _is_internal_procedure_query(self, query: str) -> bool:
+        """Detect internal procedure/process requests."""
+        q = self._normalize_query_text(query)
+        if not q:
+            return False
+        return any(term in q for term in ('quy trinh', 'cac buoc', 'tung buoc', 'trinh tu', 'thu tuc', 'luu do', 'cach tinh'))
 
     def _is_section_content_query(self, query: str) -> bool:
         """True when the user asks to view/extract the content of a named heading."""
@@ -2043,13 +2085,38 @@ Cách làm việc:
         # and we let the vector search + AI citations do their job to pick the RIGHT one.
         return has_list_intent and has_image
 
+    def _get_effective_query_intent(self, query: str):
+        """Return intent/config after applying local comprehensive-query heuristics."""
+        intent, config = self._get_query_intent(query)
+        from services.retrieval.query_intent import QueryIntent
+
+        classifier = self._get_intent_classifier()
+        if self._is_internal_table_query(query):
+            return QueryIntent.TABLE, classifier.get_retrieval_config(QueryIntent.TABLE)
+        if self._is_internal_procedure_query(query):
+            return QueryIntent.PROCEDURAL, classifier.get_retrieval_config(QueryIntent.PROCEDURAL)
+        if not self._is_list_style_query(query):
+            return intent, config
+
+        if intent in (QueryIntent.FACTUAL, QueryIntent.DEFINITIONAL):
+            return QueryIntent.LIST, classifier.get_retrieval_config(QueryIntent.LIST)
+        return intent, config
+
+    def _get_forced_intent_value(self, query: str) -> str:
+        """Value passed to QueryRouter so routing and context sizing agree."""
+        try:
+            intent, _config = self._get_effective_query_intent(query)
+            return getattr(intent, 'value', str(intent))
+        except Exception:
+            return ''
+
     def _get_rag_top_k(self, query: str, default_top_k: int) -> int:
         """Intent-driven top_k: use QueryIntentClassifier for adaptive depth."""
         if self._is_section_content_query(query):
             base_top_k = int(getattr(settings, 'RAG_RETRIEVAL_TOP_K', default_top_k))
             return int(getattr(settings, 'RAG_RETRIEVAL_TOP_K_SECTION', max(base_top_k, 12)))
         try:
-            _intent, config = self._get_query_intent(query)
+            _intent, config = self._get_effective_query_intent(query)
             return config.top_k
         except Exception:
             pass
@@ -2064,7 +2131,7 @@ Cách làm việc:
             default_tokens = 2048 if context_window >= 6144 else 1536
             return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_SECTION', default_tokens))
         try:
-            _intent, config = self._get_query_intent(query)
+            _intent, config = self._get_effective_query_intent(query)
             from services.retrieval.query_intent import QueryIntent
             if _intent == QueryIntent.LIST:
                 return int(getattr(settings, 'RAG_LLM_MAX_TOKENS_LIST', 2048))
@@ -2088,8 +2155,19 @@ Cách làm việc:
             list_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_LIST', 3000))
             return int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_SECTION', max(list_chars, 5000)))
         try:
-            _intent, config = self._get_query_intent(query)
-            return config.snippet_chars
+            _intent, config = self._get_effective_query_intent(query)
+            snippet_chars = int(config.snippet_chars)
+            if self._is_internal_table_query(query):
+                return max(
+                    snippet_chars,
+                    int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_INTERNAL_TABLE', 5000)),
+                )
+            if self._is_internal_document_query(query):
+                return max(
+                    snippet_chars,
+                    int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS_INTERNAL', 3500)),
+                )
+            return snippet_chars
         except Exception:
             pass
         base_chars = int(getattr(settings, 'RAG_CONTEXT_SNIPPET_CHARS', 1400))
@@ -2118,6 +2196,10 @@ Cách làm việc:
         list_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS_LIST', max(base_chars, 7000)))
         if self._is_section_content_query(query):
             configured_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS_SECTION', max(list_chars, 12000)))
+        elif self._is_internal_table_query(query):
+            configured_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS_INTERNAL_TABLE', max(list_chars, 12000)))
+        elif self._is_internal_document_query(query):
+            configured_chars = int(getattr(settings, 'RAG_CONTEXT_MAX_CHARS_INTERNAL', max(list_chars, 10000)))
         else:
             configured_chars = list_chars if self._is_list_style_query(query) else base_chars
         token_budget = self._get_context_token_budget(query)
@@ -2133,7 +2215,7 @@ Cách làm việc:
             max_chunks = int(getattr(settings, 'RAG_CONTEXT_MAX_CHUNKS_SECTION', 24))
             return max(0, before), max(0, after), max(1, max_chunks)
         try:
-            _intent, config = self._get_query_intent(query)
+            _intent, config = self._get_effective_query_intent(query)
             return config.neighbor_before, config.neighbor_after, config.max_context_chunks
         except Exception:
             pass
@@ -3048,6 +3130,7 @@ Cách làm việc:
                     'explicit_document_ids': explicit_doc_ids or [],
                     'folder_ids': folder_ids or [],
                     'rag_mode': rag_mode or 'fast',
+                    'forced_intent': self._get_forced_intent_value(query),
                 }
                 if current_page:
                     user_context['current_page'] = current_page
@@ -3097,7 +3180,11 @@ Cách làm việc:
                 logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
                 try:
                     router = self._get_router()
-                    re_user_context = {'document_ids': resolved_doc_ids, 'rag_mode': rag_mode or 'fast'}
+                    re_user_context = {
+                        'document_ids': resolved_doc_ids,
+                        'rag_mode': rag_mode or 'fast',
+                        'forced_intent': self._get_forced_intent_value(query),
+                    }
                     if current_page:
                         re_user_context['current_page'] = current_page
                     re_candidates = router.route(

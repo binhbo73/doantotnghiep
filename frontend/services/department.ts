@@ -7,6 +7,31 @@ export interface DepartmentQueryParams {
     search?: string
 }
 
+export interface AddDepartmentUsersPayload {
+    account_ids: string[]
+    reason?: string
+}
+
+export interface AddDepartmentUsersResult {
+    department_id: string
+    department_name: string
+    added: Array<{
+        index: number
+        account_id: string
+        profile_id: string
+        department_id: string
+        department_name: string
+    }>
+    errors: Array<{
+        index: number
+        account_id: string
+        message: string
+    }>
+    added_count: number
+    error_count: number
+    requested_count: number
+}
+
 export async function fetchDepartments(params?: DepartmentQueryParams): Promise<ApiResponseWithPagination<Department>> {
     try {
         const page = params?.page || 1
@@ -68,4 +93,27 @@ export async function updateDepartment(
 
 export async function deleteDepartment(id: string) {
     await api.delete(`/departments/${id}`)
+}
+
+export async function addUsersToDepartment(
+    departmentId: string,
+    payload: AddDepartmentUsersPayload
+): Promise<AddDepartmentUsersResult> {
+    try {
+        const response = await api.post<{
+            success: boolean
+            message?: string
+            data?: AddDepartmentUsersResult
+        }>(`/departments/${departmentId}/users`, payload)
+
+        if (!response.success || !response.data) {
+            throw new Error(response.message || 'Failed to add users to department')
+        }
+
+        return response.data
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to add users to department'
+        console.error('Error adding users to department:', err)
+        throw new Error(message)
+    }
 }

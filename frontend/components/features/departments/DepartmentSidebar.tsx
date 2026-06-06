@@ -2,6 +2,7 @@
 
 import React from 'react'
 import Link from 'next/link'
+import { UserPlus } from 'lucide-react'
 import { Department } from '@/types/api'
 import { useDepartmentDetail } from '@/hooks/departments/useDepartmentDetail'
 import { useRBAC } from '@/hooks/useRBAC'
@@ -11,12 +12,14 @@ interface DepartmentSidebarProps {
     department: Department | null
     onClose?: () => void
     onEdit?: () => void
+    onAddUsers?: () => void
 }
 
 export function DepartmentSidebar({
     department,
     onClose,
     onEdit,
+    onAddUsers,
 }: DepartmentSidebarProps) {
     const { hasPermission } = useRBAC()
     const canDownloadDocuments = hasPermission('document_download')
@@ -118,7 +121,20 @@ export function DepartmentSidebar({
             <div className="mb-5">
                 <div className="flex justify-between items-center mb-2">
                     <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Thành viên ({deptDetail?.member_count || member_count})</h3>
-                    <Link className="text-[10px] font-bold text-[#9d4300] hover:underline" href={`/dashboard/departments/${department.id}`}>Xem tất cả</Link>
+                    <div className="flex items-center gap-2">
+                        {onAddUsers && (
+                            <button
+                                type="button"
+                                onClick={onAddUsers}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold text-[#9d4300] hover:bg-orange-50 transition-colors"
+                                title="Thêm người dùng vào phòng ban"
+                            >
+                                <UserPlus className="h-3.5 w-3.5" />
+                                <span>Thêm</span>
+                            </button>
+                        )}
+                        <Link className="text-[10px] font-bold text-[#9d4300] hover:underline" href={`/dashboard/departments/${department.id}`}>Xem tất cả</Link>
+                    </div>
                 </div>
                 <div className="flex -space-x-2">
                     {loading ? (

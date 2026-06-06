@@ -215,13 +215,13 @@ class UserProfileRepository:
         return profile
     
     @transaction.atomic
-    def update_department(self, account_id: UUID, department_id: UUID) -> object:
+    def update_department(self, account_id: UUID, department_id: UUID | None) -> object:
         """
         Update department for UserProfile.
         
         Args:
             account_id: UUID of Account
-            department_id: UUID of new Department
+            department_id: UUID of new Department, or None to clear department
         
         Returns:
             Updated UserProfile object
@@ -234,18 +234,20 @@ class UserProfileRepository:
         if not profile:
             raise ValueError(f"UserProfile not found for account: {account_id}")
         
-        # Verify department exists
-        Department = apps.get_model('users', 'Department')
-        try:
-            department = Department.objects.get(id=department_id, is_deleted=False)
-        except Department.DoesNotExist:
-            raise ValueError(f"Department {department_id} not found")
+        department = None
+        if department_id:
+            # Verify department exists
+            Department = apps.get_model('users', 'Department')
+            try:
+                department = Department.objects.get(id=department_id, is_deleted=False)
+            except Department.DoesNotExist:
+                raise ValueError(f"Department {department_id} not found")
         
         old_dept = profile.department
         profile.department = department
         profile.save(update_fields=['department', 'updated_at'])
         
-        logger.info(f"Department updated for {account_id}: {old_dept} → {department.name}")
+        logger.info(f"Department updated for {account_id}: {old_dept} -> {department.name if department else None}")
         return profile
     
     # ============================================================

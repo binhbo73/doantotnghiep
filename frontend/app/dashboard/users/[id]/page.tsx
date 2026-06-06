@@ -114,12 +114,12 @@ export default function UserDetailPage() {
                 first_name: data.first_name,
                 last_name: data.last_name,
                 full_name: `${data.first_name} ${data.last_name}`.trim(),
-                department_id: data.department_id,
+                department_id: data.role_code === 'admin' ? null : data.department_id || null,
                 role_id: data.role_id,
             }
             // Filter out empty values
             const filteredPayload = Object.fromEntries(
-                Object.entries(updatePayload).filter(([_, value]) => value !== '' && value !== null)
+                Object.entries(updatePayload).filter(([key, value]) => value !== '' && (value !== null || key === 'department_id'))
             ) as UpdateUserPayload
             await updateUser(userId, filteredPayload)
             setIsEditModalOpen(false)
@@ -330,6 +330,33 @@ export default function UserDetailPage() {
                                     {user.department_name || 'N/A'}
                                 </p>
                             </div>
+
+                            {/* Managed Departments */}
+                            {user.managed_departments && user.managed_departments.length > 0 && (
+                                <div>
+                                    <label
+                                        className="flex items-center gap-2 text-sm font-semibold mb-2"
+                                        style={{ color: '#584237' }}
+                                    >
+                                        <Building size={16} />
+                                        Phòng ban quản lý ({user.managed_departments.length})
+                                    </label>
+                                    <div className="flex flex-wrap gap-2">
+                                        {user.managed_departments.map((department) => (
+                                            <span
+                                                key={department.id}
+                                                className="px-3 py-1 rounded-full text-sm font-medium"
+                                                style={{
+                                                    backgroundColor: '#eef4ff',
+                                                    color: '#0058be',
+                                                }}
+                                            >
+                                                {department.name}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* All Roles */}
                             <div>

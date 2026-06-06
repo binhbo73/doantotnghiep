@@ -14,7 +14,7 @@ export { EmptyState } from './EmptyState'
 export { LoadingSkeleton } from './LoadingSkeleton'
 export { FilterBar, type FilterOptions } from './FilterBar'
 export { Pagination } from './Pagination'
-export { CreateUserModal, type CreateUserFormData } from './CreateUserModal'
+export { CreateUserModal, type CreateUserFormData, type CreateUsersBulkFormData } from './CreateUserModal'
 export { PageHeader } from './PageHeader'
 
 export * from './ResetPasswordModal'

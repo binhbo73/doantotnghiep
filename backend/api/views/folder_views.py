@@ -6,7 +6,7 @@ Endpoints:
 1. GET    /api/v1/folders              - Tree structure
 2. POST   /api/v1/folders              - Create
 3. PUT    /api/v1/folders/{id}         - Update
-4. DELETE /api/v1/folders/{id}         - Delete (recursive)
+4. DELETE /api/v1/folders/{id}         - Safe delete (empty folder only)
 5. PATCH  /api/v1/folders/{id}/move    - Move to parent
 6. GET    /api/v1/folders/{id}/permissions - View ACL (TODO)
 7. POST   /api/v1/folders/{id}/permissions - Grant ACL (TODO)
@@ -38,6 +38,7 @@ from core.exceptions import (
     NotFoundError,
     BusinessLogicError,
     PermissionDeniedError,
+    ConflictError,
 )
 from services.folder_service import FolderService
 from api.serializers.folder_serializers import (
@@ -245,7 +246,7 @@ class FolderDetailView(APIView):
     
     GET: Get folder details
     PUT: Update folder info
-    DELETE: Delete folder (recursive soft delete)
+    DELETE: Safely delete an empty folder
     """
     
     permission_classes = [IsAuthenticatedUser]
@@ -394,8 +395,8 @@ class FolderDetailView(APIView):
         """
         DELETE /api/v1/folders/{folder_id}
         
-        Delete folder (soft delete - recursive).
-        This will also soft-delete all sub-folders and documents inside.
+        Safely soft-delete an empty folder.
+        Returns 409 if the folder contains child folders or documents.
         
         Response:
         {
@@ -409,7 +410,7 @@ class FolderDetailView(APIView):
 
             service = FolderService()
             
-            # Delete folder (with cascade)
+            # Safe delete: service rejects folders with children or documents.
             service.delete_folder_recursive(
                 folder_id=folder_id,
                 user_id=str(request.user.id),
@@ -434,6 +435,15 @@ class FolderDetailView(APIView):
             return Response(
                 ResponseBuilder.error(str(e), status_code=403),
                 status=status.HTTP_403_FORBIDDEN
+            )
+        except ConflictError as e:
+            return Response(
+                ResponseBuilder.error(
+                    str(e),
+                    status_code=409,
+                    data=e.detail,
+                ),
+                status=status.HTTP_409_CONFLICT
             )
         except BusinessLogicError as e:
             return Response(

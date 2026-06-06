@@ -10,10 +10,10 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import {
     DocumentHeader,
     FolderTree,
-    OtherDocuments,
     DocumentSidebar,
     UploadDocumentModal,
     CreateFolderModal,
@@ -25,10 +25,14 @@ import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 import { useRouter } from 'next/navigation'
 import {
     fetchSharedWithMeFoldersAndDocuments,
+    FolderResponse,
     FolderWithDocuments,
     SharedDocumentsOrganized,
 } from '@/services/folder'
 import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
+import { deleteFolder } from '@/services/document'
+import { DeleteConfirmDialog } from '@/components/common/DeleteConfirmDialog'
+import { getSafeDeleteBlockers } from '@/lib/safeDelete'
 
 type DocumentsPageTab = 'browse' | 'permissions'
 
@@ -36,7 +40,6 @@ function PageTabButton({
     active,
     label,
     icon,
-    description,
     onClick,
     disabled,
 }: {
@@ -137,6 +140,9 @@ function DocumentsPageContent() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
+    const [folderToDelete, setFolderToDelete] = useState<FolderResponse | null>(null)
+    const [isDeletingFolder, setIsDeletingFolder] = useState(false)
+    const [folderDeleteBlockers, setFolderDeleteBlockers] = useState<string[]>([])
     const [sharedWithMe, setSharedWithMe] = useState<SharedDocumentsOrganized>({ folders: [], unfoldered_documents: [] })
     const { hasPermission, hasAnyPermission } = useRBAC()
     const canReadDocuments = hasPermission('document_read')
@@ -216,7 +222,52 @@ function DocumentsPageContent() {
     // Permissions for document page features
     const canManagePermissions = hasAnyPermission(['document_share', 'document_update', 'folder_update', 'folder_delete'])
     const canCreateFolder = hasPermission('folder_create')
+    const canDeleteFolder = hasPermission('folder_delete')
     const canUpload = hasPermission('document_create')
+
+    const openFolderDeleteDialog = (folder: FolderResponse) => {
+        setFolderDeleteBlockers([])
+        setFolderToDelete(folder)
+    }
+
+    const handleDeleteFolder = async () => {
+        if (!folderToDelete || !canDeleteFolder) return
+
+        setIsDeletingFolder(true)
+        try {
+            await deleteFolder(folderToDelete.id)
+            clearSelection()
+            await refetch()
+            toast.success(`Đã xóa thư mục "${folderToDelete.name}"`)
+            setFolderToDelete(null)
+        } catch (err) {
+            const blockers = getSafeDeleteBlockers(err)
+            if (blockers) {
+                const items = [
+                    blockers.child_folders
+                        ? `${blockers.child_folders} thư mục con`
+                        : null,
+                    blockers.documents
+                        ? `${blockers.documents} tài liệu`
+                        : null,
+                ].filter((item): item is string => Boolean(item))
+
+                setFolderDeleteBlockers(
+                    items.length > 0
+                        ? items
+                        : ['Thư mục vẫn còn dữ liệu liên quan']
+                )
+                return
+            }
+
+            const message = err instanceof Error
+                ? err.message
+                : 'Không thể xóa thư mục'
+            toast.error(message)
+        } finally {
+            setIsDeletingFolder(false)
+        }
+    }
 
     // ── Loading State ──────────────────────────────────────
     if (isLoading) {
@@ -300,6 +351,8 @@ function DocumentsPageContent() {
                             onToggleFolder={toggleFolder}
                             onToggleOtherDocuments={toggleOtherDocuments}
                             onSelectDocument={selectDocument}
+                            onDeleteFolder={canDeleteFolder ? openFolderDeleteDialog : undefined}
+                            deletingFolderId={isDeletingFolder ? folderToDelete?.id : null}
                             searchQuery={searchQuery}
                             showPersonal={false}
                         />
@@ -356,6 +409,24 @@ function DocumentsPageContent() {
                     }}
                 />
             )}
+
+            <DeleteConfirmDialog
+                open={folderToDelete !== null}
+                title={folderDeleteBlockers.length > 0 ? 'Không thể xóa thư mục' : 'Xóa thư mục?'}
+                description={folderDeleteBlockers.length > 0
+                    ? 'Đây là cơ chế bảo vệ dữ liệu. Thư mục chỉ được xóa sau khi đã xử lý hết nội dung bên trong.'
+                    : 'Chỉ có thể xóa thư mục rỗng. Hệ thống sẽ từ chối nếu thư mục còn tài liệu hoặc thư mục con.'}
+                resourceName={folderToDelete?.name}
+                isDeleting={isDeletingFolder}
+                blockedItems={folderDeleteBlockers}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setFolderToDelete(null)
+                        setFolderDeleteBlockers([])
+                    }
+                }}
+                onConfirm={handleDeleteFolder}
+            />
         </div>
     )
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import { Trash2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useRBAC } from '@/hooks/useRBAC'
 import { Department } from '@/types/api'
@@ -9,14 +10,15 @@ interface DepartmentListProps {
     departments: Department[]
     onAdd?: () => void
     onEdit?: (dept: Department) => void
+    onDelete?: (dept: Department) => void
+    deletingId?: string | null
     onExport?: () => void
 }
 
-export function DepartmentList({ departments, onAdd, onEdit, onExport }: DepartmentListProps) {
+export function DepartmentList({ departments, onAdd, onEdit, onDelete, deletingId }: DepartmentListProps) {
     const router = useRouter()
-    const { hasPermission, hasAnyPermission } = useRBAC()
+    const { hasAnyPermission } = useRBAC()
     const canUpdateDepartments = hasAnyPermission(['department_update', 'department_manage'])
-    const canDeleteDepartments = hasPermission('department_manage')
     const totalDepartments = departments.length
     const totalMembers = departments.reduce((acc, d) => acc + (d.member_count || 0), 0)
 
@@ -32,7 +34,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
         router.push(`/dashboard/departments/${deptId}`)
     }
 
-    const canEditDept = (_dept: Department) => canUpdateDepartments
+    const canEditDept = () => canUpdateDepartments
 
     const getColorClass = (idx: number) => {
         const colors = [
@@ -158,7 +160,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
                                                 >
                                                     <span className="material-symbols-outlined text-base">open_in_new</span>
                                                 </button>
-                                                {onEdit && canEditDept(dept) && (
+                                                {onEdit && canEditDept() && (
                                                     <button
                                                         onClick={() => onEdit?.(dept)}
                                                         className="p-1.5 text-slate-400 hover:text-blue-600 bg-white hover:bg-blue-50 rounded shadow-sm border border-transparent transition-all"
@@ -167,13 +169,16 @@ export function DepartmentList({ departments, onAdd, onEdit, onExport }: Departm
                                                         <span className="material-symbols-outlined text-base">edit</span>
                                                     </button>
                                                 )}
-                                                {canDeleteDepartments ? (
-                                                    <button className="p-1.5 text-slate-400 hover:text-red-600 bg-white hover:bg-red-50 rounded shadow-sm border border-transparent transition-all">
-                                                        <span className="material-symbols-outlined text-base">delete</span>
-                                                    </button>
-                                                ) : (
-                                                    <button className="p-1.5 text-slate-300 bg-white rounded shadow-sm border border-transparent cursor-not-allowed" title="Bạn không có quyền xóa">
-                                                        <span className="material-symbols-outlined text-base">delete</span>
+                                                {onDelete && (
+                                                    <button
+                                                        type="button"
+                                                        disabled={deletingId === dept.id}
+                                                        onClick={() => onDelete(dept)}
+                                                        className="p-1.5 text-slate-400 hover:text-red-600 bg-white hover:bg-red-50 rounded shadow-sm border border-transparent transition-all disabled:cursor-wait disabled:opacity-50"
+                                                        title="Xóa phòng ban"
+                                                        aria-label={`Xóa phòng ban ${dept.name}`}
+                                                    >
+                                                        <Trash2 size={16} aria-hidden="true" />
                                                     </button>
                                                 )}
                                             </div>

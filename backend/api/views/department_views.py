@@ -37,6 +37,7 @@ from core.exceptions import (
 )
 from apps.users.models import Department
 from services.department_service import DepartmentService
+from services.user_service import UserService
 from api.serializers.department_serializers import (
     DepartmentTreeSerializer,
     DepartmentDetailSerializer,
@@ -452,7 +453,11 @@ class DepartmentDetailView(APIView):
             # 409 Conflict if has users or other cascade issues
             logger.warning(f"Conflict error: {e}")
             return Response(
-                ResponseBuilder.error(str(e), status_code=409),
+                ResponseBuilder.error(
+                    str(e),
+                    status_code=409,
+                    data=e.detail,
+                ),
                 status=status.HTTP_409_CONFLICT
             )
         except BusinessLogicError as e:
@@ -692,6 +697,144 @@ class DepartmentUsersView(APIView):
                 ResponseBuilder.error("Failed to retrieve users", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @transaction.atomic()
+    def post(self, request, dept_id):
+        """
+        POST: Add many accounts to this department.
+
+        Body:
+        {
+            "account_ids": ["account-uuid-1", "account-uuid-2"],
+            "reason": "optional audit note"
+        }
+        """
+        try:
+            if not user_has_any_permission(request.user, [PermissionCodes.DEPARTMENT_UPDATE, PermissionCodes.DEPARTMENT_MANAGE]):
+                return _forbidden("You need department_update or department_manage permission to add users to a department")
+            if not _has_permission(request.user, PermissionCodes.USER_UPDATE):
+                return _forbidden("You need user_update permission to add users to a department")
+
+            service = DepartmentService()
+            if not service.can_edit_department(request.user, dept_id):
+                return _forbidden("You don't have permission to update this department")
+
+            department = Department.objects.filter(id=dept_id, is_deleted=False).first()
+            if not department:
+                return Response(
+                    ResponseBuilder.error(f"Department {dept_id} not found", status_code=404),
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            account_ids = request.data.get('account_ids', request.data.get('user_ids'))
+            if not isinstance(account_ids, list):
+                return Response(
+                    ResponseBuilder.error("Field 'account_ids' must be a list", status_code=400),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not account_ids:
+                return Response(
+                    ResponseBuilder.error("Field 'account_ids' must contain at least one account", status_code=400),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if len(account_ids) > 100:
+                return Response(
+                    ResponseBuilder.error("Cannot add more than 100 users at once", status_code=400),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            reason = request.data.get('reason', '')
+            user_service = UserService()
+            added = []
+            errors = []
+            seen_account_ids = set()
+
+            for index, account_id in enumerate(account_ids):
+                account_id = str(account_id).strip() if account_id else ''
+                if not account_id:
+                    errors.append({
+                        'index': index,
+                        'account_id': account_id,
+                        'message': 'Account ID is required',
+                    })
+                    continue
+                if account_id in seen_account_ids:
+                    errors.append({
+                        'index': index,
+                        'account_id': account_id,
+                        'message': 'Duplicate account ID in request',
+                    })
+                    continue
+                seen_account_ids.add(account_id)
+
+                try:
+                    profile = user_service.change_user_department(account_id=account_id, department_id=dept_id)
+                    added.append({
+                        'index': index,
+                        'account_id': str(account_id),
+                        'profile_id': str(profile.id),
+                        'department_id': str(profile.department_id),
+                        'department_name': profile.department.name if profile.department else department.name,
+                    })
+                except Exception as e:
+                    errors.append({
+                        'index': index,
+                        'account_id': account_id,
+                        'message': str(e),
+                    })
+
+            try:
+                user_service.audit_log_action(
+                    action='UPDATE_USER_PROFILE',
+                    user_id=request.user.id,
+                    resource_id=str(dept_id),
+                    query_text=(
+                        f"Added {len(added)} users to department {department.name} ({dept_id}). "
+                        f"Errors: {len(errors)}. Reason: {reason}"
+                    ),
+                    ip_address=self._get_client_ip(request),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],
+                )
+            except Exception as e:
+                logger.error(f"Failed to log department user assignment: {str(e)}")
+
+            response_data = {
+                'department_id': str(dept_id),
+                'department_name': department.name,
+                'added': added,
+                'errors': errors,
+                'added_count': len(added),
+                'error_count': len(errors),
+                'requested_count': len(account_ids),
+            }
+
+            if not added:
+                return Response(
+                    ResponseBuilder.error("No users were added to department", data=response_data, status_code=400),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            return Response(
+                ResponseBuilder.success(
+                    data=response_data,
+                    message=f"Added {len(added)} of {len(account_ids)} users to department",
+                    status_code=status.HTTP_201_CREATED if not errors else 207,
+                ),
+                status=status.HTTP_201_CREATED if not errors else 207,
+            )
+
+        except Exception as e:
+            logger.error(f"Unexpected error adding users to department: {e}", exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to add users to department", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            return x_forwarded_for.split(',')[0]
+        return request.META.get('REMOTE_ADDR')
 
 
 class DepartmentFoldersView(APIView):

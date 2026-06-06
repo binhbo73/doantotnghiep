@@ -5,7 +5,6 @@
 
 import { logger } from '@/services/logger'
 import { ApiError, ValidationError } from '@/services/api/errors'
-import type { ApiErrorSchema } from '@/types/api'
 
 interface ErrorResponse {
     error?: string
@@ -38,7 +37,11 @@ export async function errorMiddleware(
         timestamp: new Date().toISOString(),
     }
 
-    logger.error(`API Error [${status}]`, errorInfo)
+    if (status === 409) {
+        logger.warn('API business conflict', errorInfo)
+    } else {
+        logger.error(`API Error [${status}]`, errorInfo)
+    }
 
     // Handle specific status codes
     switch (status) {

@@ -16,6 +16,7 @@ interface CreateUserModalProps {
     isOpen: boolean
     onClose: () => void
     onSubmit: (data: CreateUserFormData) => Promise<void>
+    onBulkSubmit?: (data: CreateUsersBulkFormData) => Promise<void>
     editingUser?: User | null
     loading?: boolean
 }
@@ -27,12 +28,26 @@ export interface CreateUserFormData {
     last_name: string
     department_id: string
     role_id: string
+    role_code?: string
+}
+
+export interface CreateUsersBulkFormData {
+    accounts: Array<{
+        username: string
+        email: string
+        first_name: string
+        last_name: string
+    }>
+    department_id: string
+    role_id: string
+    role_code?: string
 }
 
 export function CreateUserModal({
     isOpen,
     onClose,
     onSubmit,
+    onBulkSubmit,
     editingUser,
     loading = false,
 }: CreateUserModalProps) {
@@ -47,6 +62,8 @@ export function CreateUserModal({
         department_id: '',
         role_id: '',
     })
+    const [createMode, setCreateMode] = useState<'single' | 'bulk'>('single')
+    const [bulkText, setBulkText] = useState('')
     const [error, setError] = useState('')
     const [success, setSuccess] = useState('')
 
@@ -70,6 +87,11 @@ export function CreateUserModal({
         return flattenDepartments(departmentsRaw || [])
     }, [departmentsRaw])
     const roles = rolesRaw || []
+    const selectedRole = useMemo(
+        () => roles.find((role) => String(role.id) === formData.role_id),
+        [roles, formData.role_id]
+    )
+    const isAdminRoleSelected = selectedRole?.code === 'admin'
     const canChooseDepartment = canReadDepartments && departments.length > 0
 
     useEffect(() => {
@@ -92,6 +114,8 @@ export function CreateUserModal({
                 role_id: '',
             })
         }
+        setCreateMode('single')
+        setBulkText('')
         setError('')
         setSuccess('')
     }, [editingUser, isOpen])
@@ -125,28 +149,97 @@ export function CreateUserModal({
         }
     }, [departments, formData.department_id])
 
+    useEffect(() => {
+        if (isAdminRoleSelected && formData.department_id) {
+            setFormData((prev) => ({
+                ...prev,
+                department_id: '',
+            }))
+        }
+    }, [isAdminRoleSelected, formData.department_id])
+
+    const handleDepartmentChange = (departmentId: string) => {
+        setFormData({
+            ...formData,
+            department_id: departmentId,
+        })
+    }
+
+    const handleRoleChange = (roleId: string) => {
+        const nextRole = roles.find((role) => String(role.id) === roleId)
+        setFormData({
+            ...formData,
+            role_id: roleId,
+            department_id: nextRole?.code === 'admin' ? '' : formData.department_id,
+        })
+    }
+
+    const parseBulkAccounts = (input: string) => {
+        return input
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line, index) => {
+                const parts = line.split(/[,\t;]/).map((part) => part.trim())
+                if (parts.length < 4 || parts.slice(0, 4).some((part) => !part)) {
+                    throw new Error(`Dong ${index + 1} phai co dang: username,email,ten,ho`)
+                }
+
+                return {
+                    username: parts[0],
+                    email: parts[1],
+                    first_name: parts[2],
+                    last_name: parts[3],
+                }
+            })
+    }
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
         setError('')
         setSuccess('')
 
         try {
+            if (!editingUser && createMode === 'bulk') {
+                if (!onBulkSubmit) {
+                    setError('Chua cau hinh chuc nang tao nhieu tai khoan')
+                    return
+                }
+
+                const accounts = parseBulkAccounts(bulkText)
+                if (accounts.length === 0) {
+                    setError('Vui long nhap it nhat mot dong tai khoan')
+                    return
+                }
+
+                await onBulkSubmit({
+                    accounts,
+                    department_id: formData.department_id,
+                    role_id: formData.role_id,
+                    role_code: selectedRole?.code,
+                })
+                setSuccess(`Da xu ly ${accounts.length} tai khoan`)
+
+                setTimeout(() => {
+                    onClose()
+                    setSuccess('')
+                }, 1500)
+                return
+            }
             if (!formData.username || !formData.email || !formData.first_name) {
                 setError('Vui lòng điền tất cả các trường bắt buộc')
                 return
             }
 
-            if (canAssignRoles && !formData.role_id) {
+            if (editingUser && canAssignRoles && !formData.role_id) {
                 setError('Vui lòng chọn vai trò')
                 return
             }
 
-            if (canChooseDepartment && !formData.department_id) {
-                setError('Vui lÃ²ng chá»n phÃ²ng ban')
-                return
-            }
-
-            await onSubmit(formData)
+            await onSubmit({
+                ...formData,
+                role_code: selectedRole?.code,
+            })
             setSuccess(editingUser ? 'Cập nhật người dùng thành công!' : 'Tạo người dùng thành công!')
 
             setTimeout(() => {
@@ -246,6 +339,60 @@ export function CreateUserModal({
                             </div>
                         )}
 
+                        {!editingUser && (
+                            <div className="inline-flex rounded-lg border p-1" style={{ borderColor: '#dce2f3', backgroundColor: '#f0f3ff' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => setCreateMode('single')}
+                                    className="px-3 py-1.5 rounded-md text-sm font-medium"
+                                    style={{
+                                        backgroundColor: createMode === 'single' ? '#ffffff' : 'transparent',
+                                        color: '#151c27',
+                                    }}
+                                >
+                                    Một người
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setCreateMode('bulk')}
+                                    className="px-3 py-1.5 rounded-md text-sm font-medium"
+                                    style={{
+                                        backgroundColor: createMode === 'bulk' ? '#ffffff' : 'transparent',
+                                        color: '#151c27',
+                                    }}
+                                >
+                                    Nhiều người
+                                </button>
+                            </div>
+                        )}
+
+                        {!editingUser && createMode === 'bulk' ? (
+                            <div className="space-y-2">
+                                <label
+                                    className="text-sm font-semibold"
+                                    style={{ color: '#151c27' }}
+                                >
+                                    Danh sách tài khoản
+                                </label>
+                                <textarea
+                                    value={bulkText}
+                                    onChange={(e) => setBulkText(e.target.value)}
+                                    placeholder={'username,email,tên,họ\nnguyen_anh,anh@example.com,Anh,Nguyen Van\ntran_binh,binh@example.com,Binh,Tran Van'}
+                                    className="w-full min-h-36 px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2 font-mono"
+                                    style={{
+                                        backgroundColor: '#f0f3ff',
+                                        borderColor: '#dce2f3',
+                                        color: '#151c27',
+                                    }}
+                                    disabled={loading}
+                                    required
+                                />
+                                <p className="text-xs" style={{ color: '#727785' }}>
+                                    Mỗi dòng một tài khoản. Cột: username, email, tên, họ. Có thể phân tách bằng dấu phẩy, tab hoặc dấu chấm phẩy.
+                                </p>
+                            </div>
+                        ) : (
+                            <>
                         {/* Username & Email Row */}
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                             <div className="space-y-2">
@@ -347,6 +494,8 @@ export function CreateUserModal({
                                 />
                             </div>
                         </div>
+                            </>
+                        )}
 
                         {/* Department & Role Row */}
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -359,20 +508,18 @@ export function CreateUserModal({
                                 </label>
                                 <select
                                     value={formData.department_id}
-                                    onChange={(e) =>
-                                        setFormData({ ...formData, department_id: e.target.value })
-                                    }
+                                    onChange={(e) => handleDepartmentChange(e.target.value)}
                                     className="w-full px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2"
                                     style={{
                                         backgroundColor: '#f0f3ff',
                                         borderColor: '#dce2f3',
                                         color: '#151c27',
                                     }}
-                                    disabled={loading || deptsLoading || !canChooseDepartment}
-                                    required={canChooseDepartment}
+                                    disabled={loading || deptsLoading || !canChooseDepartment || isAdminRoleSelected}
+                                    required={false}
                                 >
                                     <option value="">
-                                        {deptsLoading ? 'Đang tải...' : 'Chọn phòng ban'}
+                                        {isAdminRoleSelected ? 'Admin không thuộc phòng ban' : deptsLoading ? 'Đang tải...' : 'Không chọn phòng ban'}
                                     </option>
                                     {departments.map((dept) => (
                                         <option key={dept.id} value={dept.id}>
@@ -390,7 +537,7 @@ export function CreateUserModal({
                                 </label>
                                 <select
                                     value={formData.role_id}
-                                    onChange={(e) => setFormData({ ...formData, role_id: e.target.value })}
+                                    onChange={(e) => handleRoleChange(e.target.value)}
                                     className="w-full px-3 py-2 rounded-lg text-sm border focus:outline-none focus:ring-2"
                                     style={{
                                         backgroundColor: '#f0f3ff',
@@ -398,7 +545,7 @@ export function CreateUserModal({
                                         color: '#151c27',
                                     }}
                                     disabled={loading || rolesLoading || !canAssignRoles}
-                                    required={canAssignRoles}
+                                    required={false}
                                 >
                                     <option value="">
                                         {canAssignRoles
@@ -406,7 +553,11 @@ export function CreateUserModal({
                                             : 'Mặc định: User'}
                                     </option>
                                     {roles.map((role) => (
-                                        <option key={role.id} value={role.id}>
+                                        <option
+                                            key={role.id}
+                                            value={role.id}
+                                            disabled={role.code === 'admin' && !!formData.department_id}
+                                        >
                                             {role.name}
                                         </option>
                                     ))}

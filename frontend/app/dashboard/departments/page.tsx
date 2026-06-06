@@ -9,11 +9,13 @@
  */
 
 import React, { useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import {
     DepartmentHeader,
     DepartmentTree,
     DepartmentSidebar,
     AddDepartmentDialog,
+    AddDepartmentUsersDialog,
     EditDepartmentDialog,
     DepartmentList,
 } from '@/components/features/departments'
@@ -23,6 +25,9 @@ import { useAuthContext } from '@/context'
 import { AccessDeniedPage } from '@/components/common/AccessDeniedPage'
 import { useRouter } from 'next/navigation'
 import type { Department } from '@/types/api'
+import { addUsersToDepartment } from '@/services/department'
+import { DeleteConfirmDialog } from '@/components/common/DeleteConfirmDialog'
+import { getSafeDeleteBlockers } from '@/lib/safeDelete'
 
 function DepartmentManagementContent() {
     const { hasPermission, hasAnyPermission } = useRBAC()
@@ -31,18 +36,26 @@ function DepartmentManagementContent() {
     const canUpdateDepartments = hasAnyPermission(['department_update', 'department_manage'])
     const canManageDepartments = hasPermission('department_manage')
     const canCreateDepartments = hasAnyPermission(['department_create', 'department_manage'])
+    const canAddUsersToDepartment = hasPermission('user_read') && hasPermission('user_update') && canUpdateDepartments
 
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+    const [isAddUsersDialogOpen, setIsAddUsersDialogOpen] = useState(false)
     const [selectedDepartmentId, setSelectedDepartmentId] = useState<string | null>(null)
     const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree')
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [departmentToDelete, setDepartmentToDelete] = useState<Department | null>(null)
+    const [isDeletingDepartment, setIsDeletingDepartment] = useState(false)
+    const [departmentDeleteBlockers, setDepartmentDeleteBlockers] = useState<string[]>([])
+    const [detailRefreshKey, setDetailRefreshKey] = useState(0)
 
     const {
         departments,
         isLoading,
         addDepartment,
         updateDepartment,
+        deleteDepartment,
+        refetch,
     } = useDepartments({ page_size: 100 }, canReadDepartments)
 
     // Determine if user has full management rights
@@ -120,6 +133,70 @@ function DepartmentManagementContent() {
         }
     }
 
+    const handleAddUsersToDepartment = async (accountIds: string[]) => {
+        if (!selectedDepartmentId) {
+            throw new Error('Vui lòng chọn phòng ban trước khi thêm người dùng')
+        }
+
+        try {
+            setIsSubmitting(true)
+            const result = await addUsersToDepartment(selectedDepartmentId, {
+                account_ids: accountIds,
+                reason: 'Added from departments dashboard',
+            })
+            await refetch({ page_size: 100 })
+            setDetailRefreshKey((current) => current + 1)
+            return result
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'Không thể thêm người dùng vào phòng ban'
+            console.error('Failed to add users to department:', err)
+            throw new Error(errorMessage)
+        } finally {
+            setIsSubmitting(false)
+        }
+    }
+
+    const handleDeleteDepartment = async () => {
+        if (!departmentToDelete || !canManageDepartments) return
+
+        setIsDeletingDepartment(true)
+        try {
+            await deleteDepartment(departmentToDelete.id)
+            await refetch({ page_size: 100 })
+
+            if (selectedDepartmentId === departmentToDelete.id) {
+                setSelectedDepartmentId(null)
+            }
+
+            toast.success(`Đã xóa phòng ban "${departmentToDelete.name}"`)
+            setDepartmentToDelete(null)
+        } catch (err) {
+            const blockers = getSafeDeleteBlockers(err)
+            if (blockers) {
+                const items = [
+                    blockers.users ? `${blockers.users} nhân viên trực tiếp` : null,
+                    blockers.child_departments ? `${blockers.child_departments} phòng ban con` : null,
+                    blockers.folders ? `${blockers.folders} thư mục` : null,
+                    blockers.documents ? `${blockers.documents} tài liệu` : null,
+                ].filter((item): item is string => Boolean(item))
+
+                setDepartmentDeleteBlockers(
+                    items.length > 0
+                        ? items
+                        : ['Phòng ban vẫn còn dữ liệu liên quan']
+                )
+                return
+            }
+
+            const message = err instanceof Error
+                ? err.message
+                : 'Không thể xóa phòng ban'
+            toast.error(message)
+        } finally {
+            setIsDeletingDepartment(false)
+        }
+    }
+
     const handleExport = () => {
         console.log('Exporting departments...')
     }
@@ -173,13 +250,23 @@ function DepartmentManagementContent() {
                                 setSelectedDepartmentId(deptId)
                                 setIsEditDialogOpen(true)
                             }}
+                            onDelete={canManageDepartments ? (deptId) => {
+                                const department = displayedDepartments.find((item) => item.id === deptId)
+                                if (department) {
+                                    setDepartmentDeleteBlockers([])
+                                    setDepartmentToDelete(department)
+                                }
+                            } : undefined}
+                            deletingId={isDeletingDepartment ? departmentToDelete?.id : null}
                         />
 
                         <div className="col-span-12 lg:col-span-5 flex flex-col gap-4">
                             {selectedDepartment ? (
                                 <DepartmentSidebar
+                                    key={`${selectedDepartment.id}-${detailRefreshKey}`}
                                     department={selectedDepartment}
                                     onEdit={canEditSelectedDepartment ? () => setIsEditDialogOpen(true) : undefined}
+                                    onAddUsers={canAddUsersToDepartment ? () => setIsAddUsersDialogOpen(true) : undefined}
                                 />
                             ) : (
                                 <div className="rounded-xl border border-slate-100 bg-white p-6">
@@ -199,6 +286,11 @@ function DepartmentManagementContent() {
                             setSelectedDepartmentId(dept.id)
                             setIsEditDialogOpen(true)
                         }}
+                        onDelete={canManageDepartments ? (department) => {
+                            setDepartmentDeleteBlockers([])
+                            setDepartmentToDelete(department)
+                        } : undefined}
+                        deletingId={isDeletingDepartment ? departmentToDelete?.id : null}
                         onExport={handleExport}
                     />
                 )}
@@ -222,6 +314,34 @@ function DepartmentManagementContent() {
                         department={selectedDepartment}
                     />
                 )}
+
+                {canAddUsersToDepartment && (
+                    <AddDepartmentUsersDialog
+                        isOpen={isAddUsersDialogOpen}
+                        department={selectedDepartment}
+                        onClose={() => setIsAddUsersDialogOpen(false)}
+                        onSubmit={handleAddUsersToDepartment}
+                        isLoading={isSubmitting}
+                    />
+                )}
+
+                <DeleteConfirmDialog
+                    open={departmentToDelete !== null}
+                    title={departmentDeleteBlockers.length > 0 ? 'Không thể xóa phòng ban' : 'Xóa phòng ban?'}
+                    description={departmentDeleteBlockers.length > 0
+                        ? 'Đây là cơ chế bảo vệ dữ liệu. Phòng ban chỉ được xóa sau khi đã chuyển hoặc xử lý hết dữ liệu liên quan.'
+                        : 'Chỉ có thể xóa phòng ban rỗng. Hệ thống sẽ từ chối nếu còn nhân viên, phòng ban con, thư mục hoặc tài liệu.'}
+                    resourceName={departmentToDelete?.name}
+                    isDeleting={isDeletingDepartment}
+                    blockedItems={departmentDeleteBlockers}
+                    onOpenChange={(open) => {
+                        if (!open) {
+                            setDepartmentToDelete(null)
+                            setDepartmentDeleteBlockers([])
+                        }
+                    }}
+                    onConfirm={handleDeleteDepartment}
+                />
             </main>
 
             {canCreateDepartments && (

@@ -57,7 +57,15 @@ class QueryRouter:
         t_route_start = time.monotonic()
 
         # ── Classify query intent ────────────────────────────
-        intent = self.intent_classifier.classify(query)
+        forced_intent = (user_context or {}).get('forced_intent')
+        if forced_intent:
+            try:
+                intent = QueryIntent(str(forced_intent))
+                logger.debug("[QUERY_INTENT] forced intent=%s query='%s'", intent.value, query[:80])
+            except ValueError:
+                intent = self.intent_classifier.classify(query)
+        else:
+            intent = self.intent_classifier.classify(query)
         intent_config = self.intent_classifier.get_retrieval_config(intent)
 
         # Lấy danh sách document IDs để filter (ưu tiên 'document_ids' list)

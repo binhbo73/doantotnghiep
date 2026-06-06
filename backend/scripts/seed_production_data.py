@@ -1,450 +1,773 @@
+# -*- coding: utf-8 -*-
 """
-Production Seed Data Script with Proper Account-User Mapping
-Usage: python manage.py shell < scripts/seed_production_data.py
-OR: docker-compose exec backend python manage.py shell < scripts/seed_production_data.py
+Seed production-like organization data for ABC Corp internal documents.
 
-Requirements:
-1. 11 Accounts (1 admin, 4 managers, 5 employees)
-2. Account → creates User (UserProfile)
-3. 3 Roles: admin, manager, user
-4. 5 Departments: IT, HR, DevOps, Sale, Manager
-5. Permissions mapped to real API endpoints
-6. Role-Permission assignments
+Usage:
+    python manage.py shell < scripts/seed_production_data.py
 
-Chú ý: Each role has specific permissions based on actual backend APIs
+Docker example:
+    docker compose exec -T backend python manage.py shell < scripts/seed_production_data.py
+
+What this script does:
+    - Uses the existing admin account.
+    - Uses existing roles: admin, manager, user.
+    - Creates 4 main departments plus operational sub-departments.
+    - Creates 1 manager + 3 users for each main department.
+    - Creates 1 manager + 2 users for each sub-department.
+    - Resets document/folder data so documents can be uploaded manually later.
+    - Deletes old non-seeded accounts and user profiles.
+    - Seeds folders only, matching tai-lieu-noi-bo logic.
+
+What this script does NOT do:
+    - It does not seed the admin account.
+    - It does not seed roles.
+    - It does not seed documents.
+    - It does not change existing role permissions.
+    - It does not clear external vector stores such as Qdrant.
 """
 
 import os
-import sys
 import django
 
-# Ensure Django settings are configured
-if __name__ == '__main__':
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+from django.db import transaction
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     django.setup()
 
-from apps.users.models import Account, Role, Permission, RolePermission, AccountRole, Department, UserProfile
-from django.utils import timezone
-import uuid
 
-print("\n" + "=" * 80)
-print("🌟 PRODUCTION DATABASE SEEDING - 11 ACCOUNTS WITH PROPER STRUCTURE")
-print("=" * 80)
+from apps.documents.models import (  # noqa: E402
+    Document,
+    DocumentAsset,
+    DocumentChunk,
+    DocumentEmbedding,
+    DocumentPermission,
+    Folder,
+    FolderPermission,
+)
+from apps.operations.models import (  # noqa: E402
+    AsyncTask,
+    Conversation,
+    ConversationAttachedDocument,
+    ConversationAttachedFolder,
+    HumanFeedback,
+    Message,
+    UserDocumentCache,
+)
+from apps.users.models import Account, AccountRole, Department, Role, UserProfile  # noqa: E402
 
-# ============================================================================
-# 1. CREATE PERMISSIONS (From actual API endpoints)
-# ============================================================================
-print("\n📋 [STEP 1/5] CREATING PERMISSIONS (from APIs)...")
 
-permissions_data = [
-    # User Management APIs
-    ('user_create', 'Create User', 'users', 'create', 'POST /api/users - Create new account'),
-    ('user_read', 'Read User', 'users', 'read', 'GET /api/users - View user list and details'),
-    ('user_update', 'Update User', 'users', 'update', 'PUT /api/users/{id} - Update user info'),
-    ('user_delete', 'Delete User', 'users', 'delete', 'DELETE /api/users/{id} - Delete user account'),
-    ('user_change_role', 'Change User Role', 'users', 'change_role', 'POST /api/users/{id}/roles - Assign/remove roles'),
-    ('user_change_status', 'Change User Status', 'users', 'change_status', 'PATCH /api/users/{id}/status - Block/unblock user'),
-    ('user_reset_password', 'Reset User Password', 'users', 'reset_password', 'POST /accounts/{id}/reset-password - Admin reset password'),
-    
-    # Document Management APIs
-    ('document_create', 'Create Document', 'documents', 'create', 'POST /api/documents - Upload/create documents'),
-    ('document_read', 'Read Document', 'documents', 'read', 'GET /api/documents - View document list and content'),
-    ('document_update', 'Update Document', 'documents', 'update', 'PUT /api/documents/{id} - Update document metadata'),
-    ('document_delete', 'Delete Document', 'documents', 'delete', 'DELETE /api/documents/{id} - Delete documents'),
-    ('document_share', 'Share Document', 'documents', 'share', 'POST /api/documents/{id}/share - Share with users/roles'),
-    ('document_download', 'Download Document', 'documents', 'download', 'GET /api/documents/{id}/download - Download file'),
-    ('document_write', 'Write Document', 'documents', 'write', 'Full document write access (includes update)'),
-    
-    # Folder Management APIs
-    ('folder_create', 'Create Folder', 'folders', 'create', 'POST /api/folders - Create new folder'),
-    ('folder_read', 'Read Folder', 'folders', 'read', 'GET /api/folders - View folder structure'),
-    ('folder_update', 'Update Folder', 'folders', 'update', 'PUT /api/folders/{id} - Update folder'),
-    ('folder_delete', 'Delete Folder', 'folders', 'delete', 'DELETE /api/folders/{id} - Delete folder'),
-    
-    # Department Management APIs
-    ('department_create', 'Create Department', 'departments', 'create', 'POST /api/departments - Create new department'),
-    ('department_read', 'Read Department', 'departments', 'read', 'GET /api/departments - View department list'),
-    ('department_update', 'Update Department', 'departments', 'update', 'PUT /api/departments/{id} - Update department'),
-    ('department_manage', 'Manage Department', 'departments', 'manage', 'Full department management'),
-    
-    # Permission & Role Management APIs
-    ('permission_manage', 'Manage Permissions', 'permissions', 'manage', 'POST/DELETE /api/permissions - Create/edit permissions'),
-    ('role_manage', 'Manage Roles', 'roles', 'manage', 'POST/PUT/DELETE /api/roles - Create/edit/delete roles'),
-    
-    # Chat & Conversation APIs
-    ('chat_create', 'Create Chat', 'chat', 'create', 'POST /api/conversations - Start new chat'),
-    ('chat_read', 'Read Chat', 'chat', 'read', 'GET /api/conversations - View conversations'),
-    ('chat_send', 'Send Message', 'chat', 'send', 'POST /api/messages - Send chat message'),
-    
-    # RAG & AI Features APIs
-    ('rag_query', 'Query RAG System', 'rag', 'query', 'POST /api/rag/query - Query documents with LLM'),
-    ('embedding_generate', 'Generate Embeddings', 'embeddings', 'generate', 'POST /api/documents/{id}/embed - Generate vector embeddings'),
-    
-    # Audit & System APIs
-    ('audit_log_view', 'View Audit Logs', 'audit', 'view', 'GET /api/audit-logs - View system activity logs'),
-    ('system_admin', 'System Administrator', 'system', 'admin', 'Full system access - all permissions'),
+RESET_DATA = os.getenv("SEED_RESET_DATA", "1") == "1"
+
+ADMIN_USERNAME = os.getenv("SEED_ADMIN_USERNAME", "admin_tong")
+
+MANAGER_PASSWORD = os.getenv("SEED_MANAGER_PASSWORD", "Manager@123456")
+USER_PASSWORD = os.getenv("SEED_USER_PASSWORD", "User@123456")
+
+
+DEPARTMENTS = [
+    {
+        "code": "ban-giam-doc",
+        "name": "Ban Giám đốc",
+        "description": "Bộ phận điều hành và phê duyệt cấp công ty.",
+        "manager_username": "manager_bgd",
+        "parent_code": None,
+    },
+    {
+        "code": "hanh-chinh-tong-hop",
+        "name": "Phòng Hành chính - Tổng hợp",
+        "description": "Quản trị hành chính, nhân sự, tài sản và văn thư lưu trữ.",
+        "manager_username": "manager_hcth",
+        "parent_code": None,
+    },
+    {
+        "code": "hanh-chinh-nhan-su",
+        "name": "Nhân sự",
+        "description": "Tuyển dụng, đào tạo, bổ nhiệm, điều chuyển, đánh giá và phúc lợi nhân sự.",
+        "manager_username": "manager_hcns",
+        "parent_code": "hanh-chinh-tong-hop",
+    },
+    {
+        "code": "hanh-chinh-van-thu-luu-tru",
+        "name": "Văn thư - Lưu trữ",
+        "description": "Văn thư, lưu trữ, kiểm soát hồ sơ và thể thức tài liệu.",
+        "manager_username": "manager_hcvt",
+        "parent_code": "hanh-chinh-tong-hop",
+    },
+    {
+        "code": "hanh-chinh-tai-san-hau-can",
+        "name": "Tài sản - Hậu cần",
+        "description": "Quản lý tài sản, công cụ, thiết bị, nhà ăn, xe và hậu cần nội bộ.",
+        "manager_username": "manager_hcts",
+        "parent_code": "hanh-chinh-tong-hop",
+    },
+    {
+        "code": "ky-thuat-kinh-te",
+        "name": "Phòng Kỹ thuật - Kinh tế",
+        "description": "Quản lý kỹ thuật, dự án, chất lượng, tiến độ và an toàn.",
+        "manager_username": "manager_ktkt",
+        "parent_code": None,
+    },
+    {
+        "code": "ky-thuat-quan-ly-du-an",
+        "name": "Quản lý dự án",
+        "description": "Quy trình dự án, tiến độ, hồ sơ dự án và bàn giao.",
+        "manager_username": "manager_ktda",
+        "parent_code": "ky-thuat-kinh-te",
+    },
+    {
+        "code": "ky-thuat-chat-luong-an-toan",
+        "name": "Chất lượng - An toàn",
+        "description": "Chất lượng, an toàn, nghiệm thu, kiểm soát lỗi và KPI kỹ thuật.",
+        "manager_username": "manager_ktcl",
+        "parent_code": "ky-thuat-kinh-te",
+    },
+    {
+        "code": "ky-thuat-du-toan-kinh-te",
+        "name": "Dự toán - Kinh tế",
+        "description": "Dự toán, định mức, chi phí, hiệu quả kinh tế và hồ sơ kinh tế kỹ thuật.",
+        "manager_username": "manager_ktdt",
+        "parent_code": "ky-thuat-kinh-te",
+    },
+    {
+        "code": "tai-chinh-ke-toan",
+        "name": "Phòng Tài chính - Kế toán",
+        "description": "Quản lý tài chính, kế toán, thanh toán, công nợ và lương.",
+        "manager_username": "manager_tckt",
+        "parent_code": None,
+    },
+    {
+        "code": "tai-chinh-ke-toan-thanh-toan",
+        "name": "Kế toán thanh toán",
+        "description": "Thanh toán, tạm ứng, hoàn ứng, công tác phí và chi phí nội bộ.",
+        "manager_username": "manager_tctt",
+        "parent_code": "tai-chinh-ke-toan",
+    },
+    {
+        "code": "tai-chinh-ke-toan-cong-no",
+        "name": "Kế toán công nợ",
+        "description": "Theo dõi, đối chiếu, thu hồi và báo cáo công nợ.",
+        "manager_username": "manager_tccn",
+        "parent_code": "tai-chinh-ke-toan",
+    },
+    {
+        "code": "tai-chinh-luong-phuc-loi",
+        "name": "Lương - Phúc lợi",
+        "description": "Tính lương, nâng lương, tăng lương, thưởng, KPI và phúc lợi tài chính.",
+        "manager_username": "manager_tclpl",
+        "parent_code": "tai-chinh-ke-toan",
+    },
 ]
 
-created_perms = {}
-for code, name, resource, action, description in permissions_data:
-    perm, created = Permission.objects.get_or_create(
-        code=code,
-        defaults={
-            'name': name,
-            'resource': resource,
-            'action': action,
-            'description': description
-        }
-    )
-    created_perms[code] = perm
-    if created:
-        print(f"    ✅ {code:30} | {resource:15} | {action:20}")
 
-print(f"  ✅ Total: {len(created_perms)} permissions created/verified")
+MAIN_DEPARTMENT_CODES = [
+    "ban-giam-doc",
+    "hanh-chinh-tong-hop",
+    "ky-thuat-kinh-te",
+    "tai-chinh-ke-toan",
+]
 
-# ============================================================================
-# 2. CREATE ROLES WITH APPROPRIATE PERMISSIONS
-# ============================================================================
-print("\n👥 [STEP 2/5] CREATING 3 ROLES WITH PERMISSIONS...")
 
-roles_data = {
-    'admin': {
-        'name': 'Administrator',
-        'description': 'Full system access - manage everything',
-        'is_system_role': True,
-        'permissions': [
-            # Admin can do everything
-            'system_admin', 'permission_manage', 'role_manage',
-            'user_create', 'user_read', 'user_update', 'user_delete', 'user_change_role', 'user_change_status', 'user_reset_password',
-            'document_create', 'document_read', 'document_update', 'document_delete', 'document_share', 'document_download', 'document_write',
-            'folder_create', 'folder_read', 'folder_update', 'folder_delete',
-            'department_create', 'department_read', 'department_update', 'department_manage',
-            'chat_create', 'chat_read', 'chat_send',
-            'rag_query', 'embedding_generate',
-            'audit_log_view'
-        ]
-    },
-    'manager': {
-        'name': 'Manager',
-        'description': 'Department manager - manage documents and team members',
-        'is_system_role': True,
-        'permissions': [
-            # Managers can manage their team and documents
-            'user_read', 'user_update', 'user_change_role',  # Manage team members
-            'document_create', 'document_read', 'document_update', 'document_delete', 'document_share', 'document_download', 'document_write',
-            'folder_create', 'folder_read', 'folder_update', 'folder_delete',
-            'department_read',
-            'chat_create', 'chat_read', 'chat_send',
-            'rag_query', 'embedding_generate',
-            'audit_log_view'
-        ]
-    },
-    'user': {
-        'name': 'User',
-        'description': 'Regular user - basic document and query access',
-        'is_system_role': True,
-        'permissions': [
-            # Regular users can only read and create basic items
-            'user_read',  # Can see user list
-            'document_read', 'document_create', 'document_download',  # Read and create
-            'folder_read',
-            'chat_create', 'chat_read', 'chat_send',
-            'rag_query',  # Can query RAG
-        ]
-    },
+SUB_DEPARTMENT_USER_PREFIXES = {
+    "hanh-chinh-nhan-su": "hcns",
+    "hanh-chinh-van-thu-luu-tru": "hcvt",
+    "hanh-chinh-tai-san-hau-can": "hcts",
+    "ky-thuat-quan-ly-du-an": "ktda",
+    "ky-thuat-chat-luong-an-toan": "ktcl",
+    "ky-thuat-du-toan-kinh-te": "ktdt",
+    "tai-chinh-ke-toan-thanh-toan": "tctt",
+    "tai-chinh-ke-toan-cong-no": "tccn",
+    "tai-chinh-luong-phuc-loi": "tclpl",
 }
 
-created_roles = {}
-for code, role_info in roles_data.items():
-    role, created = Role.objects.get_or_create(
-        code=code,
-        defaults={
-            'name': role_info['name'],
-            'description': role_info['description'],
-            'is_system_role': role_info['is_system_role']
+
+USERS = [
+    {
+        "username": "manager_bgd",
+        "email": "manager.bgd@abc-corp.local",
+        "first_name": "Trưởng ban",
+        "last_name": "Giám đốc",
+        "full_name": "Trưởng ban Giám đốc",
+        "department_code": "ban-giam-doc",
+        "role": "manager",
+        "password": MANAGER_PASSWORD,
+    },
+    {
+        "username": "manager_hcth",
+        "email": "manager.hcth@abc-corp.local",
+        "first_name": "Trưởng phòng",
+        "last_name": "Hành chính",
+        "full_name": "Trưởng phòng Hành chính - Tổng hợp",
+        "department_code": "hanh-chinh-tong-hop",
+        "role": "manager",
+        "password": MANAGER_PASSWORD,
+    },
+    {
+        "username": "manager_ktkt",
+        "email": "manager.ktkt@abc-corp.local",
+        "first_name": "Trưởng phòng",
+        "last_name": "Kỹ thuật",
+        "full_name": "Trưởng phòng Kỹ thuật - Kinh tế",
+        "department_code": "ky-thuat-kinh-te",
+        "role": "manager",
+        "password": MANAGER_PASSWORD,
+    },
+    {
+        "username": "manager_tckt",
+        "email": "manager.tckt@abc-corp.local",
+        "first_name": "Trưởng phòng",
+        "last_name": "Tài chính",
+        "full_name": "Trưởng phòng Tài chính - Kế toán",
+        "department_code": "tai-chinh-ke-toan",
+        "role": "manager",
+        "password": MANAGER_PASSWORD,
+    },
+]
+
+
+for dept in [item for item in DEPARTMENTS if item["code"] in SUB_DEPARTMENT_USER_PREFIXES]:
+    manager_username = dept["manager_username"]
+
+    USERS.append(
+        {
+            "username": manager_username,
+            "email": f"{manager_username.replace('_', '.')}@abc-corp.local",
+            "first_name": "Trưởng bộ phận",
+            "last_name": dept["name"],
+            "full_name": f"Trưởng bộ phận {dept['name']}",
+            "department_code": dept["code"],
+            "role": "manager",
+            "password": MANAGER_PASSWORD,
         }
     )
-    created_roles[code] = role
-    
-    # Assign permissions to role
-    perm_count = 0
-    for perm_code in role_info['permissions']:
-        if perm_code in created_perms:
-            RolePermission.objects.get_or_create(
-                role=role,
-                permission=created_perms[perm_code]
+
+
+for dept in [item for item in DEPARTMENTS if item["code"] in MAIN_DEPARTMENT_CODES]:
+    username_prefix = {
+        "ban-giam-doc": "bgd",
+        "hanh-chinh-tong-hop": "hcth",
+        "ky-thuat-kinh-te": "ktkt",
+        "tai-chinh-ke-toan": "tckt",
+    }[dept["code"]]
+
+    display_prefix = {
+        "ban-giam-doc": "Ban Giám đốc",
+        "hanh-chinh-tong-hop": "Hành chính - Tổng hợp",
+        "ky-thuat-kinh-te": "Kỹ thuật - Kinh tế",
+        "tai-chinh-ke-toan": "Tài chính - Kế toán",
+    }[dept["code"]]
+
+    for index in range(1, 4):
+        USERS.append(
+            {
+                "username": f"user_{username_prefix}_{index}",
+                "email": f"user.{username_prefix}.{index}@abc-corp.local",
+                "first_name": "Nhân viên",
+                "last_name": f"{display_prefix} {index}",
+                "full_name": f"Nhân viên {display_prefix} {index}",
+                "department_code": dept["code"],
+                "role": "user",
+                "password": USER_PASSWORD,
+            }
+        )
+
+
+for dept in [item for item in DEPARTMENTS if item["code"] in SUB_DEPARTMENT_USER_PREFIXES]:
+    username_prefix = SUB_DEPARTMENT_USER_PREFIXES[dept["code"]]
+
+    for index in range(1, 3):
+        USERS.append(
+            {
+                "username": f"user_{username_prefix}_{index}",
+                "email": f"user.{username_prefix}.{index}@abc-corp.local",
+                "first_name": "Nhân viên",
+                "last_name": f"{dept['name']} {index}",
+                "full_name": f"Nhân viên {dept['name']} {index}",
+                "department_code": dept["code"],
+                "role": "user",
+                "password": USER_PASSWORD,
+            }
+        )
+
+
+FOLDER_TREE = [
+    {
+        "name": "0-TAI-LIEU-CHUNG-CUA-TAT-CA-CAC-PHONG-BAN",
+        "department_code": None,
+        "access_scope": "company",
+        "children": [
+            {
+                "name": "01-NHUNG-QUY-DINH-CHUNG",
+                "children": [
+                    {"name": "01-01-QUY-DINH-NOI-QUY"},
+                    {"name": "01-03-BAO-MAT-THONG-TIN"},
+                    {"name": "01-04-AN-TOAN-LAO-DONG"},
+                    {"name": "01-05-KY-LUAT-LAO-DONG"},
+                ],
+            },
+            {"name": "05-MAU-BIEU-CHUNG"},
+            {"name": "06-KE-HOACH-TRIEN-KHAI"},
+        ],
+    },
+    {
+        "name": "1-BAN-GIAM-DOC",
+        "department_code": "ban-giam-doc",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-CHE"},
+            {"name": "02-QUYET-DINH"},
+            {"name": "03-KPI-LUONG"},
+            {
+                "name": "TAI-LIEU-HO-TRO",
+                "children": [
+                    {"name": "01-VAI-TRO-TRACH-NHIEM-CAP-QUAN-LY"},
+                ],
+            },
+        ],
+    },
+    {
+        "name": "2-PHONG-HANH-CHINH-TONG-HOP",
+        "department_code": "hanh-chinh-tong-hop",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-CHE"},
+            {"name": "02-QUY-TRINH-PHOI-HOP-NOI-BO"},
+            {"name": "TAI-LIEU-HO-TRO-CHUNG"},
+        ],
+    },
+    {
+        "name": "2.1-NHAN-SU",
+        "department_code": "hanh-chinh-nhan-su",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-CHE-NHAN-SU"},
+            {"name": "02-TUYEN-DUNG-BO-NHIEM-DIEU-CHUYEN"},
+            {"name": "03-PHUC-LOI-KHEN-THUONG"},
+            {"name": "04-DANH-GIA-CONG-VIEC-HO-SO-LUONG"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "2.2-VAN-THU-LUU-TRU",
+        "department_code": "hanh-chinh-van-thu-luu-tru",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-CHE-VAN-THU-LUU-TRU"},
+            {"name": "02-CONG-VAN-DI-DEN"},
+            {"name": "03-KIEM-SOAT-TAI-LIEU"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "2.3-TAI-SAN-HAU-CAN",
+        "department_code": "hanh-chinh-tai-san-hau-can",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUAN-LY-TAI-SAN-CONG-CU"},
+            {"name": "02-QUAN-LY-NHA-AN"},
+            {"name": "03-HAU-CAN-XE-THIET-BI"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "3-PHONG-KY-THUAT-KINH-TE",
+        "department_code": "ky-thuat-kinh-te",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-CHE"},
+            {"name": "02-QUY-TRINH-PHOI-HOP-KY-THUAT"},
+            {"name": "TAI-LIEU-HO-TRO-CHUNG"},
+        ],
+    },
+    {
+        "name": "3.1-QUAN-LY-DU-AN",
+        "department_code": "ky-thuat-quan-ly-du-an",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-TRINH-DU-AN"},
+            {"name": "02-HO-SO-DU-AN"},
+            {"name": "03-TIEN-DO-BAN-GIAO"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "3.2-CHAT-LUONG-AN-TOAN",
+        "department_code": "ky-thuat-chat-luong-an-toan",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-CHAT-LUONG-KPI"},
+            {"name": "02-AN-TOAN-LAO-DONG"},
+            {"name": "03-NGHIEM-THU-KIEM-SOAT-LOI"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "3.3-DU-TOAN-KINH-TE",
+        "department_code": "ky-thuat-du-toan-kinh-te",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-DU-TOAN-KINH-TE"},
+            {"name": "02-DINH-MUC-CHI-PHI"},
+            {"name": "03-HO-SO-KINH-TE-KY-THUAT"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "4-PHONG-TAI-CHINH-KE-TOAN",
+        "department_code": "tai-chinh-ke-toan",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-CHE"},
+            {"name": "02-QUY-TRINH-PHOI-HOP-TAI-CHINH"},
+            {"name": "TAI-LIEU-HO-TRO-CHUNG"},
+        ],
+    },
+    {
+        "name": "4.1-KE-TOAN-THANH-TOAN",
+        "department_code": "tai-chinh-ke-toan-thanh-toan",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-QUY-TRINH-THANH-TOAN"},
+            {"name": "02-TAM-UNG-HOAN-UNG"},
+            {"name": "03-THANH-TOAN-CONG-TAC-PHI"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "4.2-KE-TOAN-CONG-NO",
+        "department_code": "tai-chinh-ke-toan-cong-no",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-KE-TOAN-CONG-NO"},
+            {"name": "02-DOI-CHIEU-CONG-NO"},
+            {"name": "03-THU-HOI-BAO-CAO-CONG-NO"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+    {
+        "name": "4.3-LUONG-PHUC-LOI",
+        "department_code": "tai-chinh-luong-phuc-loi",
+        "access_scope": "department",
+        "children": [
+            {"name": "01-LUONG-KPI"},
+            {"name": "02-LUONG-PHUC-LOI"},
+            {"name": "03-THUONG-NANG-LUONG"},
+            {"name": "TAI-LIEU-HO-TRO"},
+        ],
+    },
+]
+
+
+def get_or_restore(model, lookup, defaults=None):
+    defaults = defaults or {}
+    obj = model.objects.all_records().filter(**lookup).first()
+    created = False
+
+    if obj is None:
+        data = {**lookup, **defaults}
+        obj = model.objects.create(**data)
+        created = True
+    else:
+        changed_fields = []
+        if getattr(obj, "is_deleted", False):
+            obj.is_deleted = False
+            obj.deleted_at = None
+            changed_fields.extend(["is_deleted", "deleted_at"])
+
+        for field, value in defaults.items():
+            if getattr(obj, field) != value:
+                setattr(obj, field, value)
+                changed_fields.append(field)
+
+        if changed_fields:
+            obj.save(update_fields=list(dict.fromkeys(changed_fields + ["updated_at"])))
+
+    return obj, created
+
+
+def reset_documents_and_folders():
+    HumanFeedback.objects.all_records().hard_delete()
+    Message.objects.all_records().hard_delete()
+    ConversationAttachedDocument.objects.all_records().hard_delete()
+    ConversationAttachedFolder.objects.all_records().hard_delete()
+    Conversation.objects.all_records().hard_delete()
+    AsyncTask.objects.all_records().hard_delete()
+    DocumentEmbedding.objects.all_records().hard_delete()
+    DocumentAsset.objects.all_records().hard_delete()
+    DocumentPermission.objects.all_records().hard_delete()
+    UserDocumentCache.objects.all_records().hard_delete()
+    FolderPermission.objects.all_records().hard_delete()
+    DocumentChunk.objects.all_records().hard_delete()
+    Document.objects.all_records().hard_delete()
+    Folder.objects.all_records().hard_delete()
+
+
+def reset_accounts_and_departments(target_usernames):
+    AccountRole.objects.all_records().exclude(account__username__in=target_usernames).hard_delete()
+    UserProfile.objects.all_records().exclude(account__username__in=target_usernames).hard_delete()
+    Account.objects.exclude(username__in=target_usernames).delete()
+    Department.objects.all_records().hard_delete()
+
+
+def load_existing_roles():
+    roles = {}
+    for code in ("admin", "manager", "user"):
+        role = Role.objects.filter(code=code, is_deleted=False).first()
+        if role is None:
+            raise RuntimeError(
+                f"Required role '{code}' does not exist. "
+                "Create roles/permissions before running this seed."
             )
-            perm_count += 1
-    
-    status = "✅ Created" if created else "⚠️  Updated"
-    print(f"    {status}: {role.name:20} | {perm_count:3} permissions assigned")
+        roles[code] = role
+        print(f"  ready role: {code}")
+    return roles
 
-print(f"  ✅ Total: {len(created_roles)} roles ready")
 
-# ============================================================================
-# 3. CREATE DEPARTMENTS (5 departments as required)
-# ============================================================================
-print("\n🏢 [STEP 3/5] CREATING 5 DEPARTMENTS...")
+def load_existing_admin():
+    admin = Account.objects.filter(
+        username=ADMIN_USERNAME,
+        is_deleted=False,
+        status="active",
+    ).first()
 
-departments_data = [
-    {'name': 'IT', 'code': 'it', 'description': 'Information Technology Department'},
-    {'name': 'HR', 'code': 'hr', 'description': 'Human Resources Department'},
-    {'name': 'DevOps', 'code': 'devops', 'description': 'DevOps & Infrastructure Department'},
-    {'name': 'Sale', 'code': 'sale', 'description': 'Sales Department'},
-    {'name': 'Manager', 'code': 'mgmt', 'description': 'Management Department'},
-]
+    if admin is None:
+        admin = Account.objects.filter(
+            is_superuser=True,
+            is_deleted=False,
+            status="active",
+        ).order_by("username").first()
 
-created_depts = {}
-for dept_info in departments_data:
-    dept, created = Department.objects.get_or_create(
-        name=dept_info['name'],
-        defaults={
-            'description': dept_info['description'],
-            'parent': None  # All departments are top-level
-        }
-    )
-    created_depts[dept_info['name']] = dept
-    status = "✅ Created" if created else "⚠️  Exists"
-    print(f"    {status}: {dept.name:15} | {dept.description}")
+    if admin is None:
+        raise RuntimeError(
+            "No active admin account found. "
+            "Set SEED_ADMIN_USERNAME to an existing admin username."
+        )
 
-print(f"  ✅ Total: {len(created_depts)} departments created")
+    admin_role = Role.objects.filter(code="admin", is_deleted=False).first()
+    if admin_role and not AccountRole.objects.filter(
+        account=admin,
+        role=admin_role,
+        is_deleted=False,
+    ).exists():
+        raise RuntimeError(
+            f"Account '{admin.username}' exists but does not have the admin role."
+        )
 
-# ============================================================================
-# 4. CREATE 11 ACCOUNTS (1 Admin + 4 Managers + 5 Employees)
-# ============================================================================
-print("\n👤 [STEP 4/5] CREATING 11 ACCOUNTS WITH USER PROFILES...")
+    print(f"  using existing admin: {admin.username} ({admin.email})")
+    return admin
 
-test_accounts = [
-    # 1 ADMIN
-    {
-        'username': 'admin',
-        'email': 'admin@company.com',
-        'first_name': 'Tổng',
-        'last_name': 'Quản Lý',
-        'password': 'Admin@123456',
-        'department': None,  # Admin không có department
-        'roles': ['admin'],
-        'status': 'active'
-    },
-    
-    # 4 MANAGERS (1 per department, except Manager department)
-    {
-        'username': 'manager_it',
-        'email': 'manager.it@company.com',
-        'first_name': 'Quản Lý',
-        'last_name': 'IT',
-        'password': 'Manager@123456',
-        'department': 'IT',
-        'roles': ['manager'],
-        'status': 'active'
-    },
-    {
-        'username': 'manager_hr',
-        'email': 'manager.hr@company.com',
-        'first_name': 'Quản Lý',
-        'last_name': 'HR',
-        'password': 'Manager@123456',
-        'department': 'HR',
-        'roles': ['manager'],
-        'status': 'active'
-    },
-    {
-        'username': 'manager_devops',
-        'email': 'manager.devops@company.com',
-        'first_name': 'Quản Lý',
-        'last_name': 'DevOps',
-        'password': 'Manager@123456',
-        'department': 'DevOps',
-        'roles': ['manager'],
-        'status': 'active'
-    },
-    {
-        'username': 'manager_sale',
-        'email': 'manager.sale@company.com',
-        'first_name': 'Quản Lý',
-        'last_name': 'Sale',
-        'password': 'Manager@123456',
-        'department': 'Sale',
-        'roles': ['manager'],
-        'status': 'active'
-    },
-    
-    # 5 EMPLOYEES (distributed across 5 departments)
-    {
-        'username': 'employee_it_1',
-        'email': 'emp.it1@company.com',
-        'first_name': 'Nhân Viên',
-        'last_name': 'IT 1',
-        'password': 'Employee@123456',
-        'department': 'IT',
-        'roles': ['user'],
-        'status': 'active'
-    },
-    {
-        'username': 'employee_hr_1',
-        'email': 'emp.hr1@company.com',
-        'first_name': 'Nhân Viên',
-        'last_name': 'HR 1',
-        'password': 'Employee@123456',
-        'department': 'HR',
-        'roles': ['user'],
-        'status': 'active'
-    },
-    {
-        'username': 'employee_devops_1',
-        'email': 'emp.devops1@company.com',
-        'first_name': 'Nhân Viên',
-        'last_name': 'DevOps 1',
-        'password': 'Employee@123456',
-        'department': 'DevOps',
-        'roles': ['user'],
-        'status': 'active'
-    },
-    {
-        'username': 'employee_sale_1',
-        'email': 'emp.sale1@company.com',
-        'first_name': 'Nhân Viên',
-        'last_name': 'Sale 1',
-        'password': 'Employee@123456',
-        'department': 'Sale',
-        'roles': ['user'],
-        'status': 'active'
-    },
-    {
-        'username': 'employee_mgmt_1',
-        'email': 'emp.mgmt1@company.com',
-        'first_name': 'Nhân Viên',
-        'last_name': 'Manager 1',
-        'password': 'Employee@123456',
-        'department': 'Manager',
-        'roles': ['user'],
-        'status': 'active'
-    },
-]
 
-created_accounts = {}
-account_counter = {'total': 0, 'created': 0}
+def seed_departments():
+    departments = {}
+    for item in DEPARTMENTS:
+        dept, created = get_or_restore(
+            Department,
+            {"name": item["name"]},
+            {
+                "description": item["description"],
+                "parent": None,
+                "manager": None,
+            },
+        )
+        departments[item["code"]] = dept
+        print(f"  {'created' if created else 'ready'} department: {item['name']}")
 
-for acc_info in test_accounts:
-    account, created = Account.objects.get_or_create(
-        username=acc_info['username'],
-        defaults={
-            'email': acc_info['email'],
-            'first_name': acc_info['first_name'],
-            'last_name': acc_info['last_name'],
-            'status': acc_info['status'],
-            'is_staff': 'admin' in acc_info['roles'],
-            'is_superuser': 'admin' in acc_info['roles'],
-        }
-    )
-    
-    if created:
-        account.set_password(acc_info['password'])
+    for item in DEPARTMENTS:
+        parent_code = item.get("parent_code")
+        parent = departments.get(parent_code) if parent_code else None
+        dept = departments[item["code"]]
+        if dept.parent_id != (parent.id if parent else None):
+            dept.parent = parent
+            dept.save(update_fields=["parent", "updated_at"])
+
+    return departments
+
+
+def ensure_account(user_data, departments, roles):
+    role = roles[user_data["role"]]
+    department = departments.get(user_data["department_code"])
+
+    account = Account.objects.filter(username=user_data["username"]).first()
+    created = False
+
+    if account is None:
+        account = Account(
+            username=user_data["username"],
+            email=user_data["email"],
+            first_name=user_data["first_name"],
+            last_name=user_data["last_name"],
+            status="active",
+            is_active=True,
+            is_staff=user_data.get("is_staff", False),
+            is_superuser=user_data.get("is_superuser", False),
+            is_deleted=False,
+            deleted_at=None,
+        )
+        account.set_password(user_data["password"])
         account.save()
-        account_counter['created'] += 1
-    
-    account_counter['total'] += 1
-    created_accounts[acc_info['username']] = account
-    
-    # ========================================
-    # CREATE USER PROFILE (Maps Account to Department)
-    # ========================================
-    dept = None
-    if acc_info['department']:
-        dept = created_depts.get(acc_info['department'])
-    
-    user_profile, profile_created = UserProfile.objects.get_or_create(
-        account=account,
-        defaults={
-            'full_name': f"{acc_info['first_name']} {acc_info['last_name']}",
-            'department': dept
-        }
+        created = True
+    else:
+        account.email = user_data["email"]
+        account.first_name = user_data["first_name"]
+        account.last_name = user_data["last_name"]
+        account.status = "active"
+        account.is_active = True
+        account.is_staff = user_data.get("is_staff", False)
+        account.is_superuser = user_data.get("is_superuser", False)
+        account.is_deleted = False
+        account.deleted_at = None
+        account.set_password(user_data["password"])
+        account.save()
+
+    profile, _ = get_or_restore(
+        UserProfile,
+        {"account": account},
+        {
+            "full_name": user_data["full_name"],
+            "department": department,
+            "metadata": {
+                "seeded_by": "seed_production_data",
+                "role": user_data["role"],
+            },
+        },
     )
-    
-    # Update profile if department changed
-    if not profile_created and user_profile.department != dept:
-        user_profile.department = dept
-        user_profile.save()
-    
-    # ========================================
-    # ASSIGN ROLES
-    # ========================================
-    for role_code in acc_info['roles']:
-        if role_code in created_roles:
-            AccountRole.objects.get_or_create(
-                account=account,
-                role=created_roles[role_code],
-                defaults={'granted_by': account}
-            )
-    
-    # Print account info
-    status = "✅ Created" if created else "⚠️  Exists"
-    dept_name = acc_info['department'] if acc_info['department'] else 'N/A'
-    roles_str = ', '.join(acc_info['roles'])
-    print(f"    {status}: {acc_info['username']:20} | Dept: {dept_name:15} | Role: {roles_str:15} | Pass: {acc_info['password']}")
+    if profile.department_id != (department.id if department else None):
+        profile.department = department
+        profile.save(update_fields=["department", "updated_at"])
 
-print(f"  ✅ Total: {account_counter['total']} accounts ({account_counter['created']} created)")
+    AccountRole.objects.all_records().filter(account=account).exclude(role=role).hard_delete()
+    account_role, _ = get_or_restore(
+        AccountRole,
+        {"account": account, "role": role},
+        {
+            "granted_by": None,
+            "notes": "Seeded by seed_production_data.py",
+        },
+    )
 
-# ============================================================================
-# 5. VERIFY DATA
-# ============================================================================
-print("\n✅ [STEP 5/5] VERIFYING DATA...")
+    return account, account_role, created
 
-# Verify permissions
-perm_count = Permission.objects.filter(is_deleted=False).count()
-print(f"    📋 Permissions: {perm_count} total")
 
-# Verify roles
-role_count = Role.objects.filter(is_deleted=False).count()
-role_perm_count = RolePermission.objects.filter(is_deleted=False).count()
-print(f"    👥 Roles: {role_count} total | {role_perm_count} role-permission mappings")
+def assign_department_managers(departments, accounts_by_username):
+    for item in DEPARTMENTS:
+        manager_username = item.get("manager_username")
+        if not manager_username:
+            continue
+        manager = accounts_by_username[manager_username]
+        dept = departments[item["code"]]
+        dept.manager = manager
+        dept.save(update_fields=["manager", "updated_at"])
+        dept.managers.set([manager])
 
-# Verify departments
-dept_count = Department.objects.filter(is_deleted=False).count()
-print(f"    🏢 Departments: {dept_count} total")
 
-# Verify accounts and profiles
-account_count = Account.objects.filter(is_deleted=False).count()
-profile_count = UserProfile.objects.filter(is_deleted=False).count()
-account_roles = AccountRole.objects.filter(is_deleted=False).count()
-print(f"    👤 Accounts: {account_count} total | User Profiles: {profile_count} | Account-Role mappings: {account_roles}")
+def seed_folder_node(node, parent, inherited_department, inherited_scope, departments, admin_account):
+    department_code = node.get("department_code", inherited_department)
+    access_scope = node.get("access_scope", inherited_scope)
+    department = departments.get(department_code) if department_code else None
 
-# ============================================================================
-# PRINT SUMMARY
-# ============================================================================
-print("\n" + "=" * 80)
-print("✨ SEEDING COMPLETE!")
-print("=" * 80)
-print("""
-📊 SUMMARY:
-  • Permissions: All API-based permissions created
-  • Roles: admin, manager, user (with appropriate permissions)
-  • Departments: IT, HR, DevOps, Sale, Manager
-  • Accounts: 11 total (1 admin + 4 managers + 5 employees)
-  • User Profiles: Automatically created with department assignment
+    folder = Folder.objects.create(
+        name=node["name"],
+        parent=parent,
+        department=department,
+        access_scope=access_scope,
+        description=node.get("description") or "",
+        metadata={
+            "seeded_by": "seed_production_data",
+            "department_code": department_code,
+        },
+        created_by=admin_account,
+    )
 
-🔐 TEST CREDENTIALS:
-  Admin:
-    - Username: admin_tong
-    - Password: Admin@123456
+    for child in node.get("children", []):
+        seed_folder_node(
+            child,
+            folder,
+            department_code,
+            access_scope,
+            departments,
+            admin_account,
+        )
 
-  Managers (1 per department):
-    - manager_it / Manager@123456
-    - manager_hr / Manager@123456
-    - manager_devops / Manager@123456
-    - manager_sale / Manager@123456
+    return folder
 
-  Employees (5 total):
-    - employee_it_1 / Employee@123456
-    - employee_hr_1 / Employee@123456
-    - employee_devops_1 / Employee@123456
-    - employee_sale_1 / Employee@123456
-    - employee_mgmt_1 / Employee@123456
 
-📋 NOTE:
-  ✓ Documents & Folders: You'll create these separately via API
-  ✓ All permissions are mapped to actual backend APIs
-  ✓ Role permissions are appropriate for each role
-  ✓ Department hierarchy is flat (all departments are top-level)
-""")
-print("=" * 80 + "\n")
+def seed_folders(departments, admin_account):
+    for root_node in FOLDER_TREE:
+        seed_folder_node(
+            root_node,
+            parent=None,
+            inherited_department=root_node.get("department_code"),
+            inherited_scope=root_node.get("access_scope", "company"),
+            departments=departments,
+            admin_account=admin_account,
+        )
+
+
+def print_summary(admin_account):
+    print("\nSeed summary")
+    print("-" * 80)
+    print(f"Departments: {Department.objects.filter(is_deleted=False).count()}")
+    print(f"Accounts:    {Account.objects.filter(is_deleted=False).count()}")
+    print(f"Profiles:    {UserProfile.objects.filter(is_deleted=False).count()}")
+    print(f"Folders:     {Folder.objects.filter(is_deleted=False).count()}")
+    print(f"Documents:   {Document.objects.filter(is_deleted=False).count()} (expected 0)")
+    print("")
+    print("Credentials")
+    print("-" * 80)
+    print(f"admin:           existing account '{admin_account.username}' (password unchanged)")
+    print(f"manager default: <manager_username> / {MANAGER_PASSWORD}")
+    print(f"user default:    <user_username> / {USER_PASSWORD}")
+    print("")
+    print("Manager usernames")
+    print("-" * 80)
+    for dept in DEPARTMENTS:
+        manager_username = dept.get("manager_username")
+        if manager_username:
+            print(f"{dept['name']}: {manager_username}")
+
+
+@transaction.atomic
+def run():
+    print("\n" + "=" * 80)
+    print("ABC CORP PRODUCTION SEED")
+    print("=" * 80)
+    print(f"Reset data: {RESET_DATA}")
+
+    print("\nLoading existing roles and admin...")
+    roles = load_existing_roles()
+    admin_account = load_existing_admin()
+    target_usernames = {item["username"] for item in USERS}
+    target_usernames.add(admin_account.username)
+
+    if RESET_DATA:
+        print("\nResetting old documents, folders, accounts and departments...")
+        reset_documents_and_folders()
+        reset_accounts_and_departments(target_usernames)
+
+    print("\nSeeding departments...")
+    departments = seed_departments()
+
+    print("\nSeeding accounts...")
+    accounts_by_username = {}
+    for item in USERS:
+        account, _, created = ensure_account(item, departments, roles)
+        accounts_by_username[item["username"]] = account
+        dept_label = item["department_code"] or "none"
+        print(
+            f"  {'created' if created else 'ready'} account: "
+            f"{item['username']} | role={item['role']} | department={dept_label}"
+        )
+
+    assign_department_managers(departments, accounts_by_username)
+
+    print("\nSeeding folders...")
+    Folder.objects.all_records().hard_delete()
+    seed_folders(departments, admin_account)
+
+    print_summary(admin_account)
+    print("\nDone. Upload documents manually into the seeded folders.")
+    print("=" * 80 + "\n")
+
+
+run()
