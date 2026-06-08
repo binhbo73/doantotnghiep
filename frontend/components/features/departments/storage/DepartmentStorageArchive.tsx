@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Department Storage Archive Tab Component
  * Main container for browsing department documents and folders
  */
 
-'use client';
+
 
 import React, { useState } from 'react';
 import { Search, Loader2, AlertCircle } from 'lucide-react';

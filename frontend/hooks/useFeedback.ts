@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * useFeedback Hook - Manage message feedback (upvote/downvote)
  * 
@@ -9,7 +11,7 @@
  * - Optimistic UI updates
  */
 
-'use client'
+
 
 import { useState, useCallback } from 'react'
 import { chatService, type Feedback, type FeedbackRequest, type FeedbackStats } from '@/services/chat'

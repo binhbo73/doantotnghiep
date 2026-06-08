@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Custom Hook: useDepartmentOptions
  * Fetches department data for dropdowns.
  */
 
-'use client'
+
 
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'

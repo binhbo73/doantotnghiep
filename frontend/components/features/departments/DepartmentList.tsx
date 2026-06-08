@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { Trash2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -80,7 +81,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onDelete, deletingI
                         <p className="text-[10px] font-bold opacity-80 uppercase tracking-widest mb-1">Hành động</p>
                         <p className="text-base font-bold leading-tight">Thêm phòng<br />ban mới</p>
                     </div>
-                    <span className="material-symbols-outlined text-3xl opacity-80">add_circle</span>
+                    <AppIcon name="add_circle" className="text-3xl opacity-80" />
                 </div>
             </div>
 
@@ -88,7 +89,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onDelete, deletingI
             <div className="flex flex-col md:flex-row gap-3 mb-4 items-center justify-between">
                 <div className="relative w-full md:w-96">
                     <span className="absolute inset-y-0 left-3 flex items-center text-slate-400">
-                        <span className="material-symbols-outlined text-lg">search</span>
+                        <AppIcon name="search" className="text-lg" />
                     </span>
                     <input
                         className="w-full pl-10 pr-3 py-2 bg-white border border-[#e0c0b1]/30 rounded-xl text-xs focus:ring-2 focus:ring-[#9d4300]/20 transition-all outline-none"
@@ -158,7 +159,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onDelete, deletingI
                                                     className="p-1.5 text-slate-400 hover:text-[#9d4300] bg-white hover:bg-orange-50 rounded shadow-sm border border-transparent transition-all"
                                                     title="Xem chi tiết"
                                                 >
-                                                    <span className="material-symbols-outlined text-base">open_in_new</span>
+                                                    <AppIcon name="open_in_new" className="text-base" />
                                                 </button>
                                                 {onEdit && canEditDept() && (
                                                     <button
@@ -166,7 +167,7 @@ export function DepartmentList({ departments, onAdd, onEdit, onDelete, deletingI
                                                         className="p-1.5 text-slate-400 hover:text-blue-600 bg-white hover:bg-blue-50 rounded shadow-sm border border-transparent transition-all"
                                                         title="Chỉnh sửa phòng ban"
                                                     >
-                                                        <span className="material-symbols-outlined text-base">edit</span>
+                                                        <AppIcon name="edit" className="text-base" />
                                                     </button>
                                                 )}
                                                 {onDelete && (
@@ -195,12 +196,12 @@ export function DepartmentList({ departments, onAdd, onEdit, onDelete, deletingI
                     <p className="text-[11px] font-medium text-slate-400">Hiển thị 1-{Math.min(10, totalDepartments)} trong số {totalDepartments} phòng ban</p>
                     <div className="flex gap-1">
                         <button className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-100 text-slate-400 hover:bg-slate-50 disabled:opacity-50" disabled>
-                            <span className="material-symbols-outlined text-xs">chevron_left</span>
+                            <AppIcon name="chevron_left" className="text-xs" />
                         </button>
                         <button className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#f97316] text-white text-[11px] font-bold shadow-md">1</button>
                         <button className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-50 text-[11px] font-medium text-slate-600">2</button>
                         <button className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-100 text-slate-400 hover:bg-slate-50">
-                            <span className="material-symbols-outlined text-xs">chevron_right</span>
+                            <AppIcon name="chevron_right" className="text-xs" />
                         </button>
                     </div>
                 </div>

@@ -82,10 +82,16 @@ class QueryRouter:
             elif user_context.get('document_id'):
                 document_ids = [str(user_context['document_id'])]
 
+        include_historical = bool((user_context or {}).get('include_historical'))
         qdrant_filter: Dict[str, Any] = {'node_type': 'detail'}
-        if explicit_document_ids:
-            qdrant_filter['document_id'] = explicit_document_ids
-        elif folder_ids:
+        if include_historical:
+            qdrant_filter['__include_historical'] = True
+        else:
+            qdrant_filter['is_current'] = True
+        # HybridRetriever already receives the fully resolved document scope.
+        # Do not replace it with only the explicitly selected current version:
+        # amendment retrieval also needs inherited ancestor document IDs.
+        if folder_ids:
             qdrant_filter['folder_id'] = folder_ids
 
         page_numbers = (user_context or {}).get('page_numbers') or []

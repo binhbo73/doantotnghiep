@@ -28,6 +28,7 @@ class QdrantClient:
     """Qdrant vector database client."""
 
     ASSET_COLLECTION_NAME = "document_assets"
+    _payload_indexes_initialized = set()
 
     def __init__(
         self, url: str = None, collection: str = None,
@@ -48,6 +49,7 @@ class QdrantClient:
             raise VectorDatabaseError("QDRANT_URL not configured in settings")
 
         self._ensure_collection()
+        self._ensure_payload_indexes()
         logger.info(f"QdrantClient initialized: {self.url} collection={self.collection}")
 
     # ============================================================================
@@ -225,6 +227,30 @@ class QdrantClient:
             logger.error(f"Error deleting by filter: {str(e)}")
             return 0
 
+    def set_payload_by_filter(
+        self,
+        filter_payload: Dict[str, Any],
+        payload: Dict[str, Any],
+    ) -> bool:
+        """Update selected payload fields for all points matching a filter."""
+        filter_query = {
+            "must": [
+                {"key": key, "match": {"any": value} if isinstance(value, list) else {"value": value}}
+                for key, value in (filter_payload or {}).items()
+            ]
+        }
+        try:
+            response = self._request_with_retry(
+                "POST",
+                f"{self.url}/collections/{self.collection}/points/payload",
+                params={"wait": "true"},
+                json={"payload": payload or {}, "filter": filter_query},
+            )
+            return response.status_code in (200, 202)
+        except Exception as exc:
+            logger.error("Error updating Qdrant payload by filter: %s", exc)
+            return False
+
     # ============================================================================
     # ASSET COLLECTION (document_assets)
     # ============================================================================
@@ -382,6 +408,38 @@ class QdrantClient:
         if resp.status_code != 200:
             raise VectorDatabaseError(f"Failed to create collection: {resp.status_code}")
         logger.info(f"Collection '{self.collection}' created")
+
+    def _ensure_payload_indexes(self):
+        """Create indexes used by document-version and access filters once per process."""
+        cache_key = (self.url, self.collection)
+        if cache_key in self._payload_indexes_initialized:
+            return
+
+        schemas = {
+            'document_id': 'keyword',
+            'logical_document_id': 'keyword',
+            'chunk_id': 'keyword',
+            'lineage_id': 'keyword',
+            'is_current': 'bool',
+            'version_number': 'integer',
+            'node_type': 'keyword',
+        }
+        for field_name, field_schema in schemas.items():
+            try:
+                response = self._request_with_retry(
+                    'PUT',
+                    f"{self.url}/collections/{self.collection}/index",
+                    json={'field_name': field_name, 'field_schema': field_schema},
+                )
+                if response.status_code not in (200, 201, 202, 409):
+                    logger.warning(
+                        "Qdrant payload index creation failed field=%s status=%s",
+                        field_name,
+                        response.status_code,
+                    )
+            except Exception as exc:
+                logger.warning("Qdrant payload index creation failed field=%s: %s", field_name, exc)
+        self._payload_indexes_initialized.add(cache_key)
 
     def _request_with_retry(self, method: str, url: str, **kwargs) -> requests.Response:
         """HTTP request with retry logic."""

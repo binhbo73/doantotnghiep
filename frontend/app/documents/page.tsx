@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Example: Documents Page Component
  * Demonstrates the complete flow from component → hooks → services → API
  */
 
-'use client'
+
 
 import { useState } from 'react'
 import { useDocuments, useDeleteDocument, useUploadDocuments } from '@/hooks/useDocument'

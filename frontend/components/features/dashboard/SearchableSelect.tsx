@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * SearchableSelect Component - Dropdown với tìm kiếm
  * Giải quyết vấn đề dropdown quá dài
  */
 
-'use client'
+
 
 import React, { useState, useRef, useEffect } from 'react'
 

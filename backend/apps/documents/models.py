@@ -133,6 +133,38 @@ class Document(BaseModel):
     doc_language = models.CharField(max_length=10, default='vi', help_text="Document language (vi, en, etc.)")
     metadata = models.JSONField(default=dict, blank=True, help_text="Additional metadata")
     version = models.IntegerField(default=1, help_text="Version number (for updates)")
+    logical_document_id = models.UUIDField(
+        default=uuid.uuid4,
+        db_index=True,
+        help_text="Stable identity shared by all versions of the same document",
+    )
+    previous_version = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='next_versions',
+        help_text="Immediately preceding document version",
+    )
+    is_current = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Whether this is the effective version used by default retrieval",
+    )
+    version_state = models.CharField(
+        max_length=20,
+        default='active',
+        choices=[
+            ('staging', 'Staging'),
+            ('active', 'Active'),
+            ('superseded', 'Superseded'),
+            ('failed', 'Failed'),
+        ],
+        help_text="Lifecycle state of this document version",
+    )
+    valid_from = models.DateTimeField(null=True, blank=True)
+    valid_to = models.DateTimeField(null=True, blank=True)
+    change_summary = models.TextField(blank=True, default='')
     embedding_model = models.CharField(
         max_length=100,
         default="mistral-embed",
@@ -180,6 +212,15 @@ class Document(BaseModel):
             models.Index(fields=['status', 'is_deleted']),
             models.Index(fields=['created_at'], name='idx_documents_created_at'),
             models.Index(fields=['is_deleted']),
+            models.Index(fields=['logical_document_id', '-version'], name='documents_logical_d6949b_idx'),
+            models.Index(fields=['is_current', 'status', 'is_deleted'], name='documents_is_curr_8cb26e_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['logical_document_id'],
+                condition=models.Q(is_current=True, is_deleted=False),
+                name='uniq_current_document_version',
+            ),
         ]
 
     def __str__(self):
@@ -223,6 +264,36 @@ class DocumentChunk(BaseModel):
         related_name='prev_chunk_ref',
         help_text="Next chunk in sequence"
     )
+    previous_version_chunk = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='next_version_chunks',
+        help_text="Best matching chunk in the previous document version",
+    )
+    lineage_id = models.UUIDField(
+        default=uuid.uuid4,
+        db_index=True,
+        help_text="Stable logical identity for a chunk across document versions",
+    )
+    is_current = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Whether the chunk belongs to the effective document version",
+    )
+    change_type = models.CharField(
+        max_length=20,
+        default='original',
+        choices=[
+            ('original', 'Original'),
+            ('unchanged', 'Unchanged'),
+            ('modified', 'Modified'),
+            ('added', 'Added'),
+            ('removed', 'Removed'),
+        ],
+        help_text="How this chunk differs from its previous version",
+    )
     node_type = models.CharField(
         max_length=50,
         default='detail',
@@ -243,31 +314,7 @@ class DocumentChunk(BaseModel):
     metadata = models.JSONField(
         default=dict,
         blank=True,
-        help_text="""
-        Additional metadata with following keys (if available from Mineru/structured parsing):
-        - block_type: str ('paragraph'|'table'|'image'|'equation'|'list'|'code'|'title'|'ocr_text')
-        - block_types: List[str] (mixed types if chunk contains multiple blocks)
-        - bbox: List[float] [x0, y0, x1, y1] (bounding box from Mineru)
-        - bboxes: List[List[float]] (multiple bounding boxes if mixed)
-        - heading_path: List[str] (document hierarchy: ['Chapter 1', 'Section 1.2', ...])
-        - hierarchy_level: int (nesting depth in document structure)
-        - reading_order_start: int (order in page from Mineru)
-        - reading_order_end: int
-        - parse_backend: str ('local_page_aware', 'mineru', 'docling', etc.)
-        - structured_chunk: bool (True if from structured parser)
-        - line_start: int (line number in original document)
-        - line_end: int
-        - page_range: List[int] [min_page, max_page]
-        - structured_split: bool (True if further split from structured block)
-        - start_char: int (character position in original text)
-        - end_char: int
-        - token_start: int (token position in word spans)
-        - token_end: int
-        - content_hash: str (MD5 hash of content for idempotency)
-        - source: str (source of chunk: 'parser'|'excel_chunker_v2'|'raptor_summary', etc.)
-        - raptor_level: int (depth in RAPTOR tree, if applicable)
-        - raptor_cluster_id: str (cluster ID in RAPTOR, if applicable)
-        """
+        help_text="Additional metadata (position, heading, etc.)",
     )
     search_vector = SearchVectorField(null=True, blank=True, verbose_name="FTS Search Vector")
 
@@ -282,12 +329,58 @@ class DocumentChunk(BaseModel):
             models.Index(fields=['page_number']),
             models.Index(fields=['prev_chunk_id'], name='idx_chunk_prev'),
             models.Index(fields=['next_chunk_id'], name='idx_chunk_next'),
+            models.Index(fields=['previous_version_chunk_id'], name='idx_chunk_prev_version'),
+            models.Index(fields=['lineage_id', 'is_current'], name='idx_chunk_lineage_current'),
             models.Index(fields=['is_deleted']),
             GinIndex(fields=['search_vector'], name='docchunk_search_vec_gin'),
         ]
 
     def __str__(self):
         return f"Chunk {self.chunk_index} of {self.document.original_name}"
+
+
+class ChunkRevisionLink(BaseModel):
+    """Explicit many-to-many lineage for chunk replacements, splits, and merges."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    from_chunk = models.ForeignKey(
+        DocumentChunk,
+        on_delete=models.CASCADE,
+        related_name='revision_links_from',
+    )
+    to_chunk = models.ForeignKey(
+        DocumentChunk,
+        on_delete=models.CASCADE,
+        related_name='revision_links_to',
+    )
+    relation = models.CharField(
+        max_length=20,
+        choices=[
+            ('replaces', 'Replaces'),
+            ('unchanged', 'Unchanged'),
+            ('splits', 'Splits'),
+            ('merges', 'Merges'),
+            ('references', 'References'),
+        ],
+        default='replaces',
+    )
+    confidence = models.FloatField(default=1.0)
+    match_method = models.CharField(max_length=50, default='deterministic')
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'chunk_revision_links'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['from_chunk', 'to_chunk', 'relation'],
+                name='uniq_chunk_revision_relation',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['from_chunk_id'], name='chunk_revis_from_ch_9b19bb_idx'),
+            models.Index(fields=['to_chunk_id'], name='chunk_revis_to_chun_54dce7_idx'),
+            models.Index(fields=['relation'], name='chunk_revis_relatio_bc696a_idx'),
+        ]
 
 
 class DocumentPermission(BaseModel):

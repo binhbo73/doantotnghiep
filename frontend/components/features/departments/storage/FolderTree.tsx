@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Folder Tree Component
  * Displays hierarchical folder structure with files
  */
 
-'use client';
+
 
 import React from 'react';
 import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText, Archive, AlertCircle } from 'lucide-react';

@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { buildApiUrl } from '@/config/api'
@@ -446,7 +447,7 @@ export function ExcelViewer({ fileUrl, searchText, initialSheet, assetImage, ass
     if (error || sheets.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center gap-3 h-full p-6">
-                <span className="material-symbols-outlined text-5xl text-red-400">error</span>
+                <AppIcon name="error" className="text-5xl text-red-400" />
                 <p className="text-red-400 text-sm text-center">{error || 'File Excel trống'}</p>
             </div>
         )

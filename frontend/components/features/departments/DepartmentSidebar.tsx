@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import Link from 'next/link'
 import { UserPlus } from 'lucide-react'
@@ -73,7 +74,7 @@ export function DepartmentSidebar({
                     onClick={onClose}
                     className="absolute top-4 right-4 p-2 hover:bg-slate-100 rounded-lg transition-colors"
                 >
-                    <span className="material-symbols-outlined text-slate-400">close</span>
+                    <AppIcon name="close" className="text-slate-400" />
                 </button>
             )}
 
@@ -89,11 +90,11 @@ export function DepartmentSidebar({
                             className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                             title="Chỉnh sửa phòng ban"
                         >
-                            <span className="material-symbols-outlined text-xl">edit</span>
+                            <AppIcon name="edit" className="text-xl" />
                         </button>
                     )}
                     <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100">
-                        <img alt="Team activity" className="w-full h-full object-cover" src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&q=80&w=200" />
+                        <img alt="Team activity" className="w-full h-full object-cover" src="/placeholder-user.jpg" />
                     </div>
                 </div>
             </div>
@@ -111,7 +112,7 @@ export function DepartmentSidebar({
                     </div>
                     {department.manager?.email && (
                         <a href={`mailto:${department.manager.email}`} className="p-1 text-[#9d4300] hover:bg-[#9d4300]/10 rounded-full transition-colors flex items-center justify-center">
-                            <span className="material-symbols-outlined text-base">mail</span>
+                            <AppIcon name="mail" className="text-base" />
                         </a>
                     )}
                 </div>
@@ -146,7 +147,7 @@ export function DepartmentSidebar({
                                     {member.avatar_url ? (
                                         <img src={member.avatar_url} alt={member.full_name} className="w-full h-full object-cover" />
                                     ) : (
-                                        <span className="material-symbols-outlined text-sm">person</span>
+                                        <AppIcon name="person" className="text-sm" />
                                     )}
                                 </div>
                             ))}
@@ -170,11 +171,9 @@ export function DepartmentSidebar({
                         <div className="text-xs text-slate-400 text-center py-4">Đang tải tài liệu...</div>
                     ) : docsList.length > 0 ? docsList.map((file, idx) => (
                         <div key={file.id} className="flex items-center gap-2 p-2 border border-[#e0c0b1]/30 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer group">
-                            <span className={`material-symbols-outlined text-lg ${idx % 2 === 0 ? 'text-orange-400' : 'text-blue-400'}`}>
-                                {file.file_type?.toLowerCase().includes('pdf') ? 'picture_as_pdf' :
+                            <AppIcon name={file.file_type?.toLowerCase().includes('pdf') ? 'picture_as_pdf' :
                                     file.file_type?.toLowerCase().includes('sheet') || file.file_type?.toLowerCase().includes('xls') ? 'table_chart' :
-                                        'description'}
-                            </span>
+                                        'description'} className={`text-lg ${idx % 2 === 0 ? 'text-orange-400' : 'text-blue-400'}`} />
                             <div className="flex-1">
                                 <p className="text-xs font-semibold text-[#0d1c2e] leading-tight whitespace-normal break-words">{file.original_name}</p>
                                 <p className="text-[9px] text-slate-400">
@@ -185,10 +184,10 @@ export function DepartmentSidebar({
                                 <button
                                     type="button"
                                     onClick={() => handleDownload(file.id, file.original_name)}
-                                    className="material-symbols-outlined text-base text-slate-300 group-hover:text-[#9d4300] transition-colors"
+                                    className="text-base text-slate-300 group-hover:text-[#9d4300] transition-colors"
                                     aria-label="Download document"
                                 >
-                                    download
+                                    <AppIcon name="download" />
                                 </button>
                             )}
                         </div>

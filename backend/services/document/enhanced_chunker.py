@@ -182,6 +182,12 @@ class EnhancedDocumentChunker:
                 # FALLBACK: Regular chunking on full text
                 chunks = self.base_chunker.chunk_text(text, metadata)
                 logger.info(f"Created {len(chunks)} base chunks for document {document_id}")
+
+            # Version lineage requires legal articles to remain independent
+            # regardless of which parser/chunking path produced the chunks.
+            if hasattr(self.base_chunker, '_split_multi_article_chunks'):
+                chunks = self.base_chunker._split_multi_article_chunks(chunks)
+                self.base_chunker._renumber_chunks(chunks)
             chunking_ms = (time.monotonic() - t_chunking_start) * 1000
             
             # Step 2: Skip page enrichment if already done by chunk_by_pages()
@@ -195,6 +201,9 @@ class EnhancedDocumentChunker:
             Document = apps.get_model('documents', 'Document')
             
             doc_obj = Document.objects.get(pk=document_id)
+            document_is_current = bool(getattr(doc_obj, 'is_current', True))
+            logical_document_id = str(getattr(doc_obj, 'logical_document_id', doc_obj.pk))
+            version_number = int(getattr(doc_obj, 'version', 1) or 1)
             
             chunks_with_embeddings = []
             prev_chunk_obj = None
@@ -266,6 +275,7 @@ class EnhancedDocumentChunker:
                                 'content_hash': content_hash
                             },
                             prev_chunk=prev_chunk_obj,
+                            is_current=document_is_current,
                         )
                     
                         if getattr(settings, 'RAG_VECTORIZE_PAGE_SECTIONS', False):
@@ -283,6 +293,9 @@ class EnhancedDocumentChunker:
                                     'text_preview': page_container_content[:text_preview_chars],
                                     'node_type': 'section',
                                     'hierarchy_level': 1,
+                                    'logical_document_id': logical_document_id,
+                                    'version_number': version_number,
+                                    'is_current': document_is_current,
                                 }
                             )
 
@@ -378,6 +391,7 @@ class EnhancedDocumentChunker:
                                 'token_count': chunk_dict.get('token_count', self.base_chunker._estimate_token_count(chunk_text)),
                                 'parent_node': page_container,
                                 'prev_chunk': prev_chunk_obj,
+                                'is_current': document_is_current,
                                 'metadata': persisted_metadata
                             }
                         )
@@ -411,6 +425,9 @@ class EnhancedDocumentChunker:
                                     'row_end': persisted_metadata.get('row_end'),
                                     'text_preview': chunk_text[:text_preview_chars],
                                     'node_type': 'detail',
+                                    'logical_document_id': logical_document_id,
+                                    'version_number': version_number,
+                                    'is_current': document_is_current,
                                     'metadata': persisted_metadata,
                                 }
                             )

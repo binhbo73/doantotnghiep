@@ -2,12 +2,11 @@
  * Upload Service - Centralized file upload with progress tracking
  */
 
-import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { logger } from '@/services/logger'
 import { buildDirectApiUrl } from '@/config/api'
 import { getAuthToken } from '@/services/auth'
-import type { Document, UploadDocumentRequest } from '@/types/api'
+import type { Document } from '@/types/api'
 
 interface UploadProgress {
     loaded: number
@@ -136,6 +135,69 @@ export async function uploadFile(
     })
 }
 
+export async function uploadDocumentVersion(
+    documentId: string,
+    file: File,
+    options?: {
+        versionLock?: number
+        changeSummary?: string
+        updateMode?: 'auto' | 'full' | 'amendment'
+        onProgress?: (progress: UploadProgress) => void
+        timeout?: number
+    }
+): Promise<Document> {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (options?.versionLock) formData.append('version_lock', String(options.versionLock))
+    if (options?.changeSummary) formData.append('change_summary', options.changeSummary)
+    formData.append('update_mode', options?.updateMode || 'auto')
+
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        if (options?.onProgress) {
+            xhr.upload.addEventListener('progress', (event) => {
+                if (!event.lengthComputable) return
+                options.onProgress?.({
+                    loaded: event.loaded,
+                    total: event.total,
+                    percentage: Math.round((event.loaded / event.total) * 100),
+                })
+            })
+        }
+        xhr.addEventListener('load', () => {
+            let response: unknown = null
+            try {
+                response = JSON.parse(xhr.responseText)
+            } catch {
+                response = null
+            }
+            const responseRecord = response && typeof response === 'object'
+                ? response as Record<string, unknown>
+                : null
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve((responseRecord?.data || response) as Document)
+                return
+            }
+            reject(new ApiError(
+                xhr.status,
+                String(
+                    responseRecord?.message
+                    || responseRecord?.error
+                    || `Version upload failed with status ${xhr.status}`
+                ),
+            ))
+        })
+        xhr.addEventListener('error', () => reject(new Error('Version upload failed')))
+        xhr.addEventListener('timeout', () => reject(new Error('Version upload timeout')))
+        xhr.timeout = options?.timeout || 120000
+        xhr.open('POST', buildDirectApiUrl(`/documents/${documentId}/versions`))
+        xhr.withCredentials = true
+        const token = getAuthToken()
+        if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+        xhr.send(formData)
+    })
+}
+
 /**
  * Upload multiple files
  */
@@ -222,6 +284,7 @@ export async function resumeUpload(
 
 export const uploadService = {
     uploadFile,
+    uploadDocumentVersion,
     uploadMultipleFiles,
     resumeUpload,
 }

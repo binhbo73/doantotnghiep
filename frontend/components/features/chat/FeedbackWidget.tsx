@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * FeedbackWidget Component - Feedback buttons with optional comment modal
  * 
@@ -8,7 +10,7 @@
  * - Visual feedback for selected rating
  */
 
-'use client'
+
 
 import React, { useState } from 'react'
 import { ThumbsUp, ThumbsDown, Loader } from 'lucide-react'

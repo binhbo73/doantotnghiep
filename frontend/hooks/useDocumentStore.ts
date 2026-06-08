@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * useDocumentStore - Hook quản lý state cho trang Document Store
  * 
@@ -7,7 +9,7 @@
  *  3. User select document → set selectedDocument for sidebar
  */
 
-'use client'
+
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
@@ -249,7 +251,9 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
         try {
             const [folderData, documentData] = await Promise.all([
                 canReadFolders ? fetchAllFolders() : Promise.resolve([]),
-                canReadDocuments ? fetchAllDocuments({ page_size: 100 }) : Promise.resolve({ items: [], pagination: null }),
+                canReadDocuments
+                    ? fetchAllDocuments({ page_size: 100, include_versions: true })
+                    : Promise.resolve({ items: [], pagination: null }),
             ])
 
             setFolders(folderData)
@@ -338,7 +342,10 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
         // Only fetch documents if not already loaded and first time expanding
         if (targetNode && !targetNode.hasLoadedDocs && canReadDocuments) {
             try {
-                const { items } = await fetchFolderDocuments(folderId)
+                const { items } = await fetchFolderDocuments(folderId, {
+                    page_size: 50,
+                    include_versions: true,
+                })
                 setTree((prev) =>
                     updateTreeNode(prev, folderId, (node) => ({
                         ...node,

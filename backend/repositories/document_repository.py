@@ -386,7 +386,7 @@ class DocumentRepository(BaseRepository):
 
         return dept_ids
 
-    def get_accessible_documents(self, user_id: int):
+    def get_accessible_documents(self, user_id: int, include_versions: bool = False):
         """
         Get QuerySet of documents accessible to user (based on access_scope).
         
@@ -412,7 +412,8 @@ class DocumentRepository(BaseRepository):
                 user = Account.objects.get(pk=user_id)
                 # System administrators see ALL documents regardless of access_scope.
                 if self._has_system_admin_permission(user):
-                    return self.get_base_queryset()
+                    queryset = self.get_base_queryset()
+                    return queryset if include_versions else queryset.filter(is_current=True)
             except Exception:
                 pass
             
@@ -440,6 +441,9 @@ class DocumentRepository(BaseRepository):
                     Q(access_scope='company') |
                     Q(access_scope='personal', uploader_id=user_id)
                 )
+
+            if not include_versions:
+                queryset = queryset.filter(is_current=True)
             
             return queryset
         except Exception as e:
@@ -529,7 +533,15 @@ class DocumentRepository(BaseRepository):
 
     def get_candidate_shared_documents(self, folder_ids: List[str], document_ids: List[str]):
         """Return documents reachable via shared folders OR direct document shares."""
-        folder_docs = Document.objects.filter(folder_id__in=folder_ids, is_deleted=False)
-        direct_docs = Document.objects.filter(id__in=document_ids, is_deleted=False)
+        folder_docs = Document.objects.filter(
+            folder_id__in=folder_ids,
+            is_deleted=False,
+            is_current=True,
+        )
+        direct_docs = Document.objects.filter(
+            id__in=document_ids,
+            is_deleted=False,
+            is_current=True,
+        )
         return (folder_docs | direct_docs).distinct().select_related('folder', 'department', 'uploader').prefetch_related('tags')
 

@@ -37,6 +37,15 @@ export interface FolderDocumentResponse {
     file_type: string
     file_size: number
     status: 'pending' | 'processing' | 'completed' | 'failed'
+    logical_document_id?: string
+    previous_version?: string | null
+    version?: number
+    version_lock?: number
+    is_current?: boolean
+    version_state?: 'staging' | 'active' | 'superseded' | 'failed'
+    valid_from?: string | null
+    valid_to?: string | null
+    change_summary?: string
     // API trả về field names không có _id suffix
     uploader: string | null        // uploader UUID
     uploader_name: string | null
@@ -115,14 +124,15 @@ export async function fetchAllFolders(): Promise<FolderResponse[]> {
  */
 export async function fetchFolderDocuments(
     folderId: string,
-    params?: { page?: number; page_size?: number }
+    params?: { page?: number; page_size?: number; include_versions?: boolean }
 ): Promise<{ items: FolderDocumentResponse[]; pagination: PaginationInfo | null }> {
     try {
         const page = params?.page || 1
         const pageSize = params?.page_size || 20
+        const includeVersions = params?.include_versions ? '&include_versions=true' : ''
 
         const response = await api.get<any>(
-            `/folders/${folderId}/documents?page=${page}&page_size=${pageSize}`
+            `/folders/${folderId}/documents?page=${page}&page_size=${pageSize}${includeVersions}`
         )
 
         console.log(`📄 Folder ${folderId} Documents Response:`, JSON.stringify(response, null, 2).substring(0, 800))
@@ -161,14 +171,22 @@ export async function fetchFolderDocuments(
  * GET /api/v1/documents?page=1&page_size=100
  */
 export async function fetchAllDocuments(
-    params?: { page?: number; page_size?: number; access_scope?: 'personal' | 'department' | 'company' }
+    params?: {
+        page?: number
+        page_size?: number
+        access_scope?: 'personal' | 'department' | 'company'
+        include_versions?: boolean
+    }
 ): Promise<{ items: FolderDocumentResponse[]; pagination: PaginationInfo | null }> {
     try {
         const page = params?.page || 1
         const pageSize = params?.page_size || 100
         const accessScopeQuery = params?.access_scope ? `&access_scope=${params.access_scope}` : ''
+        const includeVersionsQuery = params?.include_versions ? '&include_versions=true' : ''
 
-        const response = await api.get<any>(`/documents?page=${page}&page_size=${pageSize}${accessScopeQuery}`)
+        const response = await api.get<any>(
+            `/documents?page=${page}&page_size=${pageSize}${accessScopeQuery}${includeVersionsQuery}`
+        )
 
         console.log('📄 All Documents Response:', JSON.stringify(response, null, 2).substring(0, 800))
 

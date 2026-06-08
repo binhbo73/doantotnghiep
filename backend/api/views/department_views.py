@@ -1075,6 +1075,10 @@ class FolderDocumentsView(APIView):
             # Parse query parameters
             page = int(request.query_params.get('page', 1))
             page_size = min(int(request.query_params.get('page_size', 10)), 50)  # Max 50
+            include_versions = (
+                request.query_params.get('include_versions', '').strip().lower()
+                in {'1', 'true', 'yes'}
+            )
             
             service = DepartmentService()
             is_admin = user_has_permission(request.user, PermissionCodes.DEPARTMENT_MANAGE)
@@ -1084,7 +1088,8 @@ class FolderDocumentsView(APIView):
                 user_id=str(request.user.id),
                 is_admin=is_admin,
                 page=page,
-                page_size=page_size
+                page_size=page_size,
+                include_versions=include_versions,
             )
             
             logger.info(f"User {request.user.username} retrieved folder documents: {folder_id} - page {page}")

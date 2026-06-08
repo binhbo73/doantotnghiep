@@ -1,5 +1,7 @@
-// context/index.tsx - Global App Context Providers
 'use client'
+
+// context/index.tsx - Global App Context Providers
+
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { usePathname, useRouter } from 'next/navigation'

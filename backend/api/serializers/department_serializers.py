@@ -313,7 +313,7 @@ class FolderSimpleSerializer(serializers.Serializer):
     
     def get_document_count(self, obj):
         """Count documents in this folder"""
-        return obj.documents.filter(is_deleted=False).count()
+        return obj.documents.filter(is_deleted=False, is_current=True).count()
     
     def get_subfolder_count(self, obj):
         """Count direct subfolders"""
@@ -420,6 +420,7 @@ class DepartmentDetailWithCountsSerializer(serializers.ModelSerializer):
         from django.db.models import Q
         return Document.objects.filter(
             Q(department=obj) | Q(folder__department=obj),
+            is_current=True,
             is_deleted=False
         ).distinct().count()
     

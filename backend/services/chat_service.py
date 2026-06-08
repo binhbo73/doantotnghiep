@@ -66,6 +66,9 @@ Nguyên tắc bắt buộc:
 6. Nếu câu hỏi yêu cầu xem/hiển thị ảnh và phần "THÔNG TIN HÌNH ẢNH TRONG TÀI LIỆU" có ảnh phù hợp, trả lời ngắn gọn rằng có ảnh phù hợp và nêu vị trí ảnh. Ảnh sẽ được giao diện hiển thị, không cần tạo markdown image.
 7. Với tài liệu nội bộ dạng quy định, quy chế, nội quy, điều khoản, chính sách, quy trình, biểu mẫu, bảng lương, KPI hoặc thống kê: phải giữ đúng cấu trúc nguồn. Không tự rút gọn, không bỏ bullet/hàng/cột nếu người dùng hỏi "các", "những", "nội dung", "bao gồm", "gồm", "quy định", "quy chế", "điều khoản", "biểu mẫu", "bảng".
 8. Nếu nguồn chỉ có một phần nội dung liên quan, trả lời phần có bằng chứng và nói rõ "Tài liệu tham khảo hiện chỉ cung cấp phần này". Không tự bổ sung phần còn thiếu.
+9. Với tài liệu có nhiều phiên bản: nếu NGUỒN ghi "Che do cap nhat: amendment" hoặc "Hieu luc: amendment/inherited", hãy hiểu đây là văn bản sửa đổi/bổ sung một phần. Phần sửa đổi ở phiên bản mới hơn được ưu tiên cho đúng Điều/khoản/ý mà nó nhắc tới; phần không bị sửa vẫn lấy từ bản cũ còn hiệu lực kế thừa. Không kết luận mâu thuẫn nếu một nguồn mới đang sửa một phần của nguồn cũ.
+10. Khi tổng hợp văn bản hiệu lực sau cập nhật, hãy trả lời theo trạng thái hợp nhất: nội dung mới thay thế phần bị sửa, nội dung cũ chỉ dùng cho phần chưa bị sửa. Nếu hỏi riêng Điều/khoản/ý đã được amendment nhắc tới, ưu tiên nguồn amendment có version cao hơn.
+11. Nếu câu hỏi có mốc thời gian, phải đối chiếu "Hieu luc tu" và "Hieu luc den" của từng phiên bản. Không dùng phiên bản có khoảng hiệu lực nằm ngoài mốc người dùng hỏi.
 
 Cách làm việc:
 1. Tự xác định kiểu câu hỏi:
@@ -340,6 +343,7 @@ Cách làm việc:
                         document_id__in=document_ids,
                         page_number__in=page_numbers,
                         node_type='detail',
+                        is_current=True,
                         is_deleted=False,
                     )
                     .order_by('page_number', 'chunk_index')
@@ -582,10 +586,31 @@ Cách làm việc:
         stop_terms = {
             'va', 'cua', 've', 'cho', 'cac', 'nhung', 'noi', 'dung',
             'muc', 'phan', 'chuong', 'dieu', 'section', 'article',
+            'trong', 'tai', 'theo',
         }
         return {
             token for token in re.findall(r'\w+', subject or '')
             if len(token) >= 2 and token not in stop_terms
+        }
+
+    def _distinctive_subject_terms(self, subject_terms: set) -> set:
+        """Keep only terms that make the requested subject specific.
+
+        Generic nouns such as "quan ly", "su dung", "quy dinh" appear in many
+        internal documents and should not be enough to trigger the high-priority
+        attribute-section path. Terms left here act as an anchor guard.
+        """
+        generic_terms = {
+            'don', 'vi', 'bo', 'phan', 'phong', 'ban', 'to', 'nhom',
+            'nguoi', 'nhan', 'vien', 'can', 'bo', 'cbnv', 'nv',
+            'quan', 'ly', 'su', 'dung', 'thuc', 'hien', 'theo', 'doi',
+            'quy', 'dinh', 'quy', 'che', 'noi', 'bo', 'cong', 'ty',
+            'trach', 'nhiem', 'nhiem', 'vu', 'chuc', 'nang', 'quyen',
+            'han', 'vai', 'tro',
+        }
+        return {
+            term for term in subject_terms
+            if term not in generic_terms and len(term) >= 2
         }
 
     def _subject_match_score(self, text_norm: str, subject_terms: set) -> int:
@@ -598,6 +623,26 @@ Cách làm việc:
         if hits < required:
             return 0
         return hits * 3
+
+    def _subject_anchor_guard_score(self, text_norm: str, subject_terms: set) -> int:
+        """Strict subject guard for high-priority attribute-section retrieval."""
+        if not text_norm or not subject_terms:
+            return 0
+        distinctive_terms = self._distinctive_subject_terms(subject_terms)
+        text_terms = set(re.findall(r'\w+', text_norm))
+
+        if distinctive_terms:
+            hits = len(distinctive_terms & text_terms)
+            required = (
+                len(distinctive_terms)
+                if len(distinctive_terms) <= 2
+                else max(2, (len(distinctive_terms) + 1) // 2)
+            )
+            if hits < required:
+                return 0
+            return hits * 6
+
+        return self._subject_match_score(text_norm, subject_terms)
 
     def _attribute_terms(self, attributes: str) -> set:
         """Extract terms that describe the requested attribute/section type."""
@@ -927,6 +972,7 @@ Cách làm việc:
                 DocumentChunk.objects.filter(
                     document_id__in=resolved_doc_ids,
                     node_type='detail',
+                    is_current=True,
                     is_deleted=False,
                 )
                 .order_by('document_id', 'chunk_index')
@@ -996,11 +1042,23 @@ Cách làm việc:
             return []
 
         try:
+            Document = apps.get_model('documents', 'Document')
             DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            doc_titles = {
+                str(row['id']): self._normalize_query_text(
+                    row.get('original_name') or row.get('filename') or ''
+                )
+                for row in Document.objects.filter(
+                    id__in=resolved_doc_ids,
+                    is_current=True,
+                    is_deleted=False,
+                ).values('id', 'original_name', 'filename')
+            }
             rows = list(
                 DocumentChunk.objects.filter(
                     document_id__in=resolved_doc_ids,
                     node_type='detail',
+                    is_current=True,
                     is_deleted=False,
                 )
                 .order_by('document_id', 'chunk_index')
@@ -1008,13 +1066,34 @@ Cách làm việc:
             )
 
             direct_matches: List[Tuple[int, int, int, str]] = []
-            subject_anchors: List[Tuple[int, int]] = []
+            subject_anchors: List[Tuple[int, int, str]] = []
             for idx, row in enumerate(rows):
                 row_text = row.get('content') or ''
+                heading_path = (row.get('metadata') or {}).get('heading_path') or []
+                heading_text = (
+                    ' '.join(str(item) for item in heading_path if item)
+                    if isinstance(heading_path, (list, tuple))
+                    else str(heading_path)
+                )
+                row_context_norm = self._normalize_query_text(
+                    ' '.join([
+                        doc_titles.get(str(row.get('document_id')), ''),
+                        heading_text,
+                        row_text,
+                    ])
+                )
+                row_anchor_score = self._subject_anchor_guard_score(
+                    row_context_norm,
+                    subject_terms,
+                )
+                if not row_anchor_score:
+                    continue
+
                 score, offset, line = self._find_attribute_heading_in_row(
                     row_text,
                     attribute_terms,
                     subject_terms,
+                    subject_anchor_score=row_anchor_score,
                 )
                 if score:
                     direct_matches.append((score, idx, offset, line))
@@ -1036,30 +1115,28 @@ Cách làm việc:
                                 subject_terms,
                             )
                             if anchor_score:
-                                subject_anchors.append((anchor_score, idx))
+                                subject_anchors.append((anchor_score, idx, str(row.get('document_id'))))
                         segment_offset += len(segment)
                     offset_cursor += len(raw_line)
 
-                heading_path = (row.get('metadata') or {}).get('heading_path') or []
-                if heading_path:
-                    heading_text = (
-                        ' '.join(str(item) for item in heading_path if item)
-                        if isinstance(heading_path, (list, tuple))
-                        else str(heading_path)
+                if heading_text:
+                    heading_norm = self._normalize_query_text(
+                        f"{doc_titles.get(str(row.get('document_id')), '')} {heading_text}"
                     )
-                    heading_norm = self._normalize_query_text(heading_text)
-                    anchor_score = self._subject_match_score(heading_norm, subject_terms)
+                    anchor_score = self._subject_anchor_guard_score(heading_norm, subject_terms)
                     if anchor_score:
-                        subject_anchors.append((anchor_score + 4, idx))
+                        subject_anchors.append((anchor_score + 4, idx, str(row.get('document_id'))))
 
             best_match: Optional[Tuple[int, int, int, str]] = None
             if direct_matches:
                 direct_matches.sort(key=lambda item: (item[0], -item[1]), reverse=True)
                 best_match = direct_matches[0]
 
-            for subject_score, anchor_idx in subject_anchors:
+            for subject_score, anchor_idx, anchor_doc_id in subject_anchors:
                 scan_end = min(len(rows), anchor_idx + max(max_chunks * 2, 10))
                 for idx in range(anchor_idx, scan_end):
+                    if str(rows[idx].get('document_id')) != anchor_doc_id:
+                        break
                     row_text = rows[idx].get('content') or ''
                     score, offset, line = self._find_attribute_heading_in_row(
                         row_text,
@@ -1095,12 +1172,88 @@ Cách làm việc:
             _score, start_pos, start_offset, heading_line = best_match
             start_row = rows[start_pos]
             start_text = start_row.get('content') or ''
+            target_doc_id = str(start_row.get('document_id'))
+            start_heading_path = (start_row.get('metadata') or {}).get('heading_path') or []
+            start_heading_text = (
+                ' '.join(str(item) for item in start_heading_path if item)
+                if isinstance(start_heading_path, (list, tuple))
+                else str(start_heading_path)
+            )
+            final_context_norm = self._normalize_query_text(
+                ' '.join([
+                    doc_titles.get(str(start_row.get('document_id')), ''),
+                    start_heading_text,
+                    start_text,
+                    heading_line,
+                ])
+            )
+            final_anchor_score = self._subject_anchor_guard_score(
+                final_context_norm,
+                subject_terms,
+            )
+            min_score = int(getattr(settings, 'RAG_ATTRIBUTE_SECTION_MIN_SCORE', 18))
+            if _score < min_score or not final_anchor_score:
+                logger.info(
+                    "[ATTRIBUTE_SECTION] weak match skipped subject='%s' score=%s anchor=%s",
+                    subject,
+                    _score,
+                    final_anchor_score,
+                )
+                return []
+
+            heading_subject_score = self._subject_match_score(
+                self._normalize_query_text(heading_line),
+                subject_terms,
+            )
+            if not heading_subject_score:
+                relevant_positions: List[int] = []
+                for idx, row in enumerate(rows):
+                    if str(row.get('document_id')) != target_doc_id:
+                        continue
+                    row_text = row.get('content') or ''
+                    row_norm = self._normalize_query_text(row_text)
+                    row_terms = set(re.findall(r'\w+', row_norm))
+                    if not (attribute_terms & row_terms):
+                        continue
+                    heading_path = (row.get('metadata') or {}).get('heading_path') or []
+                    heading_text = (
+                        ' '.join(str(item) for item in heading_path if item)
+                        if isinstance(heading_path, (list, tuple))
+                        else str(heading_path)
+                    )
+                    row_context_norm = self._normalize_query_text(
+                        ' '.join([
+                            doc_titles.get(str(row.get('document_id')), ''),
+                            heading_text,
+                            row_text,
+                        ])
+                    )
+                    if not self._subject_anchor_guard_score(row_context_norm, subject_terms):
+                        continue
+                    # Skip approval/signature front matter unless the same row
+                    # already contains body text markers.
+                    if (
+                        all(marker in row_norm for marker in ('chu ky', 'soan thao', 'xem xet', 'phe duyet'))
+                        and 'dien giai' not in row_norm
+                    ):
+                        continue
+                    relevant_positions.append(idx)
+
+                if relevant_positions:
+                    start_pos = min(relevant_positions)
+                    start_offset = 0
+                    start_row = rows[start_pos]
+                    start_text = start_row.get('content') or ''
+                    target_doc_id = str(start_row.get('document_id'))
+
             current_section_id = (
                 self._first_numbered_section_id(heading_line)
                 or self._first_numbered_section_id(start_text[start_offset:])
             )
             candidates = []
             for offset, row in enumerate(rows[start_pos:start_pos + max_chunks]):
+                if str(row.get('document_id')) != target_doc_id:
+                    break
                 row_text = row.get('content') or ''
                 if offset > 0 and current_section_id:
                     if self._starts_new_outside_section(row_text, current_section_id):
@@ -1147,6 +1300,7 @@ Cách làm việc:
                 DocumentChunk.objects.filter(
                     document_id__in=resolved_doc_ids,
                     node_type='detail',
+                    is_current=True,
                     is_deleted=False,
                 )
                 .order_by('document_id', 'chunk_index')
@@ -1994,6 +2148,7 @@ Cách làm việc:
             r'\b(cac|nhung)\b',
             r'\b(bao gom|gom|gom nhung gi)\b',
             r'\b(liet ke|ke ra|neu|trinh bay)\b',
+            r'\b(tom tat|tong quan|khai quat|y chinh|chu de chinh)\b',
             r'\b(day du|chi tiet|tat ca|toan bo)\b',
             r'\b(la gi|nhu the nao)\b',
             r'\b(dac diem|dac trung|thanh phan|noi dung|nguyen tac|yeu cau)\b',
@@ -2290,6 +2445,7 @@ Cách làm việc:
                     neighbor_chunks = DocumentChunk.objects.filter(
                         document_id=base_chunk['document_id'],
                         node_type='detail',
+                        is_current=True,
                         is_deleted=False,
                         chunk_index__gte=start_index,
                         chunk_index__lte=end_index,
@@ -2311,6 +2467,77 @@ Cách làm việc:
         except Exception as e:
             logger.warning(f"[_expand_candidates_with_neighbors] Khong the mo rong context: {e}")
             return candidates[:max_chunks]
+
+    def _is_version_history_query(self, query: str) -> bool:
+        import unicodedata
+
+        normalized = ''.join(
+            char for char in unicodedata.normalize('NFD', (query or '').lower())
+            if unicodedata.category(char) != 'Mn'
+        )
+        phrases = (
+            'thay doi', 'sua doi', 'cap nhat', 'phien ban', 'ban cu', 'ban moi',
+            'truoc day', 'truoc kia', 'khac nhau', 'so sanh', 'lich su',
+        )
+        return any(phrase in normalized for phrase in phrases)
+
+    def _expand_candidates_with_version_history(
+        self,
+        candidates: List[Dict[str, Any]],
+        query: str,
+    ) -> List[Dict[str, Any]]:
+        """Attach previous chunk revisions only for explicit history/comparison questions."""
+        if not candidates or not self._is_version_history_query(query):
+            return candidates
+
+        chunk_ids = [candidate.get('chunk_id') for candidate in candidates if candidate.get('chunk_id')]
+        if not chunk_ids:
+            return candidates
+
+        try:
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            current_chunks = list(
+                DocumentChunk.objects.select_related('document')
+                .filter(id__in=chunk_ids, is_deleted=False)
+            )
+            current_map = {str(chunk.id): chunk for chunk in current_chunks}
+            expanded = list(candidates)
+            seen = {str(candidate.get('chunk_id')) for candidate in candidates}
+
+            for candidate in candidates:
+                chunk = current_map.get(str(candidate.get('chunk_id')))
+                if not chunk:
+                    continue
+                candidate['version_number'] = chunk.document.version
+                candidate['version_state'] = chunk.document.version_state
+                candidate['change_type'] = chunk.change_type
+                previous = chunk.previous_version_chunk if chunk else None
+                depth = 1
+                while previous and depth <= 5 and str(previous.id) not in seen:
+                    seen.add(str(previous.id))
+                    previous_candidate = candidate.copy()
+                    previous_candidate.update({
+                        'chunk_id': str(previous.id),
+                        'document_id': str(previous.document_id),
+                        'snippet': previous.content or '',
+                        'page': previous.page_number,
+                        'chunk_index': previous.chunk_index,
+                        'metadata': previous.metadata or {},
+                        'source': f"{candidate.get('source', 'retrieval')}_previous_version",
+                        'score': float(candidate.get('score', 0.0) or 0.0) * (0.96 ** depth),
+                        'version_number': previous.document.version,
+                        'version_state': previous.document.version_state,
+                        'change_type': 'previous',
+                        'anchor_chunk_id': str(chunk.id),
+                    })
+                    expanded.append(previous_candidate)
+                    previous = previous.previous_version_chunk
+                    depth += 1
+
+            return expanded
+        except Exception as exc:
+            logger.warning("Could not expand document version history: %s", exc)
+            return candidates
 
     def _metadata_value(self, metadata: Dict[str, Any], *keys: str) -> Any:
         """Return the first available value from chunk metadata."""
@@ -2955,7 +3182,10 @@ Cách làm việc:
         Returns:
             List[str] of document IDs, rỗng nếu không có đính kèm nào.
         """
-        final_ids: List[str] = list(document_ids or [])
+        final_ids: List[str] = [
+            str(document_id) for document_id in (document_ids or []) if document_id
+        ]
+        explicit_request_ids = set(final_ids)
 
         # Expand folder_ids → document_ids
         if folder_ids:
@@ -2963,6 +3193,7 @@ Cách làm việc:
                 Document = apps.get_model('documents', 'Document')
                 docs_in_folders = Document.objects.filter(
                     folder_id__in=folder_ids,
+                    is_current=True,
                     is_deleted=False,
                 ).values_list('id', flat=True)
                 final_ids.extend([str(d) for d in docs_in_folders])
@@ -2994,6 +3225,7 @@ Cách làm việc:
                     Document = apps.get_model('documents', 'Document')
                     docs_in_attached_folders = Document.objects.filter(
                         folder_id__in=list(attached_folder_ids),
+                        is_current=True,
                         is_deleted=False,
                     ).values_list('id', flat=True)
                     final_ids.extend([str(d) for d in docs_in_attached_folders])
@@ -3028,6 +3260,7 @@ Cách làm việc:
                     Document = apps.get_model('documents', 'Document')
                     docs_in_accessible_folders = Document.objects.filter(
                         folder_id__in=accessible_folder_ids,
+                        is_current=True,
                         is_deleted=False,
                     ).values_list('id', flat=True)
                     final_ids.extend([str(d) for d in docs_in_accessible_folders])
@@ -3040,6 +3273,69 @@ Cách làm việc:
                 logger.error(f"[_resolve_document_ids] Lỗi khi lấy danh sách tài liệu/folder truy cập: {e}")
 
         # Deduplicate, giữ thứ tự
+        if final_ids:
+            if user_id:
+                try:
+                    accessible_ids = {
+                        str(document_id)
+                        for document_id in self.document_repo.get_accessible_documents(
+                            user_id,
+                            include_versions=True,
+                        ).filter(id__in=final_ids).values_list('id', flat=True)
+                    }
+                    rejected_count = len(final_ids) - sum(
+                        1 for document_id in final_ids
+                        if str(document_id) in accessible_ids
+                    )
+                    final_ids = [
+                        str(document_id)
+                        for document_id in final_ids
+                        if str(document_id) in accessible_ids
+                    ]
+                    if rejected_count:
+                        logger.warning(
+                            "[DOCUMENT_SCOPE] Rejected %s inaccessible document ID(s) for user %s",
+                            rejected_count,
+                            user_id,
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "[DOCUMENT_SCOPE] Permission filtering failed for user %s: %s",
+                        user_id,
+                        exc,
+                    )
+                    return []
+
+            try:
+                Document = apps.get_model('documents', 'Document')
+                document_rows = list(
+                    Document.objects.filter(id__in=final_ids, is_deleted=False)
+                    .values('id', 'logical_document_id')
+                )
+                logical_by_id = {
+                    str(row['id']): row['logical_document_id']
+                    for row in document_rows
+                }
+                current_by_logical = {
+                    row['logical_document_id']: str(row['id'])
+                    for row in Document.objects.filter(
+                        logical_document_id__in=list(logical_by_id.values()),
+                        is_current=True,
+                        is_deleted=False,
+                    ).values('id', 'logical_document_id')
+                }
+                resolved_ids = []
+                for document_id in final_ids:
+                    document_id = str(document_id)
+                    if document_id in explicit_request_ids:
+                        resolved_ids.append(document_id)
+                        continue
+                    logical_id = logical_by_id.get(document_id)
+                    resolved_ids.append(current_by_logical.get(logical_id, document_id))
+                final_ids = resolved_ids
+            except Exception as exc:
+                logger.warning("Could not resolve current document versions: %s", exc)
+
         seen = set()
         unique_ids = []
         for d in final_ids:
@@ -3047,7 +3343,243 @@ Cách làm việc:
                 seen.add(d)
                 unique_ids.append(d)
 
+        try:
+            Document = apps.get_model('documents', 'Document')
+            pending_ids = list(unique_ids)
+            expanded_previous_ids = []
+            inspected_ids = set()
+            while pending_ids:
+                docs = list(Document.objects.filter(
+                    id__in=pending_ids,
+                    is_deleted=False,
+                ).values('id', 'previous_version_id', 'metadata'))
+                pending_ids = []
+                for doc in docs:
+                    doc_id = str(doc.get('id'))
+                    if doc_id in inspected_ids:
+                        continue
+                    inspected_ids.add(doc_id)
+                    metadata = doc.get('metadata') or {}
+                    previous_id = doc.get('previous_version_id')
+                    if metadata.get('update_mode') != 'amendment' or not previous_id:
+                        continue
+                    previous_id = str(previous_id)
+                    if previous_id not in seen:
+                        seen.add(previous_id)
+                        unique_ids.append(previous_id)
+                        expanded_previous_ids.append(previous_id)
+                    if previous_id not in inspected_ids:
+                        pending_ids.append(previous_id)
+            if expanded_previous_ids:
+                logger.info(
+                    "[VERSION_OVERLAY] Added %s ancestor document(s) for amendment retrieval",
+                    len(expanded_previous_ids),
+                )
+        except Exception as exc:
+            logger.warning("[VERSION_OVERLAY] Failed to expand amendment document scope: %s", exc)
+
         return unique_ids
+
+    def _resolve_document_ids_from_query_title(
+        self,
+        query: str,
+        candidate_doc_ids: List[str],
+    ) -> List[str]:
+        """Narrow retrieval when the user explicitly names a document title.
+
+        Chat normally searches every accessible document when the user has not
+        attached a specific file. If the query says `trong tài liệu "X.pdf"`,
+        searching all documents lets near-duplicate files outrank the requested
+        file. Match against accessible document names and scope retrieval to the
+        named current document.
+        """
+        if not query or not candidate_doc_ids:
+            return []
+
+        query_norm = self._normalize_query_text(query)
+        if not query_norm:
+            return []
+
+        try:
+            Document = apps.get_model('documents', 'Document')
+            rows = Document.objects.filter(
+                id__in=candidate_doc_ids,
+                is_deleted=False,
+            ).values('id', 'original_name', 'filename')
+        except Exception as exc:
+            logger.debug("[DOC_TITLE_SCOPE] failed to load document names: %s", exc)
+            return []
+
+        matches: List[Tuple[int, str, str]] = []
+        for row in rows:
+            raw_names = [
+                row.get('original_name') or '',
+                row.get('filename') or '',
+            ]
+            for raw_name in raw_names:
+                name_norm = self._normalize_query_text(raw_name)
+                if not name_norm:
+                    continue
+                stem_norm = re.sub(
+                    r'\s+(pdf|docx?|xlsx?|pptx?|txt|md|csv)$',
+                    '',
+                    name_norm,
+                ).strip()
+                for candidate_name in {name_norm, stem_norm}:
+                    if not candidate_name:
+                        continue
+                    token_count = len(candidate_name.split())
+                    # Require a real title-like match, not a generic extension
+                    # or one-word fragment.
+                    if token_count < 3:
+                        continue
+                    if candidate_name in query_norm:
+                        matches.append((len(candidate_name), str(row['id']), raw_name))
+                        break
+
+        if not matches:
+            return []
+
+        matches.sort(reverse=True)
+        best_len = matches[0][0]
+        scoped_ids = [doc_id for length, doc_id, _name in matches if length == best_len]
+        unique_ids = list(dict.fromkeys(scoped_ids))
+        logger.info(
+            "[DOC_TITLE_SCOPE] query matched %s document(s): %s",
+            len(unique_ids),
+            unique_ids,
+        )
+        return unique_ids
+
+    def _expand_amendment_document_scope(self, document_ids: List[str]) -> List[str]:
+        """Include ancestor documents that contribute inherited effective chunks."""
+        if not document_ids:
+            return []
+
+        Document = apps.get_model('documents', 'Document')
+        resolved = list(dict.fromkeys(str(document_id) for document_id in document_ids))
+        seen = set(resolved)
+        pending = list(resolved)
+        while pending:
+            rows = Document.objects.filter(
+                id__in=pending,
+                is_deleted=False,
+            ).values('id', 'previous_version_id', 'metadata')
+            pending = []
+            for row in rows:
+                metadata = row.get('metadata') or {}
+                previous_id = row.get('previous_version_id')
+                if metadata.get('update_mode') != 'amendment' or not previous_id:
+                    continue
+                previous_id = str(previous_id)
+                if previous_id in seen:
+                    continue
+                seen.add(previous_id)
+                resolved.append(previous_id)
+                pending.append(previous_id)
+        return resolved
+
+    def _expand_previous_version_scope(self, document_ids: List[str]) -> List[str]:
+        """Include all previous document versions for history/comparison queries."""
+        if not document_ids:
+            return []
+
+        Document = apps.get_model('documents', 'Document')
+        resolved = list(dict.fromkeys(str(document_id) for document_id in document_ids))
+        seen = set(resolved)
+        pending = list(resolved)
+        while pending:
+            rows = Document.objects.filter(
+                id__in=pending,
+                is_deleted=False,
+            ).values('previous_version_id')
+            pending = []
+            for row in rows:
+                previous_id = row.get('previous_version_id')
+                if not previous_id:
+                    continue
+                previous_id = str(previous_id)
+                if previous_id in seen:
+                    continue
+                seen.add(previous_id)
+                resolved.append(previous_id)
+                pending.append(previous_id)
+        return resolved
+
+    def _expand_candidates_with_effective_revision_links(
+        self,
+        candidates: List[Dict[str, Any]],
+        resolved_doc_ids: List[str],
+        *,
+        include_historical: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Pair inherited base evidence with current amendment evidence."""
+        if not candidates or include_historical:
+            return candidates
+
+        chunk_ids = {
+            str(candidate.get('chunk_id'))
+            for candidate in candidates
+            if candidate.get('chunk_id')
+        }
+        if not chunk_ids:
+            return candidates
+
+        try:
+            from django.db.models import Q
+
+            ChunkRevisionLink = apps.get_model('documents', 'ChunkRevisionLink')
+            links = ChunkRevisionLink.objects.select_related(
+                'from_chunk__document',
+                'to_chunk__document',
+            ).filter(
+                Q(from_chunk_id__in=chunk_ids) | Q(to_chunk_id__in=chunk_ids),
+                relation__in=['references', 'replaces', 'unchanged'],
+                is_deleted=False,
+            )
+
+            allowed_document_ids = {str(document_id) for document_id in resolved_doc_ids}
+            expanded = list(candidates)
+            seen = set(chunk_ids)
+            score_by_chunk = {
+                str(candidate.get('chunk_id')): float(candidate.get('score') or 0.0)
+                for candidate in candidates
+                if candidate.get('chunk_id')
+            }
+            for link in links:
+                for anchor, linked in (
+                    (link.from_chunk, link.to_chunk),
+                    (link.to_chunk, link.from_chunk),
+                ):
+                    anchor_id = str(anchor.id)
+                    linked_id = str(linked.id)
+                    if anchor_id not in chunk_ids or linked_id in seen:
+                        continue
+                    if not linked.is_current or linked.is_deleted:
+                        continue
+                    if allowed_document_ids and str(linked.document_id) not in allowed_document_ids:
+                        continue
+                    seen.add(linked_id)
+                    expanded.append({
+                        'chunk_id': linked_id,
+                        'document_id': str(linked.document_id),
+                        'score': max(0.01, score_by_chunk.get(anchor_id, 0.5) * 0.99),
+                        'source': 'effective_revision_link',
+                        'snippet': linked.content or '',
+                        'page': linked.page_number,
+                        'chunk_index': linked.chunk_index,
+                        'metadata': linked.metadata or {},
+                        'version_number': linked.document.version,
+                        'version_state': linked.document.version_state,
+                        'change_type': linked.change_type,
+                        'is_current': linked.is_current,
+                        'revision_relation': link.relation,
+                        'anchor_chunk_id': anchor_id,
+                    })
+            return expanded
+        except Exception as exc:
+            logger.warning("Could not expand effective revision links: %s", exc)
+            return candidates
 
     # =========================================================================
     # RETRIEVAL - Build context from documents via Hybrid Search
@@ -3083,6 +3615,29 @@ Cách làm việc:
             return '', []
 
         try:
+            title_scoped_ids = self._resolve_document_ids_from_query_title(
+                query,
+                resolved_doc_ids,
+            )
+            if title_scoped_ids:
+                resolved_doc_ids = self._expand_amendment_document_scope(title_scoped_ids)
+                explicit_doc_ids = title_scoped_ids
+
+            include_historical = False
+            if explicit_doc_ids:
+                try:
+                    Document = apps.get_model('documents', 'Document')
+                    include_historical = Document.objects.filter(
+                        id__in=explicit_doc_ids,
+                        is_current=False,
+                        is_deleted=False,
+                    ).exists()
+                except Exception as exc:
+                    logger.warning("Could not inspect explicit document versions: %s", exc)
+            if self._is_version_history_query(query):
+                resolved_doc_ids = self._expand_previous_version_scope(resolved_doc_ids)
+                include_historical = True
+
             t_route_start = time.monotonic()
             exact_table_candidates = self._retrieve_exact_table_candidates(query, resolved_doc_ids)
             attribute_section_candidates: List[Dict[str, Any]] = []
@@ -3131,6 +3686,7 @@ Cách làm việc:
                     'folder_ids': folder_ids or [],
                     'rag_mode': rag_mode or 'fast',
                     'forced_intent': self._get_forced_intent_value(query),
+                    'include_historical': include_historical,
                 }
                 if current_page:
                     user_context['current_page'] = current_page
@@ -3170,6 +3726,15 @@ Cách làm việc:
                 chunk_candidates_ctx = exact_heading_candidates
             elif not is_spreadsheet_retrieval:
                 chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
+            chunk_candidates_ctx = self._expand_candidates_with_effective_revision_links(
+                chunk_candidates_ctx,
+                resolved_doc_ids,
+                include_historical=include_historical,
+            )
+            chunk_candidates_ctx = self._expand_candidates_with_version_history(
+                chunk_candidates_ctx,
+                query,
+            )
             candidates = self._deduplicate_candidates_by_content(chunk_candidates_ctx + asset_candidates_ctx)
             # Context stitching: merge sequential chunks into continuous blocks
             if not is_spreadsheet_retrieval:
@@ -3184,6 +3749,7 @@ Cách làm việc:
                         'document_ids': resolved_doc_ids,
                         'rag_mode': rag_mode or 'fast',
                         'forced_intent': self._get_forced_intent_value(query),
+                        'include_historical': include_historical,
                     }
                     if current_page:
                         re_user_context['current_page'] = current_page
@@ -3208,16 +3774,27 @@ Cách làm việc:
             doc_ids_needed = list({c.get('document_id') for c in candidates if c.get('document_id')})
             doc_name_map: Dict[str, str] = {}
             doc_type_map: Dict[str, str] = {}
+            doc_version_map: Dict[str, Dict[str, Any]] = {}
             if doc_ids_needed:
                 try:
                     Document = apps.get_model('documents', 'Document')
                     docs = Document.objects.filter(id__in=doc_ids_needed, is_deleted=False).values(
-                        'id', 'original_name', 'filename', 'file_type', 'mime_type'
+                        'id', 'original_name', 'filename', 'file_type', 'mime_type',
+                        'version', 'version_state', 'valid_from', 'valid_to', 'metadata',
                     )
                     for doc in docs:
                         name = doc.get('original_name') or doc.get('filename') or f"doc_{doc['id']}"
                         doc_name_map[str(doc['id'])] = name
                         doc_type_map[str(doc['id'])] = doc.get('file_type') or doc.get('mime_type') or 'document'
+                        metadata = doc.get('metadata') or {}
+                        doc_version_map[str(doc['id'])] = {
+                            'version': doc.get('version'),
+                            'version_state': doc.get('version_state'),
+                            'valid_from': doc.get('valid_from'),
+                            'valid_to': doc.get('valid_to'),
+                            'update_mode': metadata.get('update_mode') or 'full',
+                            'effective_document_mode': metadata.get('effective_document_mode'),
+                        }
                 except Exception as e:
                     logger.warning(f"[_retrieve_context] Không thể lấy tên tài liệu: {e}")
             t_doc_fetch_done = (time.monotonic() - t_doc_fetch_start) * 1000
@@ -3265,6 +3842,38 @@ Cách làm việc:
                             heading_info = f"Muc: {' > '.join(str(h) for h in heading_path if h)}\n"
                         else:
                             heading_info = f"Muc: {heading_path}\n"
+                    doc_version = doc_version_map.get(str(doc_id), {})
+                    version_number = c.get('version_number')
+                    if version_number is None:
+                        version_number = doc_version.get('version')
+                    version_state = c.get('version_state') or doc_version.get('version_state')
+                    change_type = c.get('change_type')
+                    update_mode = c.get('update_mode') or doc_version.get('update_mode')
+                    effective_mode = c.get('effective_document_mode') or doc_version.get('effective_document_mode')
+                    valid_from = doc_version.get('valid_from')
+                    valid_to = doc_version.get('valid_to')
+                    version_info = (
+                        f"Phien ban: {version_number}"
+                        f" ({version_state or 'historical'}, {change_type or 'content'})\n"
+                        if version_number is not None
+                        else ""
+                    )
+                    validity_info = (
+                        f"Hieu luc tu: {valid_from.isoformat() if valid_from else 'khong ro'}\n"
+                        f"Hieu luc den: {valid_to.isoformat() if valid_to else 'hien tai'}\n"
+                        if version_number is not None
+                        else ""
+                    )
+                    update_mode_info = f"Che do cap nhat: {update_mode}\n" if update_mode else ""
+                    effective_info = ""
+                    if effective_mode:
+                        effective_info = f"Hieu luc: {effective_mode}\n"
+                    elif str(c.get('source') or '').endswith('_previous_version'):
+                        effective_info = "Hieu luc: historical_previous_version\n"
+                    elif include_historical and version_state == 'superseded':
+                        effective_info = "Hieu luc: historical_version_for_comparison\n"
+                    elif version_state == 'superseded' and c.get('is_current', True):
+                        effective_info = "Hieu luc: inherited_from_previous_version\n"
                     source_label = self._build_source_label(
                         title=doc_name,
                         page=page,
@@ -3277,6 +3886,10 @@ Cách làm việc:
                         f"Tai lieu: {doc_name}\n"
                         f"{page_info}"
                         f"{heading_info}"
+                        f"{version_info}"
+                        f"{validity_info}"
+                        f"{update_mode_info}"
+                        f"{effective_info}"
                         f"{line_info}"
                         f"{chunk_info}"
                         f"Cach trich dan bat buoc: {source_label}\n"

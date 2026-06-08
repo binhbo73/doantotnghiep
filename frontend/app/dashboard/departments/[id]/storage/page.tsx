@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * Department Storage Archive Page
  * Route: /dashboard/departments/[id]/storage
@@ -6,7 +8,7 @@
  * and document management functionality
  */
 
-'use client';
+
 
 import React from 'react';
 import { useParams } from 'next/navigation';

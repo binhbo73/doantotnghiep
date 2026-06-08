@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useEffect, useState } from 'react'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
 import { getFileIcon, formatFileSize } from './DocumentRow'
@@ -9,7 +10,8 @@ import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { toast } from 'sonner'
 import { useRBAC } from '@/hooks/useRBAC'
-import { getDocumentStatus } from '@/services/document'
+import { getDocumentStatus, getDocumentVersions } from '@/services/document'
+import { UpdateDocumentVersionModal } from './UpdateDocumentVersionModal'
 
 type SidebarDocumentStatus = {
     document_status?: string
@@ -31,6 +33,8 @@ interface DocumentSidebarProps {
     document: FolderDocumentResponse | null
     folder: FolderResponse | null
     onClose: () => void
+    onVersionCreated?: () => void
+    onSelectVersion?: (document: FolderDocumentResponse) => void
 }
 
 function formatDate(dateStr: string): string {
@@ -46,7 +50,13 @@ function formatDate(dateStr: string): string {
     }
 }
 
-export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarProps) {
+export function DocumentSidebar({
+    document,
+    folder,
+    onClose,
+    onVersionCreated,
+    onSelectVersion,
+}: DocumentSidebarProps) {
     const [isDownloading, setIsDownloading] = useState(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
     const [previewUrl, setPreviewUrl] = useState<string>('')
@@ -54,11 +64,15 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
     const [documentStatus, setDocumentStatus] = useState<SidebarDocumentStatus | null>(null)
     const [statusLoading, setStatusLoading] = useState(false)
     const [statusError, setStatusError] = useState<string | null>(null)
+    const [isVersionModalOpen, setIsVersionModalOpen] = useState(false)
+    const [versions, setVersions] = useState<FolderDocumentResponse[]>([])
+    const [versionRefreshKey, setVersionRefreshKey] = useState(0)
     const { canRead, canWrite, canDelete, hasPermission } = useRBAC()
     const canReadDocumentForStatus = !!document && (hasPermission('document_read') || canRead(document.my_permission))
+    const selectedDocumentId = document?.id
 
     useEffect(() => {
-        if (!document || !canReadDocumentForStatus) {
+        if (!selectedDocumentId || !canReadDocumentForStatus) {
             setDocumentStatus(null)
             setStatusLoading(false)
             setStatusError(null)
@@ -72,7 +86,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
             setStatusError(null)
 
             try {
-                const response = await getDocumentStatus(document.id)
+                const response = await getDocumentStatus(selectedDocumentId)
                 const payload = response.data || response
 
                 if (!isActive) return
@@ -96,13 +110,31 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
         return () => {
             isActive = false
         }
-    }, [document?.id, canReadDocumentForStatus])
+    }, [selectedDocumentId, canReadDocumentForStatus])
+
+    useEffect(() => {
+        if (!selectedDocumentId || !canReadDocumentForStatus) {
+            setVersions([])
+            return
+        }
+        let active = true
+        void getDocumentVersions(selectedDocumentId)
+            .then((items) => {
+                if (active) setVersions(items)
+            })
+            .catch(() => {
+                if (active) setVersions([])
+            })
+        return () => {
+            active = false
+        }
+    }, [selectedDocumentId, canReadDocumentForStatus, versionRefreshKey])
 
     if (!document) {
         return (
             <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl p-6 flex flex-col items-center justify-center min-h-[400px]">
                 <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center mb-4">
-                    <span className="material-symbols-outlined text-4xl text-slate-300">draft</span>
+                    <AppIcon name="draft" className="text-4xl text-slate-300" />
                 </div>
                 <p className="text-sm font-medium text-slate-500 mb-1">Chọn tài liệu</p>
                 <p className="text-xs text-slate-400 text-center max-w-[200px]">
@@ -137,7 +169,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
         return (
             <div className="col-span-12 lg:col-span-5 bg-white shadow-sm ring-1 ring-slate-100 rounded-2xl p-6 flex flex-col items-center justify-center min-h-[400px]">
                 <div className="w-20 h-20 rounded-2xl bg-red-50 flex items-center justify-center mb-4">
-                    <span className="material-symbols-outlined text-4xl text-red-400">lock</span>
+                    <AppIcon name="lock" className="text-4xl text-red-400" />
                 </div>
                 <p className="text-sm font-medium text-slate-700 mb-1">Không có quyền xem tài liệu</p>
                 <p className="text-xs text-slate-400 text-center max-w-[220px]">
@@ -207,14 +239,12 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                     onClick={onClose}
                     className="absolute top-3 right-3 w-7 h-7 rounded-lg bg-white/80 backdrop-blur-sm flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-white transition-all shadow-sm"
                 >
-                    <span className="material-symbols-outlined text-base">close</span>
+                    <AppIcon name="close" className="text-base" />
                 </button>
 
                 {/* Large file icon */}
                 <div className={`w-20 h-20 rounded-2xl flex items-center justify-center ${fileIcon.bg} ${fileIcon.color} shadow-lg`}>
-                    <span className="material-symbols-outlined text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>
-                        {fileIcon.icon}
-                    </span>
+                    <AppIcon name={fileIcon.icon} className="text-4xl" />
                 </div>
             </div>
 
@@ -227,7 +257,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                         <EffectivePermissionBadge resource={document} resourceType="document" />
                     </div>
                     <p className="text-[11px] text-slate-400">
-                        Tệp tin {document.file_type?.toUpperCase()} • {formatFileSize(document.file_size)}
+                        Tệp tin {document.file_type?.toUpperCase()} • {formatFileSize(document.file_size)} • v{document.version || 1}
                     </p>
                 </div>
 
@@ -253,17 +283,74 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                             <span className="text-[10px] font-medium text-slate-400">Lần cuối sửa</span>
                             <p className="text-xs font-semibold text-slate-700">{formatDate(document.updated_at)}</p>
                         </div>
+
+                        <div className="space-y-1">
+                            <span className="text-[10px] font-medium text-slate-400">Trạng thái phiên bản</span>
+                            <p className="text-xs font-semibold text-slate-700">
+                                v{document.version || 1} · {document.is_current ? 'Đang hiệu lực' : 'Lịch sử'}
+                            </p>
+                        </div>
+
+                        <div className="space-y-1">
+                            <span className="text-[10px] font-medium text-slate-400">Khoảng hiệu lực</span>
+                            <p className="text-xs font-semibold text-slate-700">
+                                {document.valid_from ? formatDate(document.valid_from) : 'Không xác định'}
+                                {' → '}
+                                {document.valid_to ? formatDate(document.valid_to) : 'Hiện tại'}
+                            </p>
+                        </div>
                     </div>
                 </div>
+
+                {versions.length > 0 && (
+                    <div className="space-y-2">
+                        <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                            Lịch sử phiên bản
+                        </h4>
+                        <div className="space-y-2">
+                            {versions.slice(0, 10).map((versionItem) => (
+                                <button
+                                    key={versionItem.id}
+                                    type="button"
+                                    onClick={() => onSelectVersion?.(versionItem)}
+                                    className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left transition-colors ${
+                                        versionItem.id === document.id
+                                            ? 'border-[#9d4300]/30 bg-[#fff3e0]'
+                                            : 'border-slate-100 bg-slate-50 hover:bg-slate-100'
+                                    }`}
+                                >
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-bold text-slate-700">
+                                            v{versionItem.version || 1}
+                                            {versionItem.is_current ? ' • Đang hiệu lực' : ''}
+                                        </p>
+                                        <p className="truncate text-[10px] text-slate-400">
+                                            {versionItem.change_summary || formatDate(versionItem.created_at)}
+                                        </p>
+                                    </div>
+                                    <span className={`rounded-full px-2 py-1 text-[9px] font-bold uppercase ${
+                                        versionItem.version_state === 'active'
+                                            ? 'bg-emerald-100 text-emerald-700'
+                                            : versionItem.version_state === 'staging'
+                                                ? 'bg-amber-100 text-amber-700'
+                                                : versionItem.version_state === 'failed'
+                                                    ? 'bg-red-100 text-red-700'
+                                                    : 'bg-slate-200 text-slate-600'
+                                    }`}>
+                                        {versionItem.version_state || versionItem.status}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Folder Location */}
                 {folder && (
                     <div className="space-y-2">
                         <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Phạm vi truy cập</h4>
                         <div className="flex items-center gap-2 px-3 py-2.5 bg-[#fef5ed] rounded-xl border border-[#f97316]/10">
-                            <span className="material-symbols-outlined text-[#9d4300] text-base" style={{ fontVariationSettings: "'FILL' 1" }}>
-                                folder
-                            </span>
+                            <AppIcon name="folder" className="text-[#9d4300] text-base" />
                             <div className="min-w-0">
                                 <p className="text-xs font-semibold text-[#9d4300] truncate">{folder.name}</p>
                                 <p className="text-[10px] text-[#9d4300]/60 capitalize">{folder.access_scope}</p>
@@ -329,7 +416,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                                 className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-[#9d4300] text-white rounded-xl text-xs font-bold hover:bg-[#b75b00] transition-colors shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Tải file gốc về máy"
                             >
-                                <span className="material-symbols-outlined text-sm">download</span>
+                                <AppIcon name="download" className="text-sm" />
                                 Tải xuống
                             </button>
                         )}
@@ -340,7 +427,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                             className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-slate-800 text-white rounded-xl text-xs font-bold hover:bg-slate-900 transition-colors shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Xem nội dung tài liệu trực tiếp"
                         >
-                            <span className="material-symbols-outlined text-sm">visibility</span>
+                            <AppIcon name="visibility" className="text-sm" />
                             Xem trước
                         </button>
                     </div>
@@ -348,12 +435,13 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                     {/* Secondary Actions */}
                     {(canWriteDocument || canDeleteDocument) && (
                         <div className="flex gap-2 pt-1">
-                            {canWriteDocument && (
+                            {canWriteDocument && document.is_current !== false && (
                                 <button
+                                    onClick={() => setIsVersionModalOpen(true)}
                                     className="flex-[2] flex items-center justify-center gap-1.5 px-4 py-2.5 border border-slate-200 text-slate-700 bg-white rounded-xl text-xs font-bold hover:bg-slate-50 hover:border-slate-300 transition-all"
                                     title="Sửa file ở máy tính sau đó tải lên bản mới"
                                 >
-                                    <span className="material-symbols-outlined text-sm text-[#9d4300]">update</span>
+                                    <AppIcon name="update" className="text-sm text-[#9d4300]" />
                                     Cập nhật phiên bản mới
                                 </button>
                             )}
@@ -363,7 +451,7 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                                     className="px-3 py-2.5 border border-red-100 text-red-500 bg-red-50 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors"
                                     title="Xóa tài liệu này"
                                 >
-                                    <span className="material-symbols-outlined text-sm">delete</span>
+                                    <AppIcon name="delete" className="text-sm" />
                                 </button>
                             )}
                         </div>
@@ -387,6 +475,15 @@ export function DocumentSidebar({ document, folder, onClose }: DocumentSidebarPr
                 fileUrl={previewUrl}
                 fileName={displayName}
                 fileType={previewFileType || document.file_type}
+            />
+            <UpdateDocumentVersionModal
+                isOpen={isVersionModalOpen}
+                document={document}
+                onClose={() => setIsVersionModalOpen(false)}
+                onSuccess={() => {
+                    setVersionRefreshKey((value) => value + 1)
+                    onVersionCreated?.()
+                }}
             />
         </div>
     )

@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Paperclip, X, FolderOpen, Search, Check } from 'lucide-react'
 import { fetchAvailableAttachments } from '@/services/chatAttachments'
@@ -601,7 +602,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                                                             >
                                                                 <div className="flex items-start gap-3">
                                                                     <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
-                                                                        <span className="material-symbols-outlined text-base text-slate-500">description</span>
+                                                                        <AppIcon name="description" className="text-base text-slate-500" />
                                                                     </div>
                                                                     <div className="min-w-0 flex-1">
                                                                         <div className="flex items-center gap-2">

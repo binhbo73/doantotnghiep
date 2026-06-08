@@ -46,7 +46,8 @@ class BM25Searcher:
 
     def search(self,        query: str, 
         top_k: int = 20, 
-        document_ids: List[str] = None
+        document_ids: List[str] = None,
+        include_historical: bool = False,
     ) -> List[Dict[str, Any]]:
         """Search chunks using BM25 scoring.
         
@@ -83,6 +84,8 @@ class BM25Searcher:
                 node_type='detail',
                 is_deleted=False
             )
+            if not include_historical:
+                queryset = queryset.filter(is_current=True)
 
             # Optional: filter by document(s)
             if document_ids:
@@ -118,6 +121,8 @@ class BM25Searcher:
                     node_type='detail',
                     is_deleted=False
                 )
+                if not include_historical:
+                    fallback_qs = fallback_qs.filter(is_current=True)
                 if document_ids:
                     fallback_qs = fallback_qs.filter(document_id__in=document_ids if isinstance(document_ids, list) else [document_ids])
                 queryset = fallback_qs.order_by('-rank')[:candidate_limit]
@@ -135,7 +140,7 @@ class BM25Searcher:
                     'score': final_score,
                     '_bm25_score': bm25_score,
                     '_lexical_score': lexical_score,
-                    'content': chunk.content[:300] if chunk.content else '',
+                    'content': chunk.content[:2000] if chunk.content else '',
                     'page': chunk.page_number,
                     'chunk_index': chunk.chunk_index,
                     'metadata': chunk.metadata or {},
@@ -204,6 +209,7 @@ class BM25Searcher:
             ).filter(
                 search_vector=search_query,
                 node_type='detail',
+                is_current=True,
                 is_deleted=False
             )
 
@@ -229,7 +235,7 @@ class BM25Searcher:
                     'score': final_score,
                     '_bm25_score': bm25_score,
                     '_lexical_score': lexical_score,
-                    'content': chunk.content[:300] if chunk.content else '',
+                    'content': chunk.content[:2000] if chunk.content else '',
                     'page': chunk.page_number,
                     'chunk_index': chunk.chunk_index,
                     'metadata': chunk.metadata or {},

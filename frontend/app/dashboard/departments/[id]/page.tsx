@@ -1,3 +1,6 @@
+'use client'
+
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Department Detail Page
  * Route: /dashboard/departments/[id]
@@ -6,7 +9,7 @@
  * Uses Hybrid Approach APIs to fetch and display data
  */
 
-'use client';
+
 
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
@@ -53,7 +56,7 @@ export default function DepartmentDetailPage() {
             <div className="min-h-screen flex items-center justify-center p-6">
                 <div className="text-center max-w-lg bg-white rounded-2xl p-8 shadow-sm border">
                     <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center mx-auto mb-4">
-                        <span className="material-symbols-outlined text-3xl text-slate-400">lock</span>
+                        <AppIcon name="lock" className="text-3xl text-slate-400" />
                     </div>
                     <h3 className="text-lg font-bold mb-2">Quyền truy cập bị giới hạn</h3>
                     <p className="text-sm text-slate-500 mb-4">Bạn chỉ có thể xem chi tiết phòng ban mình quản lý hoặc phòng ban trực thuộc nó.</p>

@@ -7,7 +7,10 @@ with explicit Excel column letters. This keeps row/cell questions like "row 1"
 or "A10" deterministic instead of depending on semantic vector search.
 """
 
+import csv
 import logging
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from django.conf import settings
@@ -41,6 +44,12 @@ class ExcelChunkerV2:
             List of row-aware chunks.
         """
         try:
+            suffix = Path(file_path).suffix.lower()
+            if suffix == ".csv":
+                return self._chunk_csv_file(file_path, metadata)
+            if suffix == ".xls":
+                return self._chunk_xls_file(file_path, metadata)
+
             workbook = load_workbook(file_path, data_only=True)
             chunks: List[Dict[str, Any]] = []
 
@@ -67,6 +76,119 @@ class ExcelChunkerV2:
             logger.error("Excel chunking error: %s", str(e), exc_info=True)
             raise
 
+    def _chunk_csv_file(
+        self,
+        file_path: str,
+        metadata: Dict[str, Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """Chunk CSV rows with the same metadata contract as Excel rows."""
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as csv_file:
+            sample = csv_file.read(8192)
+            csv_file.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            except csv.Error:
+                dialect = csv.excel
+            rows = list(csv.reader(csv_file, dialect))
+
+        all_rows = []
+        max_col = max((len(row) for row in rows), default=0)
+        for row_idx, row in enumerate(rows, start=1):
+            padded = list(row) + [""] * (max_col - len(row))
+            if any(str(cell).strip() for cell in padded):
+                all_rows.append({
+                    "index": row_idx,
+                    "data": padded,
+                    "has_raw_value": True,
+                    "inherited_columns": [],
+                })
+
+        return self._build_row_chunks(
+            all_rows=all_rows,
+            sheet_name=Path(file_path).stem or "CSV",
+            sheet_idx=0,
+            max_col=max_col,
+            metadata=metadata,
+            has_merged_cells=False,
+        )
+
+    def _chunk_xls_file(
+        self,
+        file_path: str,
+        metadata: Dict[str, Any] = None,
+    ) -> List[Dict[str, Any]]:
+        """Chunk legacy XLS workbooks using xlrd."""
+        import xlrd
+
+        workbook = xlrd.open_workbook(file_path, formatting_info=True)
+        chunks: List[Dict[str, Any]] = []
+        for sheet_idx, sheet in enumerate(workbook.sheets()):
+            merged_ranges = list(getattr(sheet, "merged_cells", []) or [])
+            inherited_values = {}
+            for row_low, row_high, col_low, col_high in merged_ranges:
+                if row_high - row_low <= 1:
+                    continue
+                anchor = sheet.cell_value(row_low, col_low)
+                for row_idx in range(row_low + 1, row_high):
+                    inherited_values[(row_idx, col_low)] = anchor
+
+            all_rows = []
+            for zero_row_idx in range(sheet.nrows):
+                row_data = []
+                inherited_columns = []
+                has_raw_value = False
+                for col_idx in range(sheet.ncols):
+                    value = sheet.cell_value(zero_row_idx, col_idx)
+                    if value not in (None, ""):
+                        has_raw_value = True
+                    elif (zero_row_idx, col_idx) in inherited_values:
+                        value = inherited_values[(zero_row_idx, col_idx)]
+                        inherited_columns.append(get_column_letter(col_idx + 1))
+                    row_data.append(
+                        self._format_xls_value(
+                            value,
+                            sheet.cell_type(zero_row_idx, col_idx),
+                            workbook.datemode,
+                        )
+                    )
+
+                if any(str(cell).strip() for cell in row_data):
+                    all_rows.append({
+                        "index": zero_row_idx + 1,
+                        "data": row_data,
+                        "has_raw_value": has_raw_value,
+                        "inherited_columns": inherited_columns,
+                    })
+
+            chunks.extend(self._build_row_chunks(
+                all_rows=all_rows,
+                sheet_name=sheet.name,
+                sheet_idx=sheet_idx,
+                max_col=sheet.ncols,
+                metadata=metadata,
+                has_merged_cells=bool(merged_ranges),
+            ))
+
+        logger.info(
+            "Excel Chunker v2: %s chunks from %s legacy sheet(s)",
+            len(chunks),
+            workbook.nsheets,
+        )
+        return chunks
+
+    def _format_xls_value(self, value: Any, cell_type: int, datemode: int) -> Any:
+        """Preserve readable dates and integers from legacy XLS cells."""
+        try:
+            import xlrd
+
+            if cell_type == xlrd.XL_CELL_DATE:
+                return xlrd.xldate_as_datetime(value, datemode)
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        return value
+
     def _chunk_worksheet(
         self,
         worksheet,
@@ -81,8 +203,6 @@ class ExcelChunkerV2:
         A row is included when at least one cell is non-empty. Row 1 is not
         treated specially because users usually mean the literal Excel row.
         """
-        chunks: List[Dict[str, Any]] = []
-
         all_rows = []
         max_col = worksheet.max_column
         merged_ranges = list(worksheet.merged_cells.ranges)
@@ -119,7 +239,27 @@ class ExcelChunkerV2:
                     }
                 )
 
-        if not all_rows:
+        return self._build_row_chunks(
+            all_rows=all_rows,
+            sheet_name=sheet_name,
+            sheet_idx=sheet_idx,
+            max_col=max_col,
+            metadata=metadata,
+            has_merged_cells=bool(merged_ranges),
+        )
+
+    def _build_row_chunks(
+        self,
+        all_rows: List[Dict[str, Any]],
+        sheet_name: str,
+        sheet_idx: int,
+        max_col: int,
+        metadata: Dict[str, Any] = None,
+        has_merged_cells: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Build whole-table and physical-row chunks from normalized rows."""
+        chunks: List[Dict[str, Any]] = []
+        if not all_rows or max_col <= 0:
             return chunks
 
         col_letters = [get_column_letter(i + 1) for i in range(max_col)]
@@ -142,7 +282,7 @@ class ExcelChunkerV2:
             column_names=column_names,
             max_col=max_col,
             metadata=metadata,
-            has_merged_cells=len(worksheet.merged_cells.ranges) > 0,
+            has_merged_cells=has_merged_cells,
         )
         if table_chunk:
             chunks.append(table_chunk)
@@ -176,7 +316,7 @@ class ExcelChunkerV2:
                     "content_format": "spreadsheet_markdown",
                     "chunking_strategy": self.strategy_name,
                     "is_header_inclusive": False,
-                    "has_merged_cells": len(worksheet.merged_cells.ranges) > 0,
+                    "has_merged_cells": has_merged_cells,
                     "is_merged_expanded_row": not row_obj.get("has_raw_value", True),
                     "merged_inherited_columns": row_obj.get("inherited_columns", []),
                 }
@@ -330,6 +470,10 @@ class ExcelChunkerV2:
         return "\n".join(lines)
 
     def _markdown_cell_value(self, value: Any) -> str:
+        if isinstance(value, datetime):
+            value = value.strftime("%Y-%m-%d %H:%M:%S")
+        elif isinstance(value, date):
+            value = value.strftime("%Y-%m-%d")
         text = str(value).strip() if value is not None else ""
         if not text:
             return "(empty)"
@@ -373,7 +517,7 @@ class ExcelTableExtractor:
         sheets_data = []
 
         for sheet in workbook.sheetnames:
-            if sheet_name and sheet != sheet:
+            if sheet_name and sheet_name != sheet:
                 continue
 
             worksheet = workbook[sheet]

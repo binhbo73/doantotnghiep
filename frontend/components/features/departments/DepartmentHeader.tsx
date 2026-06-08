@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 
 interface DepartmentHeaderProps {
@@ -29,14 +30,14 @@ export function DepartmentHeader({
                     onClick={() => onViewModeChange?.('tree')}
                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'tree' ? 'text-primary bg-white shadow-sm font-bold rounded-lg' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                    <span className="material-symbols-outlined text-lg">account_tree</span>
+                    <AppIcon name="account_tree" className="text-lg" />
                     Cây
                 </button>
                 <button 
                     onClick={() => onViewModeChange?.('list')}
                     className={`flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all ${viewMode === 'list' ? 'text-primary bg-white shadow-sm font-bold rounded-lg' : 'text-slate-600 hover:text-slate-900'}`}
                 >
-                    <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>list</span>
+                    <AppIcon name="list" className="text-lg" />
                     Danh sách
                 </button>
             </div>

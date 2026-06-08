@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useMemo } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useRBAC } from '@/hooks/useRBAC'
@@ -73,7 +74,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDe
                     {isLevel2 ? (
                         <>
                             <div className={`w-6 h-6 rounded-md flex items-center justify-center ${bg} ${color}`}>
-                                <span className="material-symbols-outlined text-[10px]">{icon}</span>
+                                <AppIcon name={icon} className="text-[10px]" />
                             </div>
                             <span className="text-xs font-medium text-slate-800">{node.name}</span>
                             <div className="ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -87,7 +88,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDe
                                         className="p-1 text-slate-400 transition-colors hover:text-[#9d4300]"
                                         title="Chỉnh sửa phòng ban"
                                     >
-                                        <span className="material-symbols-outlined text-sm">edit</span>
+                                        <AppIcon name="edit" className="text-sm" />
                                     </button>
                                 )}
                                 {onDelete && (
@@ -111,7 +112,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDe
                         <div className="flex items-center justify-between w-full">
                             <div className="flex items-center gap-2.5">
                                 <div className={`w-7 h-7 ${isRoot ? 'w-8 h-8' : ''} rounded-lg flex items-center justify-center ${bg} ${color}`}>
-                                    <span className={`material-symbols-outlined ${isRoot ? 'text-xl' : 'text-base'}`}>{icon}</span>
+                                    <AppIcon name={icon} className={`${isRoot ? 'text-xl' : 'text-base'}`} />
                                 </div>
                                 <div className="min-w-0">
                                     <h3 className={`font-semibold ${isRoot ? 'text-sm' : 'text-xs'} text-slate-900 leading-tight truncate`}>{node.name}</h3>
@@ -130,7 +131,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDe
                                         className="p-1 hover:bg-white rounded-lg text-slate-400 hover:text-[#9d4300] transition-colors"
                                         title="Chỉnh sửa phòng ban"
                                     >
-                                        <span className="material-symbols-outlined text-sm">edit</span>
+                                        <AppIcon name="edit" className="text-sm" />
                                     </button>
                                 )}
                                 {onDelete && (
@@ -149,9 +150,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDe
                                     </button>
                                 )}
                                 {!isRoot && (
-                                    <span className={`material-symbols-outlined text-lg ${isSelected ? 'text-[#9d4300]' : 'text-slate-300'}`}>
-                                        {isSelected ? 'radio_button_checked' : 'chevron_right'}
-                                    </span>
+                                    <AppIcon name={isSelected ? 'radio_button_checked' : 'chevron_right'} className={`text-lg ${isSelected ? 'text-[#9d4300]' : 'text-slate-300'}`} />
                                 )}
                             </div>
                         </div>
@@ -172,7 +171,7 @@ export function DepartmentTree({ departments, selectedId, onSelect, onEdit, onDe
         <div className="col-span-12 lg:col-span-7 bg-[#ffffff] shadow-sm ring-1 ring-slate-100 p-5 rounded-2xl">
             <div className="flex justify-between items-center mb-5">
                 <h2 className="text-base font-bold flex items-center gap-2 text-slate-800">
-                    <span className="material-symbols-outlined text-[#9d4300] text-lg">account_tree</span>
+                    <AppIcon name="account_tree" className="text-[#9d4300] text-lg" />
                     Sơ đồ Tổ chức
                 </h2>
             </div>

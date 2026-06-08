@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { OtherDocumentsNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse } from '@/services/folder'
@@ -51,7 +52,7 @@ function DocumentCategory({
         <div className="ml-4 border-l border-slate-200 pl-4 py-2">
             <div className="flex items-center gap-2 px-3 py-1.5 mb-1.5">
                 <div className={`${iconBg} p-1.5 rounded`}>
-                    <span className="material-symbols-outlined text-xs">{icon}</span>
+                    <AppIcon name={icon} className="text-xs" />
                 </div>
                 <span className="text-xs font-semibold text-slate-600">{title}</span>
                 <span className="ml-auto text-xs font-bold text-slate-400">{filtered.length}</span>
@@ -101,16 +102,8 @@ export function OtherDocuments({
                 onClick={onToggle}
                 className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 rounded-lg transition-colors group"
             >
-                <span
-                    className="material-symbols-outlined text-base text-slate-500 group-hover:text-slate-700 transition-transform"
-                    style={{
-                        transform: otherDocuments.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
-                        transformOrigin: 'center',
-                    }}
-                >
-                    chevron_right
-                </span>
-                <span className="material-symbols-outlined text-base text-[#9d4300]">description</span>
+                <AppIcon name="chevron_right" className="text-base text-slate-500 group-hover:text-slate-700 transition-transform" />
+                <AppIcon name="description" className="text-base text-[#9d4300]" />
                 <span className="font-semibold text-slate-700 text-sm">{otherDocuments.label}</span>
                 <span className="ml-auto text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">
                     {totalOtherDocs}

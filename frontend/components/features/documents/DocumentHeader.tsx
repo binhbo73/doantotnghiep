@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { useRBAC } from '@/hooks/useRBAC'
 
@@ -34,7 +35,7 @@ export function DocumentHeader({
                 <div>
                     <div className="flex items-center gap-2 mb-1">
                         <h1 className={`${compact ? 'text-xl' : 'text-2xl'} font-extrabold tracking-tight text-[#0d1c2e] flex items-center gap-2`}>
-                            <span className={`material-symbols-outlined text-[#9d4300] ${compact ? 'text-xl' : 'text-2xl'}`}>inventory_2</span>
+                            <AppIcon name="inventory_2" className={`text-[#9d4300] ${compact ? 'text-xl' : 'text-2xl'}`} />
                             {title}
                         </h1>
                         <span
@@ -53,7 +54,7 @@ export function DocumentHeader({
                         onClick={onCreateFolder}
                         className="px-4 py-2 bg-[#9d4300] text-white rounded-xl text-sm font-semibold hover:bg-[#b75b00] transition-colors flex items-center gap-2 shadow-sm hover:shadow-md"
                     >
-                        <span className="material-symbols-outlined text-base">create_new_folder</span>
+                        <AppIcon name="create_new_folder" className="text-base" />
                         Tạo Thư Mục
                     </button>
                 )}
@@ -64,12 +65,12 @@ export function DocumentHeader({
                 {/* Stats Chips */}
                 <div className="flex items-center gap-2">
                     <div className={`flex items-center gap-1.5 ${compact ? 'px-2.5 py-1' : 'px-3 py-1.5'} bg-[#fff3e0] rounded-lg border border-[#f97316]/20`}>
-                        <span className={`material-symbols-outlined text-[#9d4300] ${compact ? 'text-sm' : 'text-base'}`}>folder</span>
+                        <AppIcon name="folder" className={`text-[#9d4300] ${compact ? 'text-sm' : 'text-base'}`} />
                         <span className={`${compact ? 'text-[11px]' : 'text-xs'} font-bold text-[#9d4300]`}>{totalFolders}</span>
                         <span className={`${compact ? 'text-[11px]' : 'text-xs'} text-[#9d4300]/70`}>thư mục</span>
                     </div>
                     <div className={`flex items-center gap-1.5 ${compact ? 'px-2.5 py-1' : 'px-3 py-1.5'} bg-blue-50 rounded-lg border border-blue-200/50`}>
-                        <span className={`material-symbols-outlined text-blue-600 ${compact ? 'text-sm' : 'text-base'}`}>description</span>
+                        <AppIcon name="description" className={`text-blue-600 ${compact ? 'text-sm' : 'text-base'}`} />
                         <span className={`${compact ? 'text-[11px]' : 'text-xs'} font-bold text-blue-700`}>{totalDocuments}</span>
                         <span className={`${compact ? 'text-[11px]' : 'text-xs'} text-blue-500`}>tài liệu</span>
                     </div>
@@ -77,7 +78,7 @@ export function DocumentHeader({
 
                 {/* Search */}
                 <div className={`flex-1 relative ${compact ? 'max-w-2xl min-w-[280px]' : 'max-w-md'}`}>
-                    <span className={`material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 ${compact ? 'text-base' : 'text-lg'}`}>search</span>
+                    <AppIcon name="search" className={`absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 ${compact ? 'text-base' : 'text-lg'}`} />
                     <input
                         type="text"
                         value={searchQuery}
@@ -90,7 +91,7 @@ export function DocumentHeader({
                             onClick={() => onSearchChange('')}
                             className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                         >
-                            <span className={`material-symbols-outlined ${compact ? 'text-sm' : 'text-base'}`}>close</span>
+                            <AppIcon name="close" className={`${compact ? 'text-sm' : 'text-base'}`} />
                         </button>
                     )}
                 </div>

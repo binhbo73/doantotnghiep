@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Document Hooks - React Query hooks for document operations
  * Provides server state management with caching, retries, etc.
  */
 
-'use client'
+
 
 import { useQuery, useMutation, useQueryClient, UseQueryResult, UseMutationResult } from '@tanstack/react-query'
 import { QUERY_KEYS, queryClient } from '@/lib/queryClient'

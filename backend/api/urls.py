@@ -57,6 +57,7 @@ from api.views.document_views import (
     DocumentListView,
     SharedWithMeDocumentsView,
     DocumentUploadView,
+    DocumentVersionListCreateView,
     DocumentDetailView,
     DocumentUpdateView,
     DocumentMoveView,
@@ -270,6 +271,7 @@ urlpatterns = [
     # 5. DELETE /api/v1/documents/{doc_id} - Soft delete + Qdrant sync
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/?$", DocumentDetailView.as_view(), name="document_detail_view"),
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/update/?$", DocumentUpdateView.as_view(), name="document_update"),
+    re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/versions/?$", DocumentVersionListCreateView.as_view(), name="document_versions"),
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/move/?$", DocumentMoveView.as_view(), name="document_move"),
     re_path(rf"^documents/(?P<doc_id>{UUID_PATTERN})/delete/?$", DocumentDeleteView.as_view(), name="document_delete"),
     

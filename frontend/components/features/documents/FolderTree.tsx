@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
@@ -60,18 +61,16 @@ export function FolderTree({
             {/* Header */}
             <div className="flex justify-between items-center px-5 py-3.5 border-b border-slate-100 flex-shrink-0">
                 <h2 className="text-sm font-bold flex items-center gap-2 text-slate-800">
-                    <span className="material-symbols-outlined text-[#9d4300] text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>
-                        account_tree
-                    </span>
+                    <AppIcon name="account_tree" className="text-[#9d4300] text-lg" />
                     Cấu trúc Kho tài liệu
                 </h2>
 
                 <div className="flex items-center gap-1">
                     <button className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors" title="Thu gọn tất cả">
-                        <span className="material-symbols-outlined text-base">unfold_less</span>
+                        <AppIcon name="unfold_less" className="text-base" />
                     </button>
                     <button className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600 transition-colors" title="Làm mới">
-                        <span className="material-symbols-outlined text-base">refresh</span>
+                        <AppIcon name="refresh" className="text-base" />
                     </button>
                 </div>
             </div>
@@ -115,7 +114,7 @@ export function FolderTree({
                 ) : (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
                         <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
-                            <span className="material-symbols-outlined text-3xl text-slate-300">folder_off</span>
+                            <AppIcon name="folder_off" className="text-3xl text-slate-300" />
                         </div>
                         <p className="text-sm font-medium text-slate-500 mb-1">Chưa có thư mục nào</p>
                         <p className="text-xs text-slate-400">Tạo thư mục mới để bắt đầu tổ chức tài liệu</p>

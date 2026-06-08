@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/services/api'
 import { FolderDocumentResponse, FolderResponse } from '@/services/folder'
@@ -112,7 +113,7 @@ function PermissionListItem({
     return (
         <div className="flex items-start gap-2.5 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-2.5">
             <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-md bg-white text-slate-400 shadow-sm ring-1 ring-slate-100">
-                <span className="material-symbols-outlined text-sm">badge</span>
+                <AppIcon name="badge" className="text-sm" />
             </div>
             <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -134,7 +135,7 @@ function PermissionListItem({
                     disabled={disabled}
                     className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                    <span className="material-symbols-outlined text-[14px]">remove_circle</span>
+                    <AppIcon name="remove_circle" className="text-[14px]" />
                     Thu hồi
                 </button>
             )}
@@ -473,7 +474,7 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         return (
             <div className="flex flex-col items-center justify-center p-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
                 <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4">
-                    <span className="material-symbols-outlined text-3xl text-slate-400">lock</span>
+                    <AppIcon name="lock" className="text-3xl text-slate-400" />
                 </div>
                 <h3 className="text-sm font-bold text-slate-700">Quyền truy cập bị giới hạn</h3>
                 <p className="text-[11px] text-slate-500 mt-1 max-w-[240px]">
@@ -498,7 +499,7 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
                         onClick={loadPermissions}
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                     >
-                        <span className="material-symbols-outlined text-[14px]">refresh</span>
+                        <AppIcon name="refresh" className="text-[14px]" />
                         Làm mới
                     </button>
                 </div>
@@ -605,7 +606,7 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
                                         disabled={saving}
                                         className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#9d4300] px-3 py-2 text-[13px] font-bold text-white transition-colors hover:bg-[#b75b00] disabled:cursor-not-allowed disabled:opacity-70"
                                     >
-                                        <span className="material-symbols-outlined text-sm">add_circle</span>
+                                        <AppIcon name="add_circle" className="text-sm" />
                                         Gán quyền
                                     </button>
                                 </div>

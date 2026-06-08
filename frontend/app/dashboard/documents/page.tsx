@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Documents Page
  * RBAC:
@@ -63,7 +64,7 @@ function PageTabButton({
         >
             <div className="flex items-center gap-2.5">
                 <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${active ? 'bg-white/15' : disabled ? 'bg-slate-100' : 'bg-[#fff3e0]'}`}>
-                    <span className={`material-symbols-outlined text-base ${active ? 'text-white' : disabled ? 'text-slate-300' : 'text-[#9d4300]'}`}>{icon}</span>
+                    <AppIcon name={icon} className={`text-base ${active ? 'text-white' : disabled ? 'text-slate-300' : 'text-[#9d4300]'}`} />
                 </div>
                 <div className="min-w-0">
                     <p className="text-[13px] font-bold">{label}</p>
@@ -290,7 +291,7 @@ function DocumentsPageContent() {
             <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center">
                 <div className="flex flex-col items-center gap-4 max-w-sm text-center">
                     <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center">
-                        <span className="material-symbols-outlined text-3xl text-red-400">error</span>
+                        <AppIcon name="error" className="text-3xl text-red-400" />
                     </div>
                     <div>
                         <p className="text-sm font-semibold text-slate-700 mb-1">Không thể tải dữ liệu</p>
@@ -365,6 +366,12 @@ function DocumentsPageContent() {
                             document={selectedDocument}
                             folder={selectedFolder}
                             onClose={clearSelection}
+                            onSelectVersion={(versionDocument) => {
+                                selectDocument(versionDocument, selectedFolder || undefined)
+                            }}
+                            onVersionCreated={() => {
+                                void refetch()
+                            }}
                         />
                     </div>
                 ) : (
@@ -386,7 +393,7 @@ function DocumentsPageContent() {
                     onClick={() => setIsUploadModalOpen(true)}
                     className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
                 >
-                    <span className="material-symbols-outlined text-3xl">upload_file</span>
+                    <AppIcon name="upload_file" className="text-3xl" />
                     <span className="absolute right-full mr-4 bg-[#0d1c2e] text-white px-3 py-1 rounded-lg text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-lg">
                         Tải lên Tài liệu
                     </span>

@@ -43,7 +43,7 @@ export function HeroSection() {
                         <img
                             alt="AI Interface"
                             className="h-full w-full rounded-2xl object-cover shadow-inner"
-                            src="https://lh3.googleusercontent.com/aida-public/AB6AXuBcj3OReSjkW0E4vELaGooZPGOXqDXi3lyQ3Vq1xi2ViQXD8R1jVCiphWU_JA0Cka1ZCTka38DyNcfFaK1wC056jI_AnrszrcJyC1jFY6XA7mZwnT2gWvqum_3GRUloT6L06svBUq3VNcmv4RnS9kvXQTEBb2qgK7B6yKG4oo2psKQcGgpFfi9E64FqCaM-sm7lT5cxhPi36sIMkxHrVhEG3IZNEzo8YDYZRkusQICoo3Lz3ThrfIQ0y2GwqvsnMevTJBH72cFwzIQ"
+                            src="/placeholder.svg"
                         />
                     </div>
                     <div className="absolute -right-12 -top-12 -z-10 h-64 w-64 rounded-full bg-[#ffdbca]/20 blur-[100px]" />

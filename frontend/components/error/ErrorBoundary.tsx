@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Error Boundary Component
  * Catches React rendering errors and displays fallback UI
  */
 
-'use client'
+
 
 import React, { ReactNode } from 'react'
 import { logger } from '@/services/logger'

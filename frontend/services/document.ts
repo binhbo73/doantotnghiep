@@ -6,6 +6,7 @@
 import { api } from '@/services/api/client'
 import { uploadService } from '@/services/upload'
 import { logger } from '@/services/logger'
+import type { FolderDocumentResponse } from '@/services/folder'
 import type {
     Document,
     DocumentDetail,
@@ -298,6 +299,15 @@ export async function getDocumentStatus(documentId: string): Promise<any> {
     return response
 }
 
+export async function getDocumentVersions(documentId: string): Promise<FolderDocumentResponse[]> {
+    const response = await api.get<unknown>(`/documents/${documentId}/versions`)
+    const responseRecord = response && typeof response === 'object'
+        ? response as Record<string, unknown>
+        : null
+    const payload = responseRecord?.data || response
+    return Array.isArray(payload) ? payload : []
+}
+
 /**
  * Export all functions as an object for easy importing
  */
@@ -317,4 +327,5 @@ export const documentService = {
     listTags,
     createTag,
     getDocumentStatus,
+    getDocumentVersions,
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Departments Management Page
  * RBAC:
@@ -350,7 +351,7 @@ function DepartmentManagementContent() {
                     onClick={() => setIsDialogOpen(true)}
                     className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
                 >
-                    <span className="material-symbols-outlined text-3xl">add_business</span>
+                    <AppIcon name="add_business" className="text-3xl" />
                     <span className="absolute right-full mr-4 bg-[#0d1c2e] text-white px-3 py-1 rounded-lg text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-lg">Thêm Phòng Ban</span>
                 </button>
             )}

@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * File Metadata Panel Component
  * Displays details about selected folder or file in right sidebar
  */
 
-'use client';
+
 
 import React from 'react';
 import {

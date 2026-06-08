@@ -1,3 +1,4 @@
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Info Cards Section
  * Shows action cards: Onboarding, Meeting Schedule, KPI & Metrics
@@ -19,7 +20,7 @@ export default function InfoCardsSection({
             <div className="p-5 bg-white border border-[#9d4300]/20 rounded-2xl shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
                 <div className="relative z-10 space-y-3">
                     <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-[#9d4300] bg-[#fff6f1] p-1.5 rounded-lg text-lg">description</span>
+                        <AppIcon name="description" className="text-[#9d4300] bg-[#fff6f1] p-1.5 rounded-lg text-lg" />
                         <h3 className="text-base font-black text-[#0d1c2e]">
                             Tài liệu Onboarding
                         </h3>
@@ -33,7 +34,7 @@ export default function InfoCardsSection({
                         className="inline-flex cursor-not-allowed items-center gap-1.5 text-xs font-black text-[#9d4300]/60"
                     >
                         Truy cập
-                        <span className="material-symbols-outlined text-base">arrow_forward</span>
+                        <AppIcon name="arrow_forward" className="text-base" />
                     </button>
                 </div>
                 <span className="absolute -right-2 -bottom-2 text-5xl opacity-[0.03] text-[#9d4300]">article</span>
@@ -43,7 +44,7 @@ export default function InfoCardsSection({
             <div className="p-5 bg-white border border-blue-200 rounded-2xl shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
                 <div className="relative z-10 space-y-3">
                     <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-blue-600 bg-blue-50 p-1.5 rounded-lg text-lg">calendar_month</span>
+                        <AppIcon name="calendar_month" className="text-blue-600 bg-blue-50 p-1.5 rounded-lg text-lg" />
                         <h3 className="text-base font-black text-[#0d1c2e]">
                             Lịch họp định kỳ
                         </h3>
@@ -57,7 +58,7 @@ export default function InfoCardsSection({
                         className="inline-flex cursor-not-allowed items-center gap-1.5 text-xs font-black text-blue-600/60"
                     >
                         Xem lịch
-                        <span className="material-symbols-outlined text-base">arrow_forward</span>
+                        <AppIcon name="arrow_forward" className="text-base" />
                     </button>
                 </div>
                 <span className="absolute -right-2 -bottom-2 text-5xl opacity-[0.03] text-blue-600">event</span>
@@ -67,7 +68,7 @@ export default function InfoCardsSection({
             <div className="p-5 bg-white border border-rose-200 rounded-2xl shadow-sm hover:shadow-md transition-all group overflow-hidden relative">
                 <div className="relative z-10 space-y-3">
                     <div className="flex items-center gap-2">
-                        <span className="material-symbols-outlined text-rose-500 bg-rose-50 p-1.5 rounded-lg text-lg">trending_up</span>
+                        <AppIcon name="trending_up" className="text-rose-500 bg-rose-50 p-1.5 rounded-lg text-lg" />
                         <h3 className="text-base font-black text-[#0d1c2e]">
                             KPI & Hiệu suất
                         </h3>
@@ -81,7 +82,7 @@ export default function InfoCardsSection({
                         className="inline-flex cursor-not-allowed items-center gap-1.5 text-xs font-black text-rose-500/60"
                     >
                         Báo cáo
-                        <span className="material-symbols-outlined text-base">arrow_forward</span>
+                        <AppIcon name="arrow_forward" className="text-base" />
                     </button>
                 </div>
                 <span className="absolute -right-2 -bottom-2 text-5xl opacity-[0.03] text-rose-500">monitoring</span>

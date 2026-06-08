@@ -67,6 +67,7 @@ class DocumentUploadService:
     ALLOWED_MIME_TYPES = {
         'application/pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
         'application/msword',
         'text/plain',
         'text/markdown',
@@ -95,6 +96,10 @@ class DocumentUploadService:
         description: Optional[str] = None,
         tags: Optional[List[str]] = None,
         run_processing: bool = True,
+        base_document: Optional['Document'] = None,
+        change_summary: str = '',
+        version_number: Optional[int] = None,
+        update_mode: str = 'full',
     ) -> 'Document':
         """
         Upload tài liệu nội bộ và trigger indexing pipeline.
@@ -137,6 +142,10 @@ class DocumentUploadService:
                 resolved=resolved,
                 description=description,
                 tags=tags or [],
+                base_document=base_document,
+                change_summary=change_summary,
+                version_number=version_number,
+                update_mode=update_mode,
             )
 
         logger.info(
@@ -181,6 +190,7 @@ class DocumentUploadService:
                 '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 '.xls': 'application/vnd.ms-excel',
                 '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
                 '.doc': 'application/msword',
                 '.txt': 'text/plain',
                 '.md': 'text/markdown',
@@ -211,6 +221,8 @@ class DocumentUploadService:
             return 'docx'
         if ext == '.doc':
             return 'doc'
+        if ext == '.pptx':
+            return 'pptx'
         if ext == '.pdf':
             return 'pdf'
         if ext == '.xlsx':
@@ -223,6 +235,7 @@ class DocumentUploadService:
         mime_map = {
             'application/pdf': 'pdf',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
             'application/msword': 'doc',
             'text/plain': 'txt',
             'text/markdown': 'markdown',
@@ -398,6 +411,10 @@ class DocumentUploadService:
         resolved: dict,
         description: Optional[str],
         tags: List[str],
+        base_document: Optional['Document'] = None,
+        change_summary: str = '',
+        version_number: Optional[int] = None,
+        update_mode: str = 'full',
     ) -> 'Document':
         """Tạo Document record trong PostgreSQL với status='pending'."""
         import os as _os
@@ -418,10 +435,21 @@ class DocumentUploadService:
             access_scope=resolved['access_scope'],
             embedding_model=getattr(settings, 'EMBEDDING_MODEL', 'bge-m3'),
             status='pending',
+            logical_document_id=(
+                base_document.logical_document_id if base_document else uuid.uuid4()
+            ),
+            previous_version_id=base_document.id if base_document else None,
+            version=version_number or ((base_document.version + 1) if base_document else 1),
+            version_lock=(base_document.version_lock + 1) if base_document else 1,
+            is_current=base_document is None,
+            version_state='staging' if base_document else 'active',
+            valid_from=None if base_document else timezone.now(),
+            change_summary=change_summary or '',
             metadata={
                 'description': description or '',
                 'original_ext': ext,
                 'embedding_model': getattr(settings, 'EMBEDDING_MODEL', 'bge-m3'),
+                'update_mode': update_mode if base_document else 'full',
             },
         )
 
@@ -533,16 +561,34 @@ class DocumentUploadService:
                     })
                     document.save(update_fields=['status', 'metadata'])
                     logger.info(f"[Upload] Document {document.id} processed by pipeline: {len(context.chunks)} chunks")
+                    if document.previous_version_id:
+                        from services.document_version_service import DocumentVersionService
+                        DocumentVersionService().activate_if_ready(str(document.id))
                 except Exception as e:
                     logger.error(f"[Upload] Failed to update document after pipeline success: {e}")
+                    if document.previous_version_id:
+                        document.refresh_from_db()
+                        document.status = 'failed'
+                        document.version_state = 'failed'
+                        document.metadata = document.metadata or {}
+                        document.metadata['version_activation_error'] = str(e)[:1000]
+                        document.save(update_fields=[
+                            'status', 'version_state', 'metadata', 'updated_at',
+                        ])
             else:
                 err_msg = '; '.join([e.get('error', '') for e in context.errors]) or 'Unknown pipeline error'
                 logger.error(f"[Upload] Pipeline failed for document {document.id}: {err_msg}")
                 self._update_status(document, 'failed', error=err_msg)
+                if document.previous_version_id:
+                    from services.document_version_service import DocumentVersionService
+                    DocumentVersionService().mark_failed(str(document.id))
 
         except Exception as e:
             logger.exception(f"[Upload] Pipeline execution error for document {document.id}: {e}")
             self._update_status(document, 'failed', error=str(e))
+            if document.previous_version_id:
+                from services.document_version_service import DocumentVersionService
+                DocumentVersionService().mark_failed(str(document.id))
 
 
     # =========================================================================

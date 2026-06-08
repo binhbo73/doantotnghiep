@@ -158,6 +158,7 @@ class FolderDetailSerializer(serializers.ModelSerializer):
         from apps.documents.models import Document
         return Document.objects.filter(
             folder_id=obj.id,
+            is_current=True,
             is_deleted=False
         ).count()
     

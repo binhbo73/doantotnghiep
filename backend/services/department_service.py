@@ -575,6 +575,7 @@ class DepartmentService(BaseService):
             folders_in_dept = dept.folders.filter(is_deleted=False).count()
             documents_in_dept = Document.objects.filter(
                 Q(department=dept) | Q(folder__department=dept),
+                is_current=True,
                 is_deleted=False,
             ).distinct().count()
 
@@ -737,6 +738,7 @@ class DepartmentService(BaseService):
                 'folder_count': dept.folders.filter(is_deleted=False).count(),
                 'document_count': Document.objects.filter(
                     Q(department=dept) | Q(folder__department=dept),
+                    is_current=True,
                     is_deleted=False
                 ).distinct().count(),
                 'sub_department_count': dept.sub_departments.filter(is_deleted=False).count(),
@@ -861,7 +863,7 @@ class DepartmentService(BaseService):
                     'parent_id': str(folder.parent_id) if folder.parent_id else None,
                     'access_scope': folder.access_scope,
                     'created_by_id': str(folder.created_by_id) if folder.created_by_id else None,
-                    'document_count': folder.documents.filter(is_deleted=False).count(),
+                    'document_count': folder.documents.filter(is_deleted=False, is_current=True).count(),
                     'subfolder_count': folder.subfolders.filter(is_deleted=False).count(),
                     'created_at': folder.created_at.isoformat() if folder.created_at else None,
                 })
@@ -906,6 +908,7 @@ class DepartmentService(BaseService):
             # Get documents of this department
             documents_queryset = Document.objects.filter(
                 Q(department=dept) | Q(folder__department=dept),
+                is_current=True,
                 is_deleted=False
             ).select_related('uploader', 'folder').distinct().order_by('-created_at')
             
@@ -952,7 +955,8 @@ class DepartmentService(BaseService):
         user_id: Optional[str] = None,
         is_admin: bool = False,
         page: int = 1,
-        page_size: int = 10
+        page_size: int = 10,
+        include_versions: bool = False,
     ) -> Dict[str, Any]:
         """
         Get documents in folder with pagination.
@@ -976,16 +980,23 @@ class DepartmentService(BaseService):
             # Get documents
             if is_admin:
                 documents_queryset = folder.documents.filter(
-                    is_deleted=False
+                    is_deleted=False,
                 ).select_related('uploader', 'department').order_by('-created_at')
+                if not include_versions:
+                    documents_queryset = documents_queryset.filter(is_current=True)
             else:
                 from repositories.document_repository import DocumentRepository
                 doc_repo = DocumentRepository()
-                accessible_docs = doc_repo.get_accessible_documents(user_id)
+                accessible_docs = doc_repo.get_accessible_documents(
+                    user_id,
+                    include_versions=include_versions,
+                )
                 documents_queryset = folder.documents.filter(
                     is_deleted=False,
                     id__in=accessible_docs.values_list('id', flat=True)
                 ).select_related('uploader', 'department').order_by('-created_at')
+                if not include_versions:
+                    documents_queryset = documents_queryset.filter(is_current=True)
 
             # Paginate
             paginator = Paginator(documents_queryset, page_size)
@@ -1011,6 +1022,16 @@ class DepartmentService(BaseService):
                     'file_type': document.file_type,
                     'file_size': document.file_size,
                     'status': document.status,
+                    'logical_document_id': str(document.logical_document_id),
+                    'previous_version': str(document.previous_version_id) if document.previous_version_id else None,
+                    'version': document.version,
+                    'version_lock': document.version_lock,
+                    'is_current': document.is_current,
+                    'version_state': document.version_state,
+                    'valid_from': document.valid_from.isoformat() if document.valid_from else None,
+                    'valid_to': document.valid_to.isoformat() if document.valid_to else None,
+                    'change_summary': document.change_summary,
+                    'metadata': document.metadata or {},
                     'uploader_id': str(document.uploader_id) if document.uploader_id else None,
                     'department_id': str(document.department_id) if document.department_id else None,
                     'folder_id': str(document.folder_id) if document.folder_id else None,

@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import { FolderDocumentResponse } from '@/services/folder'
 import { useRBAC } from '@/hooks/useRBAC'
 import { ScopeBadge } from './FolderTreeNode'
@@ -67,11 +68,11 @@ export function DocumentRow({
             {/* File Type Icon or Restricted Lock */}
             {isRestricted ? (
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-red-50 text-red-500 transition-transform group-hover:scale-105">
-                    <span className="material-symbols-outlined text-base">lock</span>
+                    <AppIcon name="lock" className="text-base" />
                 </div>
             ) : (
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${fileIcon.bg} ${fileIcon.color} transition-transform group-hover:scale-105`}>
-                    <span className="material-symbols-outlined text-base">{fileIcon.icon}</span>
+                    <AppIcon name={fileIcon.icon} className="text-base" />
                 </div>
             )}
 
@@ -97,6 +98,13 @@ export function DocumentRow({
                         {displayName}
                     </p>
                     <div className="flex items-center gap-2 mt-0.5">
+                        <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                            document.is_current
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : 'bg-slate-200 text-slate-600'
+                        }`}>
+                            v{document.version || 1} · {document.is_current ? 'Hiệu lực' : 'Lịch sử'}
+                        </span>
                         <ScopeBadge scope={document.access_scope} />
                         <span className="text-[10px] text-slate-300">•</span>
                         <span className="text-[10px] text-slate-400 uppercase font-medium">{document.file_type}</span>
@@ -132,17 +140,17 @@ export function DocumentRow({
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {canOpenDocument && (
                         <button className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Xem">
-                            <span className="material-symbols-outlined text-sm">visibility</span>
+                            <AppIcon name="visibility" className="text-sm" />
                         </button>
                     )}
                     {canWrite(perm) && (
                         <button className="p-1.5 hover:bg-slate-100 rounded text-slate-500" title="Sửa">
-                            <span className="material-symbols-outlined text-sm">edit</span>
+                            <AppIcon name="edit" className="text-sm" />
                         </button>
                     )}
                     {canDelete(perm) && (
                         <button className="p-1.5 hover:bg-red-50 rounded text-red-500" title="Xóa">
-                            <span className="material-symbols-outlined text-sm">delete</span>
+                            <AppIcon name="delete" className="text-sm" />
                         </button>
                     )}
                 </div>

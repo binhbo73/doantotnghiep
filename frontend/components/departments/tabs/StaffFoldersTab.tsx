@@ -1,9 +1,12 @@
+'use client'
+
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Staff Folders Tab
  * Displays department folders in a pure tree structure (folders only)
  */
 
-'use client';
+
 
 import React from 'react';
 import { useDepartmentFolders, FolderTreeNode } from '@/hooks/departments/useDepartmentFolders';
@@ -44,7 +47,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
         return (
             <div className="p-6 bg-error-container rounded-lg text-error border border-error/20">
                 <p className="font-medium flex items-center gap-2">
-                    <span className="material-symbols-outlined">error</span>
+                    <AppIcon name="error" className="" />
                     Lỗi tải danh sách thư mục
                 </p>
                 <p className="text-sm mt-1 ml-7">{error}</p>
@@ -56,7 +59,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
         return (
             <div className="p-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
                 <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4">
-                    <span className="material-symbols-outlined text-3xl text-slate-300">folder_off</span>
+                    <AppIcon name="folder_off" className="text-3xl text-slate-300" />
                 </div>
                 <p className="text-slate-500 font-medium italic text-sm">
                     Không có thư mục nào trong phòng ban này
@@ -87,9 +90,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                     {/* Expand/Collapse Chevron */}
                     <div className={`w-6 h-6 flex items-center justify-center transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>
                         {hasChildren ? (
-                            <span className={`material-symbols-outlined text-xl ${isExpanded ? 'text-amber-600' : 'text-slate-400'}`}>
-                                chevron_right
-                            </span>
+                            <AppIcon name="chevron_right" className={`text-xl ${isExpanded ? 'text-amber-600' : 'text-slate-400'}`} />
                         ) : (
                             <div className="w-1.5 h-1.5 rounded-full bg-slate-200 ml-1"></div>
                         )}
@@ -98,9 +99,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                     {/* Folder Icon */}
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-sm ${isExpanded ? 'bg-amber-500 text-white' : 'bg-amber-50 text-amber-600'
                         }`}>
-                        <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>
-                            {isExpanded ? 'folder_open' : 'folder'}
-                        </span>
+                        <AppIcon name={isExpanded ? 'folder_open' : 'folder'} className="text-2xl" />
                     </div>
 
                     {/* Folder Details */}
@@ -110,7 +109,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                                 {node.name}
                             </h3>
                             {node.access_scope === 'personal' && (
-                                <span className="material-symbols-outlined text-xs text-red-400">lock</span>
+                                <AppIcon name="lock" className="text-xs text-red-400" />
                             )}
                         </div>
                         {node.description && (
@@ -125,14 +124,14 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                         {/* Subfolder Badge */}
                         {node.subfolder_count !== undefined && node.subfolder_count > 0 && (
                             <div className="flex items-center gap-1 px-2.5 py-1.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-600">
-                                <span className="material-symbols-outlined text-lg" style={{ fontVariationSettings: "'FILL' 1" }}>folder_zip</span>
+                                <AppIcon name="folder_zip" className="text-lg" />
                                 <span className="text-xs font-black">{node.subfolder_count}</span>
                             </div>
                         )}
 
                         {/* Document Badge */}
                         <div className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 rounded-xl border border-slate-100 text-slate-500">
-                            <span className="material-symbols-outlined text-lg">description</span>
+                            <AppIcon name="description" className="text-lg" />
                             <span className="text-xs font-black">{node.document_count || 0}</span>
                         </div>
 
@@ -142,7 +141,7 @@ export default function StaffFoldersTab({ deptId }: StaffFoldersTabProps) {
                             onClick={(e) => e.stopPropagation()}
                             className="w-9 h-9 flex items-center justify-center rounded-xl bg-white border border-amber-200 text-slate-400 hover:text-amber-600 hover:border-amber-600 transition-all ml-1 shadow-sm"
                         >
-                            <span className="material-symbols-outlined text-xl">open_in_new</span>
+                            <AppIcon name="open_in_new" className="text-xl" />
                         </Link>
                     </div>
                 </div>

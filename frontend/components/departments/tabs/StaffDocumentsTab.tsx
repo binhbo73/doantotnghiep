@@ -1,19 +1,21 @@
+'use client'
+
 /**
  * Staff Documents Tab
  * Displays paginated list of department documents
  * API: GET /api/v1/departments/{id}/documents?page=1&page_size=10
  */
 
-'use client';
+
 
 import React, { useState } from 'react';
-import Link from 'next/link';
 
 import { useDepartmentDocuments } from '@/hooks/departments/useDepartmentDetail';
 import Pagination from '@/components/common/Pagination';
 import TabLoading from '@/components/departments/loading/TabLoading';
 import { DocumentDetail, PaginatedResponse } from '@/types/departments';
 import { PreviewModal } from '@/components/features/documents/PreviewModal';
+import { AppIcon } from '@/components/ui/AppIcon';
 import { api } from '@/services/api/client';
 import { toast } from 'sonner';
 
@@ -135,7 +137,7 @@ export default function StaffDocumentsTab({ deptId, initialData }: StaffDocument
                                             const fileVisual = getFileVisual(doc.file_type || '');
                                             return (
                                                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${fileVisual.bg} ${fileVisual.color}`}>
-                                                    <span className="material-symbols-outlined text-base">{fileVisual.icon}</span>
+                                                    <AppIcon name={fileVisual.icon} className="text-base" />
                                                 </span>
                                             );
                                         })()}

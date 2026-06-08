@@ -38,6 +38,12 @@ class HybridRetriever:
     ) -> List[Dict[str, Any]]:
         """Return merged candidates: chunks + assets."""
         t_start = time.monotonic()
+        include_historical = bool((qdrant_filter or {}).get('__include_historical'))
+        qdrant_filter = {
+            key: value
+            for key, value in (qdrant_filter or {}).items()
+            if key != '__include_historical'
+        }
         dense_weight = max(0.0, min(1.0, float(dense_weight)))
         sparse_weight = 1.0 - dense_weight
 
@@ -54,7 +60,10 @@ class HybridRetriever:
             ','.join(sorted(document_ids or [])).encode()
         ).hexdigest()[:12]
         filter_hash = hashlib.md5(repr(_freeze_filter(qdrant_filter or {})).encode()).hexdigest()[:12]
-        cache_key = f"hybrid_retrieval:v8:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:{doc_hash}:{filter_hash}"
+        cache_key = (
+            f"hybrid_retrieval:v8:{query}:{top_k}:{sparse_k}:{dense_weight:.2f}:"
+            f"{doc_hash}:{filter_hash}:historical={int(include_historical)}"
+        )
         try:
             cached = cache.get(cache_key)
             if cached:
@@ -160,7 +169,12 @@ class HybridRetriever:
             t0 = time.monotonic()
             try:
                 if self.bm25:
-                    sparse_results = self.bm25.search(query, top_k=sparse_k, document_ids=document_ids)
+                    sparse_results = self.bm25.search(
+                        query,
+                        top_k=sparse_k,
+                        document_ids=document_ids,
+                        include_historical=include_historical,
+                    )
                     for result in sparse_results:
                         cid = result['chunk_id']
                         doc_id = result['document_id']
@@ -171,7 +185,7 @@ class HybridRetriever:
                             candidates[cid] = {
                                 'chunk_id': cid, 'document_id': doc_id,
                                 'score': 0.0, 'source': 'bm25',
-                                'snippet': result['content'][:300],
+                                'snippet': result['content'][:2000],
                                 'page': result.get('page'),
                                 'chunk_index': result.get('chunk_index'),
                                 'metadata': result.get('metadata') or {},
@@ -213,6 +227,8 @@ class HybridRetriever:
                 emb = query_embedding  # pre-computed in main thread
 
                 qdrant_filter_local = {'node_type': 'detail'}
+                if not include_historical:
+                    qdrant_filter_local['is_current'] = True
                 if document_ids:
                     qdrant_filter_local['document_id'] = document_ids
                 if qdrant_filter:
@@ -226,9 +242,13 @@ class HybridRetriever:
                 )
                 # Backward compatibility: older ingestion code did not store
                 # node_type in Qdrant payloads, so node_type='detail' can filter
-                # out valid document vectors. Retry with only document scope.
+                # out valid document vectors. Keep is_current so a compatibility
+                # retry cannot resurrect chunks retired by an amendment.
                 if not dense_results and document_ids:
-                    legacy_filter = {k: v for k, v in qdrant_filter_local.items() if k != 'node_type'}
+                    legacy_filter = {
+                        k: v for k, v in qdrant_filter_local.items()
+                        if k != 'node_type'
+                    }
                     dense_results = self.qdrant.search_similar(
                         embedding=emb, limit=top_k, filter_payload=legacy_filter,
                     )
@@ -389,6 +409,33 @@ class HybridRetriever:
             f1.result()
             f2.result()
             f3.result()
+
+        # PostgreSQL is the source of truth for version effectiveness. Qdrant
+        # payload updates happen after commit and may be briefly stale or fail;
+        # never let such points re-enter retrieval as current evidence.
+        if candidates:
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            valid_chunks = DocumentChunk.objects.filter(
+                id__in=list(candidates.keys()),
+                node_type='detail',
+                is_deleted=False,
+            )
+            if not include_historical:
+                valid_chunks = valid_chunks.filter(is_current=True)
+            valid_chunk_ids = {
+                str(chunk_id)
+                for chunk_id in valid_chunks.values_list('id', flat=True)
+            }
+            stale_chunk_ids = set(candidates) - valid_chunk_ids
+            for chunk_id in stale_chunk_ids:
+                candidates.pop(chunk_id, None)
+                sparse_scores.pop(chunk_id, None)
+                dense_scores.pop(chunk_id, None)
+            if stale_chunk_ids:
+                logger.info(
+                    "[VERSION_FILTER] Removed %s stale/non-current retrieval candidate(s)",
+                    len(stale_chunk_ids),
+                )
 
         # Weighted RRF fusion. BM25 and vector scores are not calibrated to the
         # same scale, so fusing by rank is more stable than averaging scores.

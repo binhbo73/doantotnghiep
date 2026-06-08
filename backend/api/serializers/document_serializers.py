@@ -94,6 +94,8 @@ class DocumentSerializer(SoftDeleteModelSerializer):
             'folder', 'folder_name',
             'status', 'access_scope',
             'tags_list', 'chunk_count', 'my_permission', 'metadata',
+            'logical_document_id', 'previous_version', 'version', 'version_lock',
+            'is_current', 'version_state', 'valid_from', 'valid_to', 'change_summary',
             'created_at', 'updated_at', 'is_deleted'
         ]
         read_only_fields = [
@@ -253,6 +255,23 @@ class DocumentUploadSerializer(serializers.Serializer):
         if not value:
             return []
         return [t.strip() for t in value.split(',') if t.strip()]
+
+
+class DocumentVersionUploadSerializer(serializers.Serializer):
+    UPDATE_MODE_CHOICES = ('auto', 'full', 'amendment')
+
+    file = serializers.FileField(required=True)
+    version_lock = serializers.IntegerField(required=False, min_value=1)
+    update_mode = serializers.ChoiceField(
+        required=False,
+        choices=UPDATE_MODE_CHOICES,
+        default='auto',
+    )
+    change_summary = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=4000,
+    )
 
 
 class DocumentPermissionListItemSerializer(serializers.Serializer):

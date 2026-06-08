@@ -190,7 +190,7 @@ class FolderService(BaseService):
         
         # Get documents count (still requires query per folder, but better than query per subfolder)
         # TODO: Could pre-fetch document counts for all folders in one query
-        documents_query = folder.documents.filter(is_deleted=False)
+        documents_query = folder.documents.filter(is_deleted=False, is_current=True)
         if not is_admin:
             documents_query = documents_query.filter(
                 models.Q(access_scope='company') |

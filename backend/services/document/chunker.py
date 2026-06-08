@@ -61,6 +61,12 @@ _VI_HEADING_PATTERNS = [
     re.compile(r'^#{1,6}\s+\S', re.UNICODE),
 ]
 
+_LEGAL_ARTICLE_HEADING_RE = re.compile(
+    r'(?im)^\s*(?:#{1,6}\s*)?(?P<label>điều|dieu|article)\s+'
+    r'(?P<number>\d+[a-z]?(?:[.\-]\d+)*)\b',
+    re.UNICODE,
+)
+
 # Common Vietnamese document type indicators for auto-detection
 _DOC_TYPE_PATTERNS = [
     ('regulation', re.compile(
@@ -562,6 +568,7 @@ class DocumentChunker:
 
             flush_text_buffer()
             chunks = self._merge_adjacent_small_structured_chunks(chunks)
+            chunks = self._split_multi_article_chunks(chunks)
             self._repair_contextless_chunk_starts(chunks)
             self._renumber_chunks(chunks)
 
@@ -573,6 +580,117 @@ class DocumentChunker:
         except Exception as e:
             logger.error(f"Error in structured chunking: {e}", exc_info=True)
             raise DocumentProcessingError(f"Failed to chunk structured document: {e}")
+
+    def _split_multi_article_chunks(
+        self,
+        chunks: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Keep Vietnamese legal articles as independent lineage units."""
+        result: List[Dict[str, Any]] = []
+        active_section: Optional[Dict[str, Any]] = None
+        previous_source_chunk: Optional[Dict[str, Any]] = None
+        for chunk in chunks:
+            text = chunk.get('text') or ''
+            matches = list(_LEGAL_ARTICLE_HEADING_RE.finditer(text))
+            if not matches:
+                if active_section and self._is_legal_section_continuation(
+                    previous_source_chunk,
+                    chunk,
+                ):
+                    result.append({
+                        **chunk,
+                        'metadata': {
+                            **(chunk.get('metadata') or {}),
+                            **active_section,
+                            'legal_section_boundary': False,
+                            'legal_section_continuation': True,
+                        },
+                    })
+                else:
+                    result.append(chunk)
+                    active_section = None
+                previous_source_chunk = chunk
+                continue
+            if len(matches) == 1:
+                article_match = matches[0]
+                active_section = {
+                    'legal_section_boundary': True,
+                    'legal_section_key': (
+                        f"{article_match.group('label').lower()}:"
+                        f"{article_match.group('number').lower()}"
+                    ),
+                    'legal_section_heading': article_match.group(0).strip(),
+                }
+                metadata = {
+                    **(chunk.get('metadata') or {}),
+                    **active_section,
+                }
+                result.append({
+                    **chunk,
+                    'metadata': metadata,
+                })
+                previous_source_chunk = chunk
+                continue
+
+            boundaries = [0] + [match.start() for match in matches[1:]] + [len(text)]
+            original_start = chunk.get('start_char')
+            for index in range(len(boundaries) - 1):
+                start = boundaries[index]
+                end = boundaries[index + 1]
+                section_text = text[start:end].strip()
+                if not section_text:
+                    continue
+
+                article_match = matches[index]
+                label = article_match.group('label').lower()
+                number = article_match.group('number').lower()
+                active_section = {
+                    'legal_section_boundary': True,
+                    'legal_section_key': f'{label}:{number}',
+                    'legal_section_heading': article_match.group(0).strip(),
+                }
+                metadata = {
+                    **(chunk.get('metadata') or {}),
+                    **active_section,
+                    'split_from_multi_article_chunk': True,
+                }
+                split_chunk = {
+                    **chunk,
+                    'text': section_text,
+                    'token_count': self._estimate_token_count(section_text),
+                    'metadata': metadata,
+                }
+                if original_start is not None:
+                    split_chunk['start_char'] = int(original_start) + start
+                    split_chunk['end_char'] = int(original_start) + end
+                result.append(split_chunk)
+
+            previous_source_chunk = chunk
+
+        return result
+
+    @staticmethod
+    def _is_legal_section_continuation(
+        previous: Optional[Dict[str, Any]],
+        current: Dict[str, Any],
+    ) -> bool:
+        """Propagate an article key only across a proven chunk continuation."""
+        if not previous:
+            return False
+
+        previous_token_end = previous.get('token_end')
+        current_token_start = current.get('token_start')
+        if previous_token_end is not None and current_token_start is not None:
+            return int(current_token_start) < int(previous_token_end)
+
+        previous_end = previous.get('end_char')
+        current_start = current.get('start_char')
+        if previous_end is not None and current_start is not None:
+            return int(current_start) < int(previous_end)
+
+        previous_heading = (previous.get('metadata') or {}).get('heading_path') or []
+        current_heading = (current.get('metadata') or {}).get('heading_path') or []
+        return bool(previous_heading and previous_heading == current_heading)
 
     def _get_block_attr(self, block, name: str, default=None):
         if isinstance(block, dict):

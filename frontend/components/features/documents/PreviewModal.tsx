@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useState, useEffect } from 'react'
 import { PDFViewer } from './PDFViewer'
 import { ExcelViewer } from './ExcelViewer'
@@ -209,7 +210,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
                         className="ml-4 w-9 h-9 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center text-slate-600 hover:text-slate-900 transition-colors flex-shrink-0"
                         title="Đóng"
                     >
-                        <span className="material-symbols-outlined text-xl">close</span>
+                        <AppIcon name="close" className="text-xl" />
                     </button>
                 </div>
 
@@ -217,7 +218,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
                 <div className="flex-1 min-h-0 overflow-auto bg-slate-50 flex items-center justify-center">
                     {error && (
                         <div className="flex flex-col items-center justify-center gap-3 p-6">
-                            <span className="material-symbols-outlined text-5xl text-red-400">error</span>
+                            <AppIcon name="error" className="text-5xl text-red-400" />
                             <p className="text-red-400 text-sm text-center">{error}</p>
                             <p className="text-slate-400 text-xs text-center max-w-sm">
                                 Vui lòng tải xuống để xem file này
@@ -266,7 +267,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
 
                     {!error && !isSupported && (
                         <div className="flex flex-col items-center justify-center gap-3 p-6">
-                            <span className="material-symbols-outlined text-5xl text-slate-400">description</span>
+                            <AppIcon name="description" className="text-5xl text-slate-400" />
                             <p className="text-slate-700 text-sm font-medium">Định dạng không được hỗ trợ</p>
                             <p className="text-slate-400 text-xs text-center">
                                 Định dạng {fileType.toUpperCase()} không thể xem trực tiếp. Vui lòng tải xuống để xem.

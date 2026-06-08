@@ -287,6 +287,7 @@ class DocumentService(BaseService):
         sort_by: str = '-created_at',
         page: int = 1,
         page_size: int = 10,
+        include_versions: bool = False,
     ) -> dict:
         """
         List documents accessible to user with optional filters
@@ -308,7 +309,10 @@ class DocumentService(BaseService):
             from django.db.models import Q
 
             # Get accessible documents
-            accessible = self.document_repo.get_accessible_documents(user_id)
+            accessible = self.document_repo.get_accessible_documents(
+                user_id,
+                include_versions=include_versions,
+            )
 
             # Apply filters
             if folder_id:
@@ -604,15 +608,27 @@ class DocumentService(BaseService):
                 # ✅ CORRECT: Use repository for DocumentChunk deletion
                 # Get DocumentChunk model и delete via repository pattern
                 DocumentChunk = apps.get_model('documents', 'DocumentChunk')
-                # Soft delete associated chunks (via query)
+                DocumentEmbedding = apps.get_model('documents', 'DocumentEmbedding')
+                DocumentAsset = apps.get_model('documents', 'DocumentAsset')
+                deleted_at = timezone.now()
                 chunks_to_delete = DocumentChunk.objects.filter(
                     document_id=document_id,
                     is_deleted=False
                 )
+                chunk_ids = list(chunks_to_delete.values_list('id', flat=True))
                 for chunk in chunks_to_delete:
                     chunk.is_deleted = True
-                    chunk.deleted_at = timezone.now()
+                    chunk.deleted_at = deleted_at
                     chunk.save(update_fields=['is_deleted', 'deleted_at'])
+
+                DocumentEmbedding.objects.filter(
+                    chunk_id__in=chunk_ids,
+                    is_deleted=False,
+                ).update(is_deleted=True, deleted_at=deleted_at)
+                DocumentAsset.objects.filter(
+                    document_id=document_id,
+                    is_deleted=False,
+                ).update(is_deleted=True, deleted_at=deleted_at)
 
                 self.log_action(
                     'DELETE_DOCUMENT',
@@ -627,6 +643,22 @@ class DocumentService(BaseService):
                     resource_id=str(document_id),
                     resource_type='Document',
                     query_text=f"Deleted document {document_id}"
+                )
+
+            # Qdrant is outside the SQL transaction, so clean it only after
+            # PostgreSQL has committed the soft delete.
+            try:
+                from services.ai.qdrant_client import QdrantClient
+
+                qdrant = QdrantClient()
+                qdrant.delete_by_filter({'document_id': str(document_id)})
+                qdrant.delete_asset_embeddings(str(document_id))
+            except Exception as cleanup_error:
+                logger.error(
+                    "Document %s was deleted but Qdrant cleanup failed: %s",
+                    document_id,
+                    cleanup_error,
+                    exc_info=True,
                 )
 
             return result
@@ -1499,6 +1531,7 @@ class DocumentService(BaseService):
 
                 docs_query = Document.objects.filter(
                     id__in=doc_ids_with_perms,
+                    is_current=True,
                     is_deleted=False
                 ).order_by('-created_at')
 

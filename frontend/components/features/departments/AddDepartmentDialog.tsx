@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { Department } from '@/types/api'
 import { useUserList } from '@/hooks/useUserList'
@@ -100,7 +101,7 @@ export function AddDepartmentDialog({
                     onClick={onClose}
                     className="absolute top-6 right-6 text-slate-400 hover:text-slate-700 transition-colors bg-slate-50 hover:bg-slate-100 p-1.5 rounded-full"
                 >
-                    <span className="material-symbols-outlined text-xl block">close</span>
+                    <AppIcon name="close" className="text-xl block" />
                 </button>
 
                 {/* Header */}
@@ -120,7 +121,7 @@ export function AddDepartmentDialog({
                 {submitError && (
                     <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
                         <div className="flex items-start gap-3">
-                            <span className="material-symbols-outlined text-red-600 flex-shrink-0">error</span>
+                            <AppIcon name="error" className="text-red-600 flex-shrink-0" />
                             <div className="flex-1">
                                 <p className="text-sm font-semibold text-red-900 mb-1">Lỗi tạo phòng ban</p>
                                 <p className="text-xs text-red-700">{submitError}</p>
@@ -130,7 +131,7 @@ export function AddDepartmentDialog({
                                 onClick={() => setSubmitError(null)}
                                 className="text-red-400 hover:text-red-600 transition-colors"
                             >
-                                <span className="material-symbols-outlined text-base">close</span>
+                                <AppIcon name="close" className="text-base" />
                             </button>
                         </div>
                     </div>
@@ -141,7 +142,7 @@ export function AddDepartmentDialog({
                     {/* Section: Thông tin cơ bản */}
                     <div className="border-b border-slate-100 pb-5">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="material-symbols-outlined text-base">info</span>
+                            <AppIcon name="info" className="text-base" />
                             Thông tin cơ bản
                         </h3>
 
@@ -177,7 +178,7 @@ export function AddDepartmentDialog({
                     {/* Section: Cấu trúc tổ chức */}
                     <div className="border-b border-slate-100 pb-5">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="material-symbols-outlined text-base">account_tree</span>
+                            <AppIcon name="account_tree" className="text-base" />
                             Cấu trúc tổ chức
                         </h3>
 
@@ -203,7 +204,7 @@ export function AddDepartmentDialog({
                     {/* Section: Quản lý */}
                     <div>
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="material-symbols-outlined text-base">person_check</span>
+                            <AppIcon name="person_check" className="text-base" />
                             Người quản lý
                         </h3>
 
@@ -230,7 +231,7 @@ export function AddDepartmentDialog({
                                         }}
                                         className="p-1.5 text-blue-400 hover:text-blue-600 transition-colors"
                                     >
-                                        <span className="material-symbols-outlined text-base">close</span>
+                                        <AppIcon name="close" className="text-base" />
                                     </button>
                                 </div>
                             ) : (
@@ -241,7 +242,7 @@ export function AddDepartmentDialog({
                                         className="w-full bg-[#f8f9ff] border-none px-4 py-3 rounded-xl text-[13px] outline-none focus:ring-2 focus:ring-[#9d4300]/20 transition-all font-medium text-slate-700 text-left flex items-center justify-between hover:bg-slate-100"
                                     >
                                         <span className="text-slate-400">Chọn người quản lý...</span>
-                                        <span className="material-symbols-outlined text-base text-slate-400">expand_more</span>
+                                        <AppIcon name="expand_more" className="text-base text-slate-400" />
                                     </button>
 
                                     {showManagerSearch && (
@@ -303,7 +304,7 @@ export function AddDepartmentDialog({
                             disabled={isLoading}
                             className="px-5 py-2.5 bg-[#9d4300] hover:bg-[#833800] text-white rounded-xl text-[13px] font-bold flex items-center gap-2 transition-all shadow-lg shadow-orange-200 disabled:opacity-50 active:scale-95"
                         >
-                            <span className="material-symbols-outlined text-base">check</span>
+                            <AppIcon name="check" className="text-base" />
                             {isLoading ? 'Đang tạo...' : 'Tạo phòng ban'}
                         </button>
                     </div>

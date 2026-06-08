@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { Department } from '@/types/api'
 import { useUserList } from '@/hooks/useUserList'
@@ -96,7 +97,7 @@ export function EditDepartmentDialog({
                     onClick={onClose}
                     className="absolute top-6 right-6 text-slate-400 hover:text-slate-700 transition-colors bg-slate-50 hover:bg-slate-100 p-1.5 rounded-full"
                 >
-                    <span className="material-symbols-outlined text-xl block">close</span>
+                    <AppIcon name="close" className="text-xl block" />
                 </button>
 
                 {/* Header */}
@@ -116,7 +117,7 @@ export function EditDepartmentDialog({
                 {submitError && (
                     <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
                         <div className="flex items-start gap-3">
-                            <span className="material-symbols-outlined text-red-600 flex-shrink-0">error</span>
+                            <AppIcon name="error" className="text-red-600 flex-shrink-0" />
                             <div className="flex-1">
                                 <p className="text-sm font-semibold text-red-900 mb-1">Lỗi cập nhật phòng ban</p>
                                 <p className="text-xs text-red-700">{submitError}</p>
@@ -126,7 +127,7 @@ export function EditDepartmentDialog({
                                 onClick={() => setSubmitError(null)}
                                 className="text-red-400 hover:text-red-600 transition-colors"
                             >
-                                <span className="material-symbols-outlined text-base">close</span>
+                                <AppIcon name="close" className="text-base" />
                             </button>
                         </div>
                     </div>
@@ -137,7 +138,7 @@ export function EditDepartmentDialog({
                     {/* Section: Thông tin cơ bản */}
                     <div className="border-b border-slate-100 pb-5">
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="material-symbols-outlined text-base">info</span>
+                            <AppIcon name="info" className="text-base" />
                             Thông tin cơ bản
                         </h3>
 
@@ -179,7 +180,7 @@ export function EditDepartmentDialog({
                     {/* Section: Quản lý */}
                     <div>
                         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                            <span className="material-symbols-outlined text-base">person_check</span>
+                            <AppIcon name="person_check" className="text-base" />
                             Người quản lý
                         </h3>
 
@@ -204,7 +205,7 @@ export function EditDepartmentDialog({
                                         className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-100 transition-colors rounded-lg"
                                         title="Thay đổi người quản lý"
                                     >
-                                        <span className="material-symbols-outlined text-base">edit</span>
+                                        <AppIcon name="edit" className="text-base" />
                                     </button>
                                     <button
                                         type="button"
@@ -215,7 +216,7 @@ export function EditDepartmentDialog({
                                         className="p-1.5 text-blue-400 hover:text-red-600 transition-colors rounded-lg"
                                         title="Xóa người quản lý"
                                     >
-                                        <span className="material-symbols-outlined text-base">delete</span>
+                                        <AppIcon name="delete" className="text-base" />
                                     </button>
                                 </div>
                             ) : (
@@ -227,7 +228,7 @@ export function EditDepartmentDialog({
                                             className="w-full bg-slate-50 border-2 border-slate-200 px-4 py-3 rounded-xl text-[13px] outline-none focus:ring-2 focus:ring-[#9d4300]/20 transition-all font-medium text-slate-700 text-left flex items-center justify-between hover:bg-slate-100"
                                         >
                                             <span className="text-slate-400">Chọn người quản lý...</span>
-                                            <span className="material-symbols-outlined text-base text-slate-400">expand_more</span>
+                                            <AppIcon name="expand_more" className="text-base text-slate-400" />
                                         </button>
 
                                         {showManagerSearch && (
@@ -297,7 +298,7 @@ export function EditDepartmentDialog({
                                 </>
                             ) : (
                                 <>
-                                    <span className="material-symbols-outlined text-base">check</span>
+                                    <AppIcon name="check" className="text-base" />
                                     Lưu thay đổi
                                 </>
                             )}

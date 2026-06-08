@@ -1,9 +1,12 @@
+'use client'
+
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Department Detail Layout
  * Main layout wrapper for department detail page with premium header
  */
 
-'use client';
+
 
 import React from 'react';
 import Link from 'next/link';
@@ -46,7 +49,7 @@ export default function DepartmentDetailLayout({
                             className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-[#e0c0b1]/30 bg-white/80 text-[#584237] shadow-sm transition-all hover:-translate-x-0.5 hover:bg-white hover:shadow-md"
                             aria-label="Quay lại danh sách phòng ban"
                         >
-                            <span className="material-symbols-outlined text-[22px]">arrow_back</span>
+                            <AppIcon name="arrow_back" className="text-[22px]" />
                         </button>
 
                         {/* Secondary Tabs */}

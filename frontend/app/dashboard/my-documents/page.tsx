@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { CreateFolderModal } from '@/components/features/documents/CreateFolderModal'
 import { DocumentSidebar } from '@/components/features/documents/DocumentSidebar'
@@ -169,7 +170,7 @@ function MyDocumentsPageContent() {
             <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center">
                 <div className="flex flex-col items-center gap-4 max-w-sm text-center">
                     <div className="w-16 h-16 rounded-2xl bg-red-50 flex items-center justify-center">
-                        <span className="material-symbols-outlined text-3xl text-red-400">error</span>
+                        <AppIcon name="error" className="text-3xl text-red-400" />
                     </div>
                     <div>
                         <p className="text-sm font-semibold text-slate-700 mb-1">Không thể tải dữ liệu</p>
@@ -184,7 +185,7 @@ function MyDocumentsPageContent() {
         return (
             <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center px-4">
                 <div className="max-w-xl bg-white rounded-3xl shadow-sm ring-1 ring-slate-200 p-8 text-center">
-                    <span className="material-symbols-outlined text-5xl text-[#9d4300] mb-4">lock</span>
+                    <AppIcon name="lock" className="text-5xl text-[#9d4300] mb-4" />
                     <h1 className="text-xl font-bold text-slate-900 mb-2">Trang này dành cho tài liệu cá nhân và tài liệu được chia sẻ</h1>
                     <p className="text-sm text-slate-500">Tài khoản có quyền quản trị hệ thống nên sử dụng kho tài liệu chung hoặc các mục quản trị trong sidebar.</p>
                 </div>
@@ -213,7 +214,7 @@ function MyDocumentsPageContent() {
                                         onClick={() => setIsUploadModalOpen(true)}
                                         className="inline-flex items-center justify-center gap-2 rounded-3xl bg-[#9d4300] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#b75b00]"
                                     >
-                                        <span className="material-symbols-outlined text-base">upload_file</span>
+                                        <AppIcon name="upload_file" className="text-base" />
                                         Tải lên cá nhân
                                     </button>
                                     )}
@@ -222,7 +223,7 @@ function MyDocumentsPageContent() {
                                         onClick={() => setIsCreateFolderModalOpen(true)}
                                         className="inline-flex items-center justify-center gap-2 rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                                     >
-                                        <span className="material-symbols-outlined text-base">create_new_folder</span>
+                                        <AppIcon name="create_new_folder" className="text-base" />
                                         Tạo thư mục cá nhân
                                     </button>
                                     )}
@@ -243,7 +244,7 @@ function MyDocumentsPageContent() {
                             <div className="p-4 space-y-2 max-h-[420px] overflow-y-auto">
                                 {organizedData.folders.length === 0 && organizedData.unfoldered_documents.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-20 text-center gap-3 text-slate-500">
-                                        <span className="material-symbols-outlined text-5xl">folder_open</span>
+                                        <AppIcon name="folder_open" className="text-5xl" />
                                         <p className="text-sm font-semibold">Chưa có tài liệu cá nhân</p>
                                         <p className="text-xs max-w-xs">Bạn có thể tải lên tài liệu mới với access_scope "personal" từ trang Kho tài liệu.</p>
                                     </div>
@@ -256,17 +257,13 @@ function MyDocumentsPageContent() {
                                                     className="w-full flex items-center justify-between p-3 bg-slate-50 hover:bg-slate-100 transition"
                                                 >
                                                     <div className="flex items-center gap-2">
-                                                        <span className="material-symbols-outlined text-lg text-[#9d4300]">
-                                                            {expandedFolders.has(folder.id) ? 'folder_open' : 'folder'}
-                                                        </span>
+                                                        <AppIcon name={expandedFolders.has(folder.id) ? 'folder_open' : 'folder'} className="text-lg text-[#9d4300]" />
                                                         <div className="text-left">
                                                             <p className="text-sm font-semibold text-slate-900">{folder.name}</p>
                                                             <p className="text-xs text-slate-500">{folder.documents.length} tài liệu</p>
                                                         </div>
                                                     </div>
-                                                    <span className="material-symbols-outlined text-lg text-slate-400">
-                                                        {expandedFolders.has(folder.id) ? 'expand_less' : 'expand_more'}
-                                                    </span>
+                                                    <AppIcon name={expandedFolders.has(folder.id) ? 'expand_less' : 'expand_more'} className="text-lg text-slate-400" />
                                                 </button>
 
                                                 {expandedFolders.has(folder.id) && (
@@ -301,15 +298,13 @@ function MyDocumentsPageContent() {
                                                     className="w-full flex items-center justify-between p-3 bg-amber-50 hover:bg-amber-100 transition"
                                                 >
                                                     <div className="flex items-center gap-2">
-                                                        <span className="material-symbols-outlined text-lg text-amber-600">inbox</span>
+                                                        <AppIcon name="inbox" className="text-lg text-amber-600" />
                                                         <div className="text-left">
                                                             <p className="text-sm font-semibold text-slate-900">Tài liệu chưa phân loại</p>
                                                             <p className="text-xs text-slate-500">{organizedData.unfoldered_documents.length} tài liệu</p>
                                                         </div>
                                                     </div>
-                                                    <span className="material-symbols-outlined text-lg text-slate-400">
-                                                        {expandedFolders.has('_unfoldered') ? 'expand_less' : 'expand_more'}
-                                                    </span>
+                                                    <AppIcon name={expandedFolders.has('_unfoldered') ? 'expand_less' : 'expand_more'} className="text-lg text-slate-400" />
                                                 </button>
 
                                                 {expandedFolders.has('_unfoldered') && (
@@ -354,7 +349,7 @@ function MyDocumentsPageContent() {
                                     <div className="text-center py-12 text-red-500 text-sm">{sharedError}</div>
                                 ) : sharedData.folders.length === 0 && sharedData.unfoldered_documents.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-14 text-center gap-3 text-slate-500">
-                                        <span className="material-symbols-outlined text-4xl">folder_shared</span>
+                                        <AppIcon name="folder_shared" className="text-4xl" />
                                         <p className="text-sm font-semibold">Chưa có dữ liệu được chia sẻ</p>
                                         <p className="text-xs max-w-xs">Khi có ai đó share folder hoặc tài liệu cho bạn, dữ liệu sẽ hiển thị ở đây.</p>
                                     </div>
@@ -367,17 +362,13 @@ function MyDocumentsPageContent() {
                                                     className="w-full flex items-center justify-between p-3 bg-blue-50 hover:bg-blue-100 transition"
                                                 >
                                                     <div className="flex items-center gap-2">
-                                                        <span className="material-symbols-outlined text-lg text-blue-700">
-                                                            {expandedSharedFolders.has(folder.id) ? 'folder_open' : 'folder_shared'}
-                                                        </span>
+                                                        <AppIcon name={expandedSharedFolders.has(folder.id) ? 'folder_open' : 'folder_shared'} className="text-lg text-blue-700" />
                                                         <div className="text-left">
                                                             <p className="text-sm font-semibold text-slate-900">{folder.name}</p>
                                                             <p className="text-xs text-slate-500">{folder.documents.length} tài liệu được chia sẻ</p>
                                                         </div>
                                                     </div>
-                                                    <span className="material-symbols-outlined text-lg text-slate-400">
-                                                        {expandedSharedFolders.has(folder.id) ? 'expand_less' : 'expand_more'}
-                                                    </span>
+                                                    <AppIcon name={expandedSharedFolders.has(folder.id) ? 'expand_less' : 'expand_more'} className="text-lg text-slate-400" />
                                                 </button>
 
                                                 {expandedSharedFolders.has(folder.id) && (
@@ -412,15 +403,13 @@ function MyDocumentsPageContent() {
                                                     className="w-full flex items-center justify-between p-3 bg-cyan-50 hover:bg-cyan-100 transition"
                                                 >
                                                     <div className="flex items-center gap-2">
-                                                        <span className="material-symbols-outlined text-lg text-cyan-700">share</span>
+                                                        <AppIcon name="share" className="text-lg text-cyan-700" />
                                                         <div className="text-left">
                                                             <p className="text-sm font-semibold text-slate-900">Tài liệu chia sẻ trực tiếp</p>
                                                             <p className="text-xs text-slate-500">{sharedData.unfoldered_documents.length} tài liệu</p>
                                                         </div>
                                                     </div>
-                                                    <span className="material-symbols-outlined text-lg text-slate-400">
-                                                        {expandedSharedFolders.has('_shared_unfoldered') ? 'expand_less' : 'expand_more'}
-                                                    </span>
+                                                    <AppIcon name={expandedSharedFolders.has('_shared_unfoldered') ? 'expand_less' : 'expand_more'} className="text-lg text-slate-400" />
                                                 </button>
 
                                                 {expandedSharedFolders.has('_shared_unfoldered') && (

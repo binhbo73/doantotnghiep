@@ -369,15 +369,23 @@ class ChunkingStage(PipelineStage):
                         }
                     )
                     
-                    # Now embed these chunks using standard embedding client + Qdrant
+                    excel_chunk_texts = [
+                        excel_chunk.get('text', '')
+                        for excel_chunk in excel_chunks
+                    ]
+                    excel_embeddings = chunker.base_chunker.batch_generate_embeddings(
+                        excel_chunk_texts,
+                        embedding_client,
+                    )
+
+                    # Attach the batched vectors using the standard metadata contract.
                     chunks = []
                     for idx, excel_chunk in enumerate(excel_chunks):
                         chunk_text = excel_chunk.get('text', '')
-                        
-                        # Generate embedding
-                        embedding = chunker.base_chunker._generate_embedding(
-                            chunk_text,
-                            embedding_client
+                        embedding = (
+                            excel_embeddings[idx]
+                            if idx < len(excel_embeddings)
+                            else None
                         )
                         if not embedding:
                             self.logger.warning(f"⚠️ No embedding for chunk {idx}")
@@ -406,6 +414,9 @@ class ChunkingStage(PipelineStage):
                         DocumentEmbedding = apps.get_model('documents', 'DocumentEmbedding')
 
                         doc_obj = Document.objects.get(pk=context.document_id)
+                        document_is_current = bool(getattr(doc_obj, 'is_current', True))
+                        logical_document_id = str(getattr(doc_obj, 'logical_document_id', doc_obj.pk))
+                        version_number = int(getattr(doc_obj, 'version', 1) or 1)
 
                         persisted = []
                         prev_chunk_obj = None
@@ -435,6 +446,7 @@ class ChunkingStage(PipelineStage):
                                         'token_count': persisted_meta.get('token_count', excel_chunker._estimate_token_count(c_text)),
                                         'parent_node': None,
                                         'prev_chunk': prev_chunk_obj,
+                                        'is_current': document_is_current,
                                         'metadata': persisted_meta,
                                     }
                                 )
@@ -458,6 +470,9 @@ class ChunkingStage(PipelineStage):
                                             'folder_id': str(getattr(doc_obj, 'folder_id', None)) if getattr(doc_obj, 'folder_id', None) else None,
                                             'department_id': str(getattr(doc_obj, 'department_id', None)) if getattr(doc_obj, 'department_id', None) else None,
                                             'access_scope': getattr(doc_obj, 'access_scope', 'company'),
+                                            'logical_document_id': logical_document_id,
+                                            'version_number': version_number,
+                                            'is_current': document_is_current,
                                         }
                                         try:
                                             vector_id = qdrant_client.add_embedding(

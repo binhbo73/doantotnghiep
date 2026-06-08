@@ -1,3 +1,4 @@
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Manager Card Section
  * Shows department manager/head information
@@ -20,7 +21,7 @@ export default function ManagerCard({
             <div className="p-4 bg-white rounded-2xl border border-[#e0c0b1]/30 flex items-center justify-center min-h-[200px]">
                 <div className="text-center space-y-2">
                     <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
-                        <span className="material-symbols-outlined text-slate-300 text-2xl">person_off</span>
+                        <AppIcon name="person_off" className="text-slate-300 text-2xl" />
                     </div>
                     <p className="text-xs font-medium text-slate-400">Chưa có Trưởng phòng</p>
                 </div>
@@ -32,10 +33,10 @@ export default function ManagerCard({
         <div className="p-4 bg-white rounded-2xl shadow-sm border border-[#e0c0b1]/30 hover:shadow-md transition-all group">
             <div className="flex justify-between items-start mb-4">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#fff6f1] text-[#9d4300] text-[9px] font-bold uppercase tracking-widest rounded-full">
-                    <span className="material-symbols-outlined text-[10px]">verified_user</span>
+                    <AppIcon name="verified_user" className="text-[10px]" />
                     Quản lý
                 </span>
-                <span className="material-symbols-outlined text-slate-200 text-lg">verified</span>
+                <AppIcon name="verified" className="text-slate-200 text-lg" />
             </div>
 
             <div className="flex items-center gap-4 mb-6">
@@ -74,11 +75,11 @@ export default function ManagerCard({
             {/* Contact Info - Compact */}
             <div className="space-y-2 mb-6">
                 <div className="flex items-center gap-2 text-slate-600">
-                    <span className="material-symbols-outlined text-base text-[#9d4300]/60">mail</span>
+                    <AppIcon name="mail" className="text-base text-[#9d4300]/60" />
                     <span className="text-xs font-medium truncate">{manager.email}</span>
                 </div>
                 <div className="flex items-center gap-2 text-slate-600">
-                    <span className="material-symbols-outlined text-base text-[#9d4300]/60">call</span>
+                    <AppIcon name="call" className="text-base text-[#9d4300]/60" />
                     <span className="text-xs font-medium">+84 902 123 456</span>
                 </div>
             </div>

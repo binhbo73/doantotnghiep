@@ -1,5 +1,6 @@
 'use client';
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { DepartmentNode } from '@/types/departments';
@@ -43,14 +44,7 @@ function TreeNode({
                             className="p-0.5 hover:bg-slate-200 rounded transition-colors"
                             title={isExpanded ? 'Thu gọn' : 'Mở rộng'}
                         >
-                            <span
-                                className="material-symbols-outlined text-lg transition-transform"
-                                style={{
-                                    transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)',
-                                }}
-                            >
-                                expand_more
-                            </span>
+                            <AppIcon name="expand_more" className="text-lg transition-transform" />
                         </button>
                     ) : (
                         <div className="w-5 h-5" />
@@ -61,9 +55,7 @@ function TreeNode({
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                     {/* Department Icon */}
                     <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#9d4300]/10 to-[#f97316]/10 flex items-center justify-center flex-shrink-0">
-                        <span className="material-symbols-outlined text-sm text-[#9d4300]">
-                            hub
-                        </span>
+                        <AppIcon name="hub" className="text-sm text-[#9d4300]" />
                     </div>
 
                     {/* Department Name & Stats */}
@@ -76,24 +68,18 @@ function TreeNode({
                         </button>
                         <div className="flex gap-4 text-[10px] text-slate-400">
                             <span className="flex items-center gap-1">
-                                <span className="material-symbols-outlined text-xs">
-                                    person
-                                </span>
+                                <AppIcon name="person" className="text-xs" />
                                 {dept.member_count} nhân sự
                             </span>
                             {dept.folder_count > 0 && (
                                 <span className="flex items-center gap-1">
-                                    <span className="material-symbols-outlined text-xs">
-                                        folder
-                                    </span>
+                                    <AppIcon name="folder" className="text-xs" />
                                     {dept.folder_count} thư mục
                                 </span>
                             )}
                             {dept.document_count > 0 && (
                                 <span className="flex items-center gap-1">
-                                    <span className="material-symbols-outlined text-xs">
-                                        description
-                                    </span>
+                                    <AppIcon name="description" className="text-xs" />
                                     {dept.document_count} tài liệu
                                 </span>
                             )}
@@ -157,9 +143,7 @@ export default function SubDepartmentsTreeSection({
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <span className="material-symbols-outlined text-[#9d4300] text-lg">
-                        schema
-                    </span>
+                    <AppIcon name="schema" className="text-[#9d4300] text-lg" />
                     <h2 className="text-base font-black text-[#0d1c2e] tracking-tight">
                         Cây phòng ban ({totalDepts})
                     </h2>
@@ -171,9 +155,7 @@ export default function SubDepartmentsTreeSection({
                         onClick={() => setExpandAll(!expandAll)}
                         className="text-[11px] font-semibold text-[#9d4300] hover:text-[#7a3300] transition-colors px-2 py-1 rounded hover:bg-orange-50 flex items-center gap-1"
                     >
-                        <span className="material-symbols-outlined text-sm">
-                            {expandAll ? 'unfold_less' : 'unfold_more'}
-                        </span>
+                        <AppIcon name={expandAll ? 'unfold_less' : 'unfold_more'} className="text-sm" />
                         {expandAll ? 'Thu gọn tất cả' : 'Mở rộng tất cả'}
                     </button>
                 )}
@@ -183,9 +165,7 @@ export default function SubDepartmentsTreeSection({
             <div className="bg-white rounded-xl border border-[#e0c0b1]/30 p-4 space-y-1">
                 {subDepartments.length === 0 ? (
                     <div className="text-center py-8 text-slate-400">
-                        <span className="material-symbols-outlined text-3xl opacity-30 block mb-2">
-                            folder_off
-                        </span>
+                        <AppIcon name="folder_off" className="text-3xl opacity-30 block mb-2" />
                         <p className="text-sm">Không có phòng ban con</p>
                     </div>
                 ) : (

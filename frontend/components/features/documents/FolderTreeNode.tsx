@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React from 'react'
 import { Trash2 } from 'lucide-react'
 import { FolderTreeNode } from '@/hooks/useDocumentStore'
@@ -61,7 +62,7 @@ export function ScopeBadge({ scope }: { scope: string }) {
 
     return (
         <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border ${config.color}`}>
-            <span className="material-symbols-outlined text-[10px]">{config.icon}</span>
+            <AppIcon name={config.icon} className="text-[10px]" />
             {config.label}
         </span>
     )
@@ -133,15 +134,11 @@ export function FolderTreeNodeComponent({
                     }`}
             >
                 {/* Expand/Collapse Chevron */}
-                <span className={`material-symbols-outlined text-sm transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-600' : 'text-slate-400'}`}>
-                    chevron_right
-                </span>
+                <AppIcon name="chevron_right" className={`text-sm transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-600' : 'text-slate-400'}`} />
 
                 {/* Folder Icon */}
                 <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${folderIcon.bg} ${folderIcon.color} transition-transform group-hover:scale-105`}>
-                    <span className="material-symbols-outlined text-base" style={{ fontVariationSettings: "'FILL' 1" }}>
-                        {folderIcon.icon}
-                    </span>
+                    <AppIcon name={folderIcon.icon} className="text-base" />
                 </div>
 
                 {/* Folder Name */}
@@ -158,7 +155,7 @@ export function FolderTreeNodeComponent({
                     {folder.department_id && departmentMap[folder.department_id] && (
                         <div className="mt-1">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-50 text-[10px] rounded text-slate-500 border border-slate-100">
-                                <span className="material-symbols-outlined text-[12px]">apartment</span>
+                                <AppIcon name="apartment" className="text-[12px]" />
                                 <span className="truncate max-w-[140px]">{departmentMap[folder.department_id]}</span>
                             </span>
                         </div>
@@ -195,7 +192,7 @@ export function FolderTreeNodeComponent({
                     {/* Sub-folder Count */}
                     {subfolderCount > 0 && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-50 rounded-md text-[10px] font-bold text-blue-600 border border-blue-100">
-                            <span className="material-symbols-outlined text-[10px]">folder_zip</span>
+                            <AppIcon name="folder_zip" className="text-[10px]" />
                             {subfolderCount}
                         </span>
                     )}
@@ -203,7 +200,7 @@ export function FolderTreeNodeComponent({
                     {/* Document Count */}
                     {documentCount > 0 && (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-slate-100 rounded-md text-[10px] font-medium text-slate-500 border border-slate-200">
-                            <span className="material-symbols-outlined text-[10px]">description</span>
+                            <AppIcon name="description" className="text-[10px]" />
                             {documentCount}
                         </span>
                     )}
@@ -225,7 +222,7 @@ export function FolderTreeNodeComponent({
                         <div className={`${depth === 0 ? 'ml-8' : 'ml-6'} mt-1 relative`}>
                             <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
                                 <div className="flex flex-col items-center">
-                                    <span className="material-symbols-outlined text-3xl text-slate-400 mb-2">lock</span>
+                                    <AppIcon name="lock" className="text-3xl text-slate-400 mb-2" />
                                     <p className="text-sm font-semibold">Quyền hạn giới hạn</p>
                                     <p className="text-xs text-slate-500 mt-1">Bạn chỉ có thể xem dữ liệu thư mục thuộc phòng ban của bạn.</p>
                                 </div>
@@ -264,7 +261,7 @@ export function FolderTreeNodeComponent({
                         {!canReadFolderDocuments && documentCount > 0 && (
                             <div className="mt-2 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4 text-center">
                                 <div className="flex flex-col items-center">
-                                    <span className="material-symbols-outlined text-2xl text-slate-400 mb-1">lock</span>
+                                    <AppIcon name="lock" className="text-2xl text-slate-400 mb-1" />
                                     <p className="text-xs font-semibold text-slate-600">Tài liệu trong thư mục bị khóa</p>
                                     <p className="text-[10px] text-slate-400 mt-1">Bạn cần quyền document_read để xem tài liệu bên trong.</p>
                                 </div>
@@ -293,7 +290,7 @@ export function FolderTreeNodeComponent({
                         {/* Empty state */}
                         {hasLoadedDocs && documents.length === 0 && children.length === 0 && !(documentCount > 0 && !canReadFolderDocuments) && (
                             <div className="flex flex-col items-center justify-center py-6 px-4 text-center">
-                                <span className="material-symbols-outlined text-3xl text-slate-200 mb-2">folder_off</span>
+                                <AppIcon name="folder_off" className="text-3xl text-slate-200 mb-2" />
                                 <p className="text-[11px] text-slate-500 font-medium">Thư mục trống</p>
                                 {canWriteFolder ? (
                                     <p className="text-[10px] text-slate-400 mt-1">Sẵn sàng để tải lên tài liệu mới</p>

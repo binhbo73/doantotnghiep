@@ -54,6 +54,7 @@ from api.serializers.document_serializers import (
     DocumentCreateSerializer,
     DocumentChunkSerializer,
     DocumentUploadSerializer,
+    DocumentVersionUploadSerializer,
     DocumentPermissionListSerializer,
     SharedFolderWithDocumentsSerializer,
 )
@@ -151,6 +152,10 @@ class DocumentListView(APIView):
             search_query = request.query_params.get('search', '').strip() or None
             access_scope = request.query_params.get('access_scope', '').strip() or None
             sort_by = request.query_params.get('sort', 'created_at')
+            include_versions = (
+                request.query_params.get('include_versions', '').strip().lower()
+                in {'1', 'true', 'yes'}
+            )
 
             if access_scope and access_scope not in ['personal', 'department', 'company']:
                 return Response(
@@ -172,6 +177,7 @@ class DocumentListView(APIView):
                 search=search_query,
                 access_scope=access_scope,
                 sort_by=sort_by,
+                include_versions=include_versions,
             )
             
             # Serialize response
@@ -479,6 +485,100 @@ class DocumentUploadView(APIView):
             return Response(
                 ResponseBuilder.error(f"Upload thất bại: {str(e)}", status_code=500),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DocumentVersionListCreateView(APIView):
+    """List document history or upload a new immutable version."""
+
+    permission_classes = [IsAuthenticatedUser]
+    parser_classes = (MultiPartParser, FormParser)
+
+    def get(self, request, doc_id):
+        try:
+            DocumentService().get_document_detail(
+                doc_id,
+                request.user.id,
+                permission_required='read',
+            )
+            from services.document_version_service import DocumentVersionService
+
+            versions = DocumentVersionService().list_versions(str(doc_id))
+            payload = DocumentSerializer(
+                versions,
+                many=True,
+                context={'request': request},
+            ).data
+            return Response(
+                ResponseBuilder.success(data=payload),
+                status=status.HTTP_200_OK,
+            )
+        except NotFoundError as exc:
+            return Response(ResponseBuilder.error(str(exc), status_code=404), status=status.HTTP_404_NOT_FOUND)
+        except PermissionDeniedError as exc:
+            return Response(ResponseBuilder.error(str(exc), status_code=403), status=status.HTTP_403_FORBIDDEN)
+        except Exception as exc:
+            logger.error("Error listing document versions: %s", exc, exc_info=True)
+            return Response(
+                ResponseBuilder.error("Failed to list document versions", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def post(self, request, doc_id):
+        try:
+            if not user_has_any_permission(
+                request.user,
+                [PermissionCodes.DOCUMENT_UPDATE, PermissionCodes.DOCUMENT_WRITE],
+            ):
+                return _forbidden("You need document_update permission to create a new version")
+            if not user_has_permission(request.user, PermissionCodes.EMBEDDING_GENERATE):
+                return _forbidden("You need embedding_generate permission to index a new version")
+
+            serializer = DocumentVersionUploadSerializer(data={
+                **request.POST.dict(),
+                'file': request.FILES.get('file'),
+            })
+            if not serializer.is_valid():
+                return Response(
+                    ResponseBuilder.error(
+                        f"Validation failed: {serializer.errors}",
+                        status_code=400,
+                    ),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            from services.document_version_service import DocumentVersionService
+
+            document = DocumentVersionService().create_version(
+                base_document_id=str(doc_id),
+                file=serializer.validated_data['file'],
+                user_id=request.user.id,
+                expected_version_lock=serializer.validated_data.get('version_lock'),
+                change_summary=serializer.validated_data.get('change_summary') or '',
+                update_mode=serializer.validated_data.get('update_mode') or 'auto',
+            )
+            payload = DocumentSerializer(document, context={'request': request}).data
+            return Response(
+                ResponseBuilder.success(
+                    data=payload,
+                    message="New document version queued for processing",
+                    status_code=202,
+                ),
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except (ValidationError, FileSizeExceededError) as exc:
+            return Response(ResponseBuilder.error(str(exc), status_code=400), status=status.HTTP_400_BAD_REQUEST)
+        except BusinessLogicError as exc:
+            return Response(ResponseBuilder.error(str(exc), status_code=409), status=status.HTTP_409_CONFLICT)
+        except NotFoundError as exc:
+            return Response(ResponseBuilder.error(str(exc), status_code=404), status=status.HTTP_404_NOT_FOUND)
+        except PermissionDeniedError as exc:
+            return Response(ResponseBuilder.error(str(exc), status_code=403), status=status.HTTP_403_FORBIDDEN)
+        except Exception as exc:
+            logger.error("Error creating document version: %s", exc, exc_info=True)
+            return Response(
+                ResponseBuilder.error(f"Version upload failed: {exc}", status_code=500),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

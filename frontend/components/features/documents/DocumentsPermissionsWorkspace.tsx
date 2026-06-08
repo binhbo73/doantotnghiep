@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { DocumentPermissionsPanel } from './DocumentPermissionsPanel'
 import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
@@ -164,7 +165,7 @@ function FolderCard({
         >
             <div className="flex items-start gap-2.5">
                 <div className={`mt-0.5 flex h-9 w-9 items-center justify-center rounded-lg ${selected ? 'bg-white' : 'bg-[#fff3e0]'}`}>
-                    <span className={`material-symbols-outlined text-lg ${selected ? 'text-[#9d4300]' : 'text-[#9d4300]'}`}>folder</span>
+                    <AppIcon name="folder" className={`text-lg ${selected ? 'text-[#9d4300]' : 'text-[#9d4300]'}`} />
                 </div>
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
@@ -181,21 +182,21 @@ function FolderCard({
                     )}
                     <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                         <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500 ring-1 ring-slate-200">
-                            <span className="material-symbols-outlined text-[10px]">folder_open</span>
+                            <AppIcon name="folder_open" className="text-[10px]" />
                             {toSafeCount(item.folder.subfolder_count)} thư mục con
                         </span>
                         <button
                             onClick={onViewDetails}
                             className="inline-flex items-center gap-1 rounded-full bg-[#9d4300] px-2.5 py-0.5 text-[9px] font-bold text-white transition-colors hover:bg-[#b75b00]"
                         >
-                            <span className="material-symbols-outlined text-[10px]">visibility</span>
+                            <AppIcon name="visibility" className="text-[10px]" />
                             Xem chi tiết
                         </button>
                         <button
                             onClick={onSelect}
                             className="inline-flex items-center gap-1 rounded-full bg-white px-2.5 py-0.5 text-[9px] font-bold text-[#9d4300] ring-1 ring-[#9d4300]/20 transition-colors hover:bg-[#fff3e0]"
                         >
-                            <span className="material-symbols-outlined text-[10px]">check_circle</span>
+                            <AppIcon name="check_circle" className="text-[10px]" />
                             Chọn nhanh
                         </button>
                     </div>
@@ -236,14 +237,14 @@ function DocumentCard({
                         onClick={onViewDetails}
                         className="inline-flex items-center gap-1 rounded-lg bg-[#9d4300] px-2.5 py-1.5 text-[10px] font-bold text-white transition-colors hover:bg-[#b75b00]"
                     >
-                        <span className="material-symbols-outlined text-[14px]">visibility</span>
+                        <AppIcon name="visibility" className="text-[14px]" />
                         Xem chi tiết
                     </button>
                     <button
                         onClick={onSelect}
                         className="inline-flex items-center gap-1 rounded-lg border border-[#9d4300]/20 bg-white px-2.5 py-1.5 text-[10px] font-bold text-[#9d4300] transition-colors hover:bg-[#fff3e0]"
                     >
-                        <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                        <AppIcon name="check_circle" className="text-[14px]" />
                         Chọn nhanh
                     </button>
                 </div>
@@ -598,7 +599,7 @@ export function DocumentsPermissionsWorkspace({
                             disabled={!canManageFolderPermissions}
                             className="inline-flex items-center gap-1.5 rounded-full bg-[#9d4300] px-3 py-2 text-[11px] font-bold text-white transition-colors hover:bg-[#b75b00]"
                         >
-                            <span className="material-symbols-outlined text-[14px]">folder</span>
+                            <AppIcon name="folder" className="text-[14px]" />
                             Cấp quyền thư mục
                         </button>
                         <button
@@ -607,7 +608,7 @@ export function DocumentsPermissionsWorkspace({
                             disabled={!canManageDocumentPermissions}
                             className="inline-flex items-center gap-1.5 rounded-full border border-[#9d4300]/20 bg-white px-3 py-2 text-[11px] font-bold text-[#9d4300] transition-colors hover:bg-[#fff3e0]"
                         >
-                            <span className="material-symbols-outlined text-[14px]">description</span>
+                            <AppIcon name="description" className="text-[14px]" />
                             Cấp quyền tài liệu
                         </button>
                     </div>
@@ -639,7 +640,7 @@ export function DocumentsPermissionsWorkspace({
                                     className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700"
                                     aria-label="Close dialog"
                                 >
-                                    <span className="material-symbols-outlined text-[18px]">close</span>
+                                    <AppIcon name="close" className="text-[18px]" />
                                 </button>
                             </div>
 

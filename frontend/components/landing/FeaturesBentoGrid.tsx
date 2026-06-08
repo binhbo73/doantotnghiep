@@ -2,8 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Bolt, MessageSquareText, Server, Database, ShieldCheck } from 'lucide-react'
 
 const featureImages = {
-    smartSearch:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuDh8PeWmrqAdk7AJ-iqz8tgdqmlktsYaHGQC9GscXVZYc_DXmaLi9ihF2_0I8n2sM_KVHZq56asL6ozSPtImr7SkDrOjg3pNV1JLmdt08OsoeSrvOu8C63xrwupxOe_D1H-POPJrmInT-HMytayEV9q_R18JQAGQ-RTxf3-_rRZbbiFX42VgtIGPDSE0DNXOrlxjDSxQS9M_GDB5QwYlyTOoyyO6nclZSiMNJi3ABnniXn1MR6ZAdfNA-VHjC4G199hGMwBcc3cGCk',
+    smartSearch: '/placeholder.svg',
 }
 
 function FeatureIcon({ icon: Icon, className }: { icon: LucideIcon; className?: string }) {

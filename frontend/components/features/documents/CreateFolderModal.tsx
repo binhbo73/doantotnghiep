@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import { useEffect, useState } from 'react'
 import { useDocumentStore } from '@/hooks/useDocumentStore'
 import { useDepartments } from '@/hooks/useDepartments'
@@ -192,14 +193,14 @@ export function CreateFolderModal({
                         disabled={isCreating}
                         className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500 disabled:opacity-50"
                     >
-                        <span className="material-symbols-outlined text-xl">close</span>
+                        <AppIcon name="close" className="text-xl" />
                     </button>
                 </div>
 
                 <div className="p-6 overflow-y-auto flex-1 space-y-5">
                     {error && (
                         <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm border border-red-100 flex items-start gap-2">
-                            <span className="material-symbols-outlined text-base flex-shrink-0 mt-0.5">error</span>
+                            <AppIcon name="error" className="text-base flex-shrink-0 mt-0.5" />
                             <span>{error}</span>
                         </div>
                     )}
@@ -323,7 +324,7 @@ export function CreateFolderModal({
                             </>
                         ) : (
                             <>
-                                <span className="material-symbols-outlined text-base">add</span>
+                                <AppIcon name="add" className="text-base" />
                                 Tạo thư mục
                             </>
                         )}

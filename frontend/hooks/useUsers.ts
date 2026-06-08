@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Custom Hook: useUsers
  * Fetches user count/list for lightweight dashboard widgets.
  */
 
-'use client'
+
 
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'

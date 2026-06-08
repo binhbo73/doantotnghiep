@@ -1,9 +1,12 @@
+'use client'
+
+import { AppIcon } from '@/components/ui/AppIcon'
 /**
  * Staff Users Tab
  * Displays paginated list of department users in a table
  */
 
-'use client';
+
 
 import React, { useState } from 'react';
 import Image from 'next/image';
@@ -62,7 +65,7 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
     if (!data?.items || data.items.length === 0) {
         return (
             <div className="p-12 text-center text-slate-400">
-                <span className="material-symbols-outlined text-4xl mb-2 block">group_off</span>
+                <AppIcon name="group_off" className="text-4xl mb-2 block" />
                 <p className="text-sm font-medium">Không có nhân sự trong phòng ban</p>
             </div>
         );
@@ -134,10 +137,10 @@ export default function StaffUsersTab({ deptId, initialData }: StaffUsersTabProp
                                             {canManageUsers && (
                                                 <>
                                                     <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-[#9d4300] hover:bg-white transition-all" title="Sửa nhân viên">
-                                                        <span className="material-symbols-outlined text-base">edit</span>
+                                                        <AppIcon name="edit" className="text-base" />
                                                     </button>
                                                     <button className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-500 hover:bg-white transition-all" title="Xóa nhân viên">
-                                                        <span className="material-symbols-outlined text-base">delete</span>
+                                                        <AppIcon name="delete" className="text-base" />
                                                     </button>
                                                 </>
                                             )}

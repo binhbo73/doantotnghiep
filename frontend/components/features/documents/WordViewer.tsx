@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useState, useEffect, useRef } from 'react'
 import { api } from '@/services/api/client'
 import DOMPurify from 'dompurify'
@@ -446,7 +447,7 @@ export function WordViewer({ fileUrl, searchText, chunkText, answerContext, asse
     if (error) {
         return (
             <div className="flex flex-col items-center justify-center gap-3 h-full p-6">
-                <span className="material-symbols-outlined text-5xl text-red-400">error</span>
+                <AppIcon name="error" className="text-5xl text-red-400" />
                 <p className="text-red-400 text-sm text-center">{error}</p>
             </div>
         )

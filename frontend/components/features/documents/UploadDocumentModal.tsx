@@ -1,5 +1,6 @@
 'use client'
 
+import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useState, useEffect, useRef } from 'react'
 import { env } from '@/config/environment'
 import { uploadService } from '@/services/upload'
@@ -322,7 +323,7 @@ export function UploadDocumentModal({
                         disabled={isUploading}
                         className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500 disabled:opacity-50"
                     >
-                        <span className="material-symbols-outlined text-xl">close</span>
+                        <AppIcon name="close" className="text-xl" />
                     </button>
                 </div>
 
@@ -373,7 +374,7 @@ export function UploadDocumentModal({
                         >
                             <input
                                 type="file"
-                                accept=".pdf,.doc,.docx,.txt,.md,.xlsx,.xls"
+                                accept=".pdf,.doc,.docx,.pptx,.txt,.md,.xlsx,.xls,.csv"
                                 ref={fileInputRef}
                                 onChange={handleFileChange}
                                 disabled={isUploading}
@@ -382,7 +383,7 @@ export function UploadDocumentModal({
                             {file ? (
                                 <>
                                     <div className="w-14 h-14 bg-[#9d4300] text-white rounded-2xl flex items-center justify-center mb-3 shadow-md shadow-[#9d4300]/20">
-                                        <span className="material-symbols-outlined text-3xl">description</span>
+                                        <AppIcon name="description" className="text-3xl" />
                                     </div>
                                     <p className="text-sm font-bold text-slate-800 text-center break-all px-4">{file.name}</p>
                                     <p className="text-xs text-[#9d4300] font-semibold mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
@@ -390,7 +391,7 @@ export function UploadDocumentModal({
                             ) : (
                                 <>
                                     <div className="w-14 h-14 bg-white border border-slate-200 text-[#9d4300] rounded-2xl flex items-center justify-center mb-3 shadow-sm">
-                                        <span className="material-symbols-outlined text-3xl">cloud_upload</span>
+                                        <AppIcon name="cloud_upload" className="text-3xl" />
                                     </div>
                                     <p className="text-sm font-bold text-slate-700 text-center">Kéo thả file vào đây hoặc nhấn để chọn</p>
                                     <p className="text-xs text-slate-400 mt-1 font-medium">Hỗ trợ PDF, DOCX, TXT, MD, XLSX - tối đa {maxUploadMb}MB</p>
@@ -549,12 +550,12 @@ export function UploadDocumentModal({
                     >
                         {isUploading ? (
                             <>
-                                <span className="material-symbols-outlined animate-spin text-sm">sync</span>
+                                <AppIcon name="sync" className="animate-spin text-sm" />
                                 Đang tải...
                             </>
                         ) : (
                             <>
-                                <span className="material-symbols-outlined text-sm">upload</span>
+                                <AppIcon name="upload" className="text-sm" />
                                 Tải lên
                             </>
                         )}

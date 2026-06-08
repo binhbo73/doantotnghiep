@@ -108,7 +108,7 @@ class ChatAttachmentService:
             if is_admin:
                 # Admin sees all documents
                 return list(
-                    Document.objects.filter(is_deleted=False)
+                    Document.objects.filter(is_deleted=False, is_current=True)
                     .select_related('uploader', 'department', 'folder')
                     .values('id', 'original_name', 'file_type', 'file_size', 'status',
                            'access_scope', 'created_at', 'updated_at')
@@ -128,7 +128,7 @@ class ChatAttachmentService:
                 Q(access_scope='company') |
                 Q(access_scope='department', department_id__in=accessible_depts) |
                 Q(access_scope='personal', uploader_id=user_id)
-            ).filter(is_deleted=False)
+            ).filter(is_deleted=False, is_current=True)
             
             # PART 2: Documents via explicit DocumentPermission
             explicit_perms = DocumentPermission.objects.filter(
@@ -138,7 +138,7 @@ class ChatAttachmentService:
                 is_active=True,
                 is_deleted=False
             ).values_list('document_id', flat=True).distinct()
-            perm_docs = Document.objects.filter(id__in=explicit_perms, is_deleted=False)
+            perm_docs = Document.objects.filter(id__in=explicit_perms, is_deleted=False, is_current=True)
 
             # PART 3: Documents inside folders the user/role has permissions on (FolderPermission)
             folder_perms = FolderPermission.objects.filter(
@@ -148,7 +148,7 @@ class ChatAttachmentService:
                 is_active=True,
                 is_deleted=False
             ).values_list('folder_id', flat=True).distinct()
-            folder_docs = Document.objects.filter(folder_id__in=folder_perms, is_deleted=False)
+            folder_docs = Document.objects.filter(folder_id__in=folder_perms, is_deleted=False, is_current=True)
             
             # Combine (union)
             all_accessible_ids = set(

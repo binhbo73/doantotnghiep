@@ -1,9 +1,11 @@
+'use client'
+
 /**
  * Custom Hook: useRoleOptions
  * Fetches role data with pagination for dropdowns.
  */
 
-'use client'
+
 
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '@/services/api'

@@ -1,5 +1,7 @@
-// Example component showing API integration
 'use client'
+
+// Example component showing API integration
+
 
 import { useEffect, useState } from 'react'
 import { api } from '@/services/api'

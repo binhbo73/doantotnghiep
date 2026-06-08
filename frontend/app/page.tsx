@@ -55,7 +55,7 @@ export default function HomePage() {
                         <div className="absolute -top-20 -right-20 w-96 h-96 bg-[#9d4300]/10 rounded-full blur-3xl"></div>
                         <div className="relative glass-card p-4 rounded-3xl overflow-hidden shadow-2xl">
                             <img alt="UI Dashboard Preview" className="w-full aspect-[4/3] object-cover rounded-2xl"
-                                src="https://lh3.googleusercontent.com/aida-public/AB6AXuBcj3OReSjkW0E4vELaGooZPGOXqDXi3lyQ3Vq1xi2ViQXD8R1jVCiphWU_JA0Cka1ZCTka38DyNcfFaK1wC056jI_AnrszrcJyC1jFY6XA7mZwnT2gWvqum_3GRUloT6L06svBUq3VNcmv4RnS9kvXQTEBb2qgK7B6yKG4oo2psKQcGgpFfi9E64FqCaM-sm7lT5cxhPi36sIMkxHrVhEG3IZNEzo8YDYZRkusQICoo3Lz3ThrfIQ0y2GwqvsnMevTJBH72cFwzIQ" />
+                                src="/placeholder.svg" />
                             <div className="absolute bottom-8 left-8 right-8 glass-card p-6 rounded-2xl flex items-center justify-between">
                                 <div className="flex gap-4 items-center">
                                     <div className="w-12 h-12 rounded-full bg-[#9d4300] flex items-center justify-center text-white">
@@ -109,7 +109,7 @@ export default function HomePage() {
                             </div>
                             <div className="hidden sm:block w-48">
                                 <img alt="Server" className="rounded-2xl grayscale hover:grayscale-0 transition-all duration-500"
-                                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuAvi9eCQifPTb0VnvbvVDGOj69zFo5RbLywxrgY3TG56i_iw6issOzHIE3orbVjlCBhJRm08wli4XEr5UzjHUmNpiKnaivUB9A4QvbhnAoBgmkNfR7Atszg06lYaGLCFxKTCGd-CVop8ScVmKaEykmH8esG_xrgLZB5cK0mUKYmvd6CVZsUahaTf-rymmbIMvnbxlsFGXNVb66y6j2-Y7I9Xo3FJF4mELRQh2IuhHrVjdpIF1I9p_IwAoW8GfZ0D1NVYhg3jmSbMtk" />
+                                    src="/placeholder.svg" />
                             </div>
                         </div>
                         <div className="md:col-span-5 bg-white p-8 rounded-[2rem] shadow-sm flex flex-col justify-center border border-[#e0c0b1]/10">
