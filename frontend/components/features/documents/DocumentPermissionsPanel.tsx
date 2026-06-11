@@ -101,17 +101,23 @@ function PermissionBadge({ permission }: { permission: PermissionLevel }) {
 
 function PermissionListItem({
     item,
+    onUpdate,
     onRevoke,
     disabled,
-    showRevoke = true,
 }: {
     item: PermissionItem
+    onUpdate: (permission: PermissionLevel) => void
     onRevoke: () => void
     disabled: boolean
-    showRevoke?: boolean
 }) {
+    const [selectedPermission, setSelectedPermission] = useState<PermissionLevel>(item.permission)
+
+    useEffect(() => {
+        setSelectedPermission(item.permission)
+    }, [item.permission])
+
     return (
-        <div className="flex items-start gap-2.5 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-2.5">
+        <div className="flex flex-col gap-2.5 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-2.5 sm:flex-row sm:items-start">
             <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-md bg-white text-slate-400 shadow-sm ring-1 ring-slate-100">
                 <AppIcon name="badge" className="text-sm" />
             </div>
@@ -129,7 +135,26 @@ function PermissionListItem({
                     <p className="mt-0.5 text-[10px] text-slate-400">Ngày tạo: {formatDate(item.created_at)}</p>
                 )}
             </div>
-            {showRevoke && (
+            <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                <select
+                    value={selectedPermission}
+                    onChange={(event) => setSelectedPermission(event.target.value as PermissionLevel)}
+                    disabled={disabled}
+                    className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-700 outline-none focus:border-[#9d4300] disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label={`Update permission for ${item.subject_name || item.subject_id}`}
+                >
+                    <option value="read">read</option>
+                    <option value="write">write</option>
+                    <option value="delete">delete</option>
+                </select>
+                <button
+                    onClick={() => onUpdate(selectedPermission)}
+                    disabled={disabled || selectedPermission === item.permission}
+                    className="inline-flex items-center gap-1 rounded-md border border-[#9d4300]/20 bg-white px-2 py-1.5 text-[10px] font-semibold text-[#9d4300] transition-colors hover:bg-[#fff3e0] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    <AppIcon name="edit" className="text-[14px]" />
+                    Cập nhật
+                </button>
                 <button
                     onClick={onRevoke}
                     disabled={disabled}
@@ -138,7 +163,7 @@ function PermissionListItem({
                     <AppIcon name="remove_circle" className="text-[14px]" />
                     Thu hồi
                 </button>
-            )}
+            </div>
         </div>
     )
 }
@@ -414,6 +439,7 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         if (target === 'folder' && !folderId) return
         if (target === 'folder' && !canManageFolderPermissions) return
         if (target === 'document' && !canManageDocumentPermissions) return
+        if (!window.confirm(`Thu hồi quyền ${item.permission} của ${item.subject_name || item.subject_id}?`)) return
 
         setSaving(true)
         setState((prev) => ({ ...prev, error: null }))
@@ -438,7 +464,49 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
         }
     }
 
-    const renderPermissionSection = (label: string, permissions: PermissionItem[], emptyLabel: string) => (
+    const handleUpdate = async (
+        item: PermissionItem,
+        target: PermissionTarget,
+        permission: PermissionLevel
+    ) => {
+        if (permission === item.permission) return
+        if (target === 'folder' && (!folderId || !canManageFolderPermissions)) return
+        if (target === 'document' && (!documentId || !canManageDocumentPermissions)) return
+
+        setSaving(true)
+        setState((prev) => ({ ...prev, error: null }))
+        try {
+            const payload = {
+                subject_type: item.subject_type,
+                subject_id: item.subject_id,
+                permission,
+            }
+
+            if (target === 'folder' && folderId) {
+                await grantFolderPermission(folderId, payload)
+            } else if (target === 'document' && documentId) {
+                await grantDocumentPermission(documentId, payload)
+            }
+
+            await loadPermissions()
+            await onPermissionChanged?.()
+            setActionMessage({ type: 'success', text: `Đã cập nhật quyền thành ${permission}` })
+        } catch (error) {
+            setActionMessage(null)
+            setState((prev) => ({
+                ...prev,
+                error: error instanceof Error ? error.message : 'Không thể cập nhật quyền',
+            }))
+        } finally {
+            setSaving(false)
+        }
+    }
+
+    const renderPermissionSection = (
+        label: string,
+        permissions: PermissionItem[],
+        target: PermissionTarget
+    ) => (
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
                 <div>
@@ -453,13 +521,13 @@ export function DocumentPermissionsPanel({ document, folder, title, mode = 'crea
                         <PermissionListItem
                             key={item.id}
                             item={item}
-                            onRevoke={() => { }}
-                            disabled={true}
-                            showRevoke={false}
+                            onUpdate={(permission) => void handleUpdate(item, target, permission)}
+                            onRevoke={() => void handleRevoke(item, target)}
+                            disabled={saving}
                         />
                     ))
                 ) : (
-                    <EmptyPermissionState label={emptyLabel} />
+                    <EmptyPermissionState label={target} />
                 )}
             </div>
         </div>

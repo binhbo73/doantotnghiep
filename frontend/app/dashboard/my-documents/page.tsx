@@ -181,18 +181,6 @@ function MyDocumentsPageContent() {
         )
     }
 
-    if (hasPermission('system_admin')) {
-        return (
-            <div className="min-h-screen bg-[#f8f9ff] flex items-center justify-center px-4">
-                <div className="max-w-xl bg-white rounded-3xl shadow-sm ring-1 ring-slate-200 p-8 text-center">
-                    <AppIcon name="lock" className="text-5xl text-[#9d4300] mb-4" />
-                    <h1 className="text-xl font-bold text-slate-900 mb-2">Trang này dành cho tài liệu cá nhân và tài liệu được chia sẻ</h1>
-                    <p className="text-sm text-slate-500">Tài khoản có quyền quản trị hệ thống nên sử dụng kho tài liệu chung hoặc các mục quản trị trong sidebar.</p>
-                </div>
-            </div>
-        )
-    }
-
     return (
         <div className="min-h-screen bg-[#f8f9ff]">
             <main className="p-6 max-w-7xl mx-auto">
@@ -437,6 +425,12 @@ function MyDocumentsPageContent() {
                         document={selectedDocument}
                         folder={selectedFolder}
                         onClose={clearSelection}
+                        onDocumentDeleted={async () => {
+                            await Promise.all([
+                                loadPersonalDocuments(),
+                                loadSharedDocuments(),
+                            ])
+                        }}
                     />
                 </div>
                 {canUploadPersonalDocument && (

@@ -908,15 +908,25 @@ class FolderService(BaseService):
             # Create or update permission
             FolderPermission = apps.get_model('documents', 'FolderPermission')
             user_account = self.Account.objects.get(id=user_id)
-            perm, created = FolderPermission.objects.get_or_create(
+            perm = FolderPermission.objects.all_records().filter(
                 folder_id=folder_id,
                 subject_type=subject_type,
                 subject_id=subject_id,
-                defaults={'permission': permission, 'is_active': True, 'granted_by': user_account}
-            )
-            
-            if not created:
-                # Update existing permission
+            ).first()
+            created = perm is None
+
+            if created:
+                perm = FolderPermission.objects.create(
+                    folder_id=folder_id,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    is_active=True,
+                    granted_by=user_account,
+                )
+            else:
+                if perm.is_deleted:
+                    perm.restore()
                 perm.permission = permission
                 perm.is_active = True
                 perm.granted_by = user_account

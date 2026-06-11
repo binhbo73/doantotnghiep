@@ -10,8 +10,9 @@ import { api } from '@/services/api/client'
 import { ApiError } from '@/services/api/errors'
 import { toast } from 'sonner'
 import { useRBAC } from '@/hooks/useRBAC'
-import { getDocumentStatus, getDocumentVersions } from '@/services/document'
+import { deleteDocument, getDocumentStatus, getDocumentVersions } from '@/services/document'
 import { UpdateDocumentVersionModal } from './UpdateDocumentVersionModal'
+import { DeleteConfirmDialog } from '@/components/common/DeleteConfirmDialog'
 
 type SidebarDocumentStatus = {
     document_status?: string
@@ -35,6 +36,7 @@ interface DocumentSidebarProps {
     onClose: () => void
     onVersionCreated?: () => void
     onSelectVersion?: (document: FolderDocumentResponse) => void
+    onDocumentDeleted?: (documentId: string) => void | Promise<void>
 }
 
 function formatDate(dateStr: string): string {
@@ -56,6 +58,7 @@ export function DocumentSidebar({
     onClose,
     onVersionCreated,
     onSelectVersion,
+    onDocumentDeleted,
 }: DocumentSidebarProps) {
     const [isDownloading, setIsDownloading] = useState(false)
     const [isPreviewOpen, setIsPreviewOpen] = useState(false)
@@ -67,8 +70,11 @@ export function DocumentSidebar({
     const [isVersionModalOpen, setIsVersionModalOpen] = useState(false)
     const [versions, setVersions] = useState<FolderDocumentResponse[]>([])
     const [versionRefreshKey, setVersionRefreshKey] = useState(0)
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+    const [isDeleting, setIsDeleting] = useState(false)
     const { canRead, canWrite, canDelete, hasPermission } = useRBAC()
-    const canReadDocumentForStatus = !!document && (hasPermission('document_read') || canRead(document.my_permission))
+    const effectivePermission = document?.my_permission ?? 'none'
+    const canReadDocumentForStatus = !!document && canRead(effectivePermission)
     const selectedDocumentId = document?.id
 
     useEffect(() => {
@@ -147,8 +153,8 @@ export function DocumentSidebar({
     const fileIcon = getFileIcon(document.file_type)
     const displayName = document.original_name || document.filename || 'Tài liệu'
     const canReadDocument = canReadDocumentForStatus
-    const canWriteDocument = canWrite(document.my_permission)
-    const canDeleteDocument = canDelete(document.my_permission)
+    const canWriteDocument = canWrite(effectivePermission)
+    const canDeleteDocument = canDelete(effectivePermission)
     const canDownloadDocument = hasPermission('document_download') && canReadDocument
     const statusLabel = documentStatus?.current_stage_label || 'Tài liệu đã sẵn sàng'
     const statusProgress = typeof documentStatus?.progress_percent === 'number'
@@ -164,6 +170,24 @@ export function DocumentSidebar({
         : isReadyForChat
             ? 'Tài liệu sẵn sàng cho tìm kiếm và chat.'
             : 'Trạng thái được tải khi bạn chọn tài liệu trong sidebar.'
+
+    const handleDelete = async () => {
+        if (!canDeleteDocument || isDeleting) return
+
+        setIsDeleting(true)
+        try {
+            await deleteDocument(document.id)
+            setIsDeleteDialogOpen(false)
+            toast.success(`Đã xóa tài liệu "${displayName}"`)
+            await onDocumentDeleted?.(document.id)
+            onClose()
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Không thể xóa tài liệu'
+            toast.error(message)
+        } finally {
+            setIsDeleting(false)
+        }
+    }
 
     if (!canReadDocument) {
         return (
@@ -448,6 +472,8 @@ export function DocumentSidebar({
 
                             {canDeleteDocument && (
                                 <button
+                                    onClick={() => setIsDeleteDialogOpen(true)}
+                                    disabled={isDeleting}
                                     className="px-3 py-2.5 border border-red-100 text-red-500 bg-red-50 rounded-xl text-xs font-bold hover:bg-red-100 transition-colors"
                                     title="Xóa tài liệu này"
                                 >
@@ -475,6 +501,15 @@ export function DocumentSidebar({
                 fileUrl={previewUrl}
                 fileName={displayName}
                 fileType={previewFileType || document.file_type}
+            />
+            <DeleteConfirmDialog
+                open={isDeleteDialogOpen}
+                title="Xóa tài liệu?"
+                description="Tài liệu và dữ liệu xử lý liên quan sẽ bị xóa khỏi hệ thống."
+                resourceName={displayName}
+                isDeleting={isDeleting}
+                onOpenChange={setIsDeleteDialogOpen}
+                onConfirm={handleDelete}
             />
             <UpdateDocumentVersionModal
                 isOpen={isVersionModalOpen}

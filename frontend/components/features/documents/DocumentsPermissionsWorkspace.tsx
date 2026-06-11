@@ -2,6 +2,7 @@
 
 import { AppIcon } from '@/components/ui/AppIcon'
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import Select from 'react-select'
 import { DocumentPermissionsPanel } from './DocumentPermissionsPanel'
 import { FolderTreeNode, OtherDocumentsNode } from '@/hooks/useDocumentStore'
 import { FolderDocumentResponse, FolderResponse, FolderWithDocuments, SharedDocumentsOrganized } from '@/services/folder'
@@ -23,7 +24,6 @@ interface DocumentsPermissionsWorkspaceProps {
     sharedWithMe: SharedDocumentsOrganized
     selectedDocument: FolderDocumentResponse | null
     selectedFolder: FolderResponse | null
-    onSelectDocument: (doc: FolderDocumentResponse, folder?: FolderResponse) => void
 }
 
 type ResourceKind = 'folder' | 'document'
@@ -62,6 +62,15 @@ type OverviewState = {
 function toSafeCount(value: unknown): number {
     const count = Number(value)
     return Number.isFinite(count) && count > 0 ? count : 0
+}
+
+function normalizeSearchText(value: string): string {
+    return value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/đ/g, 'd')
+        .replace(/Đ/g, 'D')
+        .toLocaleLowerCase('vi')
 }
 
 function sumSafeCounts(items: Array<{ total_permissions?: unknown }>): number {
@@ -287,9 +296,39 @@ function PermissionOverviewCard({
                         const permissionCount = item.permissions?.length || 0
                         const previewPermissions = item.permissions.slice(0, 3)
                         const firstPermission = item.permissions[0] as PermissionItem | undefined
+                        const detailTarget: DetailTarget = 'folder_id' in item
+                            ? {
+                                kind: 'folder',
+                                folder: {
+                                    id: item.folder_id,
+                                    name: item.folder_name,
+                                    access_scope: item.access_scope,
+                                } as FolderResponse,
+                            }
+                            : {
+                                kind: 'document',
+                                document: {
+                                    id: item.document_id,
+                                    original_name: item.document_name,
+                                    filename: item.document_name,
+                                } as FolderDocumentResponse,
+                                folder: null,
+                            }
 
                         return (
-                            <div key={resourceId} className="rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-3">
+                            <div
+                                key={resourceId}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => onViewDetails(detailTarget)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault()
+                                        onViewDetails(detailTarget)
+                                    }
+                                }}
+                                className="cursor-pointer rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-3 transition-all hover:border-[#9d4300]/30 hover:bg-[#fff8f1] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[#9d4300]/20"
+                            >
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
                                         <p className="truncate text-[13px] font-bold text-slate-800">{resourceTitle}</p>
@@ -323,14 +362,20 @@ function PermissionOverviewCard({
                                     </p>
                                     {'folder_id' in item ? (
                                         <button
-                                            onClick={() => onViewDetails({ kind: 'folder', folder: { id: item.folder_id, name: item.folder_name, access_scope: item.access_scope } as FolderResponse })}
+                                            onClick={(event) => {
+                                                event.stopPropagation()
+                                                onViewDetails(detailTarget)
+                                            }}
                                             className="inline-flex items-center gap-1 rounded-full bg-[#9d4300] px-2.5 py-1 text-[9px] font-bold text-white transition-colors hover:bg-[#b75b00]"
                                         >
                                             Xem chi tiết
                                         </button>
                                     ) : (
                                         <button
-                                            onClick={() => onViewDetails({ kind: 'document', document: { id: item.document_id, original_name: item.document_name, filename: item.document_name } as FolderDocumentResponse, folder: null })}
+                                            onClick={(event) => {
+                                                event.stopPropagation()
+                                                onViewDetails(detailTarget)
+                                            }}
                                             className="inline-flex items-center gap-1 rounded-full bg-[#9d4300] px-2.5 py-1 text-[9px] font-bold text-white transition-colors hover:bg-[#b75b00]"
                                         >
                                             Xem chi tiết
@@ -353,7 +398,6 @@ export function DocumentsPermissionsWorkspace({
     sharedWithMe,
     selectedDocument,
     selectedFolder,
-    onSelectDocument,
 }: DocumentsPermissionsWorkspaceProps) {
     const [resourceKind, setResourceKind] = useState<ResourceKind>('folder')
     const [permissionResourceKey, setPermissionResourceKey] = useState<PermissionResourceKey | ''>('')
@@ -456,7 +500,14 @@ export function DocumentsPermissionsWorkspace({
         [documents, selectedDocumentId]
     )
 
-    const dialogPermissionResources = dialogMode === 'detail' ? allPermissionResources : allPermissionResources
+    const dialogPermissionResources = useMemo(
+        () => allPermissionResources.filter((resource) => resource.kind === resourceKind),
+        [allPermissionResources, resourceKind]
+    )
+    const selectedPermissionResource = useMemo(
+        () => allPermissionResources.find((resource) => resource.key === permissionResourceKey) || null,
+        [allPermissionResources, permissionResourceKey]
+    )
 
     const applyPermissionResource = (resource: PermissionResourceOption | null) => {
         if (!resource) return
@@ -560,8 +611,13 @@ export function DocumentsPermissionsWorkspace({
     }, [resourceKind, canManageFolderPermissions, canManageDocumentPermissions])
 
     const showFolder = resourceKind === 'folder'
-    const panelFolder = showFolder ? currentFolder : currentDocumentEntry?.folder || null
-    const panelDocument = showFolder ? null : currentDocumentEntry?.document || null
+    const panelFolder = showFolder
+        ? selectedPermissionResource?.folder || currentFolder
+        : selectedPermissionResource?.folder || currentDocumentEntry?.folder || null
+    const panelDocument = showFolder
+        ? null
+        : selectedPermissionResource?.document || currentDocumentEntry?.document || null
+    const hasSelectedPermissionResource = showFolder ? Boolean(panelFolder) : Boolean(panelDocument)
 
     const openDetails = (target: DetailTarget) => {
         if (target.kind === 'folder') {
@@ -577,7 +633,6 @@ export function DocumentsPermissionsWorkspace({
             setResourceKind('document')
             setSelectedDocumentId(target.document.id)
             setPermissionResourceKey(`document:${target.document.id}`)
-            onSelectDocument(target.document, target.folder || undefined)
             setIsPermissionDialogOpen(true)
         }
     }
@@ -649,69 +704,118 @@ export function DocumentsPermissionsWorkspace({
                                     <div className="space-y-2">
                                         <div>
                                             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Chọn nguồn cấp quyền</p>
-                                            <p className="mt-1 text-[12px] text-slate-500">Danh sách bên dưới gồm tất cả thư mục và tài liệu trong hệ thống.</p>
+                                            <p className="mt-1 text-[12px] text-slate-500">
+                                                {showFolder
+                                                    ? 'Tìm và chọn một thư mục trong toàn hệ thống.'
+                                                    : 'Tìm và chọn một tài liệu trong toàn hệ thống.'}
+                                            </p>
                                         </div>
 
-                                        <select
-                                            value={permissionResourceKey}
-                                            disabled={dialogMode === 'detail'}
-                                            onChange={(e) => {
-                                                const selectedKey = e.target.value as PermissionResourceKey | ''
-                                                setPermissionResourceKey(selectedKey)
-
-                                                const resource = allPermissionResources.find((item) => item.key === selectedKey)
+                                        <Select<PermissionResourceOption, false>
+                                            instanceId={`permission-${resourceKind}-select`}
+                                            value={selectedPermissionResource}
+                                            options={dialogPermissionResources}
+                                            isDisabled={dialogMode === 'detail'}
+                                            isClearable={dialogMode === 'create'}
+                                            isSearchable
+                                            autoFocus={dialogMode === 'create'}
+                                            getOptionLabel={(option) => option.label}
+                                            getOptionValue={(option) => option.key}
+                                            filterOption={(candidate, inputValue) =>
+                                                normalizeSearchText(candidate.label).includes(
+                                                    normalizeSearchText(inputValue.trim())
+                                                )}
+                                            onChange={(resource) => {
                                                 if (resource) {
-                                                    setResourceKind(resource.kind)
-                                                    setSelectedFolderId(resource.folder?.id || null)
-                                                    setSelectedDocumentId(resource.document?.id || null)
-                                                } else {
-                                                    setSelectedFolderId(null)
-                                                    setSelectedDocumentId(null)
+                                                    applyPermissionResource(resource)
+                                                    return
                                                 }
-                                            }}
-                                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-[13px] text-slate-700 outline-none transition focus:border-[#9d4300]"
-                                        >
-                                            <option value="">
-                                                {dialogMode === 'detail'
-                                                    ? 'Đang xem chi tiết tài nguyên đã chọn'
-                                                    : 'Chọn thư mục/tài liệu'}
-                                            </option>
-                                            <optgroup label="Folder">
-                                                {dialogPermissionResources
-                                                    .filter((item) => item.kind === 'folder')
-                                                    .map((item) => (
-                                                        <option key={item.key} value={item.key}>
-                                                            {item.label}
-                                                        </option>
-                                                    ))}
-                                            </optgroup>
-                                            <optgroup label="Document">
-                                                {dialogPermissionResources
-                                                    .filter((item) => item.kind === 'document')
-                                                    .map((item) => (
-                                                        <option key={item.key} value={item.key}>
-                                                            {item.label}
-                                                        </option>
-                                                    ))}
-                                            </optgroup>
-                                        </select>
 
-                                        {dialogMode === 'create' && allPermissionResources.length === 0 && (
-                                            <p className="text-[11px] text-amber-600">Chưa có folder hoặc document nào trong hệ thống.</p>
+                                                setPermissionResourceKey('')
+                                                setSelectedFolderId(null)
+                                                setSelectedDocumentId(null)
+                                            }}
+                                            placeholder={showFolder
+                                                ? 'Gõ để tìm và chọn thư mục...'
+                                                : 'Gõ để tìm và chọn tài liệu...'}
+                                            noOptionsMessage={({ inputValue }) =>
+                                                inputValue
+                                                    ? `Không tìm thấy "${inputValue}"`
+                                                    : showFolder
+                                                        ? 'Không có thư mục phù hợp'
+                                                        : 'Không có tài liệu phù hợp'}
+                                            styles={{
+                                                control: (base, state) => ({
+                                                    ...base,
+                                                    minHeight: 48,
+                                                    borderRadius: 12,
+                                                    borderColor: state.isFocused ? '#9d4300' : '#e2e8f0',
+                                                    boxShadow: 'none',
+                                                    fontSize: 13,
+                                                    cursor: 'text',
+                                                    ':hover': {
+                                                        borderColor: state.isFocused ? '#9d4300' : '#cbd5e1',
+                                                    },
+                                                }),
+                                                menu: (base) => ({
+                                                    ...base,
+                                                    zIndex: 70,
+                                                }),
+                                                menuList: (base) => ({
+                                                    ...base,
+                                                    maxHeight: 320,
+                                                }),
+                                                option: (base, state) => ({
+                                                    ...base,
+                                                    fontSize: 13,
+                                                    backgroundColor: state.isSelected
+                                                        ? '#9d4300'
+                                                        : state.isFocused
+                                                            ? '#fff3e0'
+                                                            : '#ffffff',
+                                                    color: state.isSelected ? '#ffffff' : '#334155',
+                                                }),
+                                            }}
+                                        />
+
+                                        {dialogMode === 'create' && dialogPermissionResources.length === 0 && (
+                                            <p className="text-[11px] text-amber-600">
+                                                {showFolder
+                                                    ? 'Chưa có thư mục nào có thể phân quyền.'
+                                                    : 'Chưa có tài liệu nào có thể phân quyền.'}
+                                            </p>
                                         )}
                                     </div>
                                 </div>
 
-                                <DocumentPermissionsPanel
-                                    folder={panelFolder}
-                                    document={panelDocument}
-                                    mode={dialogMode}
-                                    onPermissionChanged={loadOverview}
-                                    onPermissionGranted={() => setIsPermissionDialogOpen(false)}
-                                    title={showFolder
-                                        ? currentFolder?.name || panelFolder?.name || 'Cấp quyền thư mục'
-                                        : currentDocumentEntry?.document.original_name || currentDocumentEntry?.document.filename || 'Cấp quyền tài liệu'}
-                                />
+                                {hasSelectedPermissionResource && (
+                                    <DocumentPermissionsPanel
+                                        folder={panelFolder}
+                                        document={panelDocument}
+                                        mode={dialogMode}
+                                        onPermissionChanged={loadOverview}
+                                        onPermissionGranted={() => setIsPermissionDialogOpen(false)}
+                                        title={showFolder
+                                            ? currentFolder?.name || panelFolder?.name || 'Cấp quyền thư mục'
+                                            : currentDocumentEntry?.document.original_name || currentDocumentEntry?.document.filename || 'Cấp quyền tài liệu'}
+                                    />
+                                )}
+                                {!hasSelectedPermissionResource && (
+                                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-14 text-center">
+                                        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-100">
+                                            <AppIcon
+                                                name={showFolder ? 'folder_open' : 'description'}
+                                                className="text-2xl text-[#9d4300]"
+                                            />
+                                        </div>
+                                        <p className="mt-4 text-sm font-bold text-slate-700">
+                                            {showFolder ? 'Chọn một thư mục' : 'Chọn một tài liệu'}
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-500">
+                                            Gõ tên vào ô tìm kiếm phía trên, sau đó chọn tài nguyên cần cấp quyền.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>

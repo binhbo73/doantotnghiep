@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { dashboardNavigation } from '@/constants/navigation'
 import { useRBAC } from '@/hooks/useRBAC'
+import { AppIcon } from '@/components/ui/AppIcon'
 
 interface SidebarProps {
     onLogout?: () => void
@@ -13,7 +14,6 @@ interface SidebarProps {
 
 export function Sidebar({
     onLogout,
-    onUpgrade,
 }: SidebarProps) {
     const pathname = usePathname()
     const [isCollapsed, setIsCollapsed] = useState(false)
@@ -113,8 +113,16 @@ export function Sidebar({
                                 title={item.label}
                             >
                                 {/* Icon */}
-                                <span className="text-lg flex-shrink-0">
-                                    {item.icon}
+                                <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center">
+                                    {item.iconName ? (
+                                        <AppIcon
+                                            name={item.iconName}
+                                            className="h-[22px] w-[22px]"
+                                            strokeWidth={2}
+                                        />
+                                    ) : (
+                                        <span className="text-lg leading-none">{item.icon}</span>
+                                    )}
                                 </span>
 
                                 {/* Label */}

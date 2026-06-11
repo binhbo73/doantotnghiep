@@ -19,7 +19,7 @@ No ORM calls should exist outside this repository for permission checking.
 
 import logging
 from typing import List, Optional, Set
-from django.db.models import Q, QuerySet
+from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
 from django.apps import apps
 from core.constants import ObjectPermissionLevel
 logger = logging.getLogger(__name__)
@@ -229,36 +229,56 @@ class PermissionManagerRepository:
     # Permission Methods
     
     def get_document_deny_permission(self, document_id: str, account_id: str):
-        """Check if account has DENY permission on document"""
+        """Check direct or role-based DENY permission on a document."""
         try:
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
-            
+            role_ids = [str(role_id) for role_id in self.get_user_role_ids(account_id)]
+
             return DocumentPermission.objects.filter(
                 document_id=document_id,
-                subject_id=str(account_id),
-                subject_type='account',
                 permission_precedence='deny',
                 is_active=True,
                 is_deleted=False
+            ).filter(
+                Q(subject_type='account', subject_id=str(account_id)) |
+                Q(subject_type='role', subject_id__in=role_ids)
             ).first()
         except Exception as e:
             logger.error(f"Error checking document deny permission: {str(e)}")
             return None
     
     def get_document_allow_permission(self, document_id: str, account_id: str):
-        """Get account's explicit permission on document"""
+        """Get the effective direct or role-based allow permission on a document."""
         try:
             DocumentPermission = apps.get_model('documents', 'DocumentPermission')
-            
-            return DocumentPermission.objects.filter(
+            role_ids = [str(role_id) for role_id in self.get_user_role_ids(account_id)]
+            permission_rank = Case(
+                When(permission=ObjectPermissionLevel.DELETE, then=Value(3)),
+                When(permission=ObjectPermissionLevel.WRITE, then=Value(2)),
+                When(permission=ObjectPermissionLevel.READ, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+            base_query = DocumentPermission.objects.filter(
                 document_id=document_id,
-                subject_id=str(account_id),
-                subject_type='account',
                 permission__in=[ObjectPermissionLevel.READ, ObjectPermissionLevel.WRITE, ObjectPermissionLevel.DELETE],
-                permission_precedence='override',
+                permission_precedence__in=['inherit', 'override'],
                 is_active=True,
                 is_deleted=False
-            ).first()
+            )
+
+            # An account-specific grant takes priority over role grants.
+            account_permission = base_query.filter(
+                subject_type='account',
+                subject_id=str(account_id),
+            ).annotate(permission_rank=permission_rank).order_by('-permission_rank').first()
+            if account_permission:
+                return account_permission
+
+            return base_query.filter(
+                subject_type='role',
+                subject_id__in=role_ids,
+            ).annotate(permission_rank=permission_rank).order_by('-permission_rank').first()
         except Exception as e:
             logger.error(f"Error getting document allow permission: {str(e)}")
             return None

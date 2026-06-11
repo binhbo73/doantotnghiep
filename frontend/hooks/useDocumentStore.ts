@@ -143,6 +143,33 @@ function categorizeOtherDocuments(allDocs: FolderDocumentResponse[]): OtherDocum
 
 // ─── Helper: Build tree from flat folder list ──────────────
 
+async function fetchEveryDocumentPage(): Promise<FolderDocumentResponse[]> {
+    const documents: FolderDocumentResponse[] = []
+    const seen = new Set<string>()
+    let page = 1
+    let hasNext = true
+
+    while (hasNext) {
+        const response = await fetchAllDocuments({
+            page,
+            page_size: 100,
+            include_versions: true,
+        })
+
+        response.items.forEach((document) => {
+            if (!seen.has(document.id)) {
+                seen.add(document.id)
+                documents.push(document)
+            }
+        })
+
+        hasNext = response.pagination?.has_next ?? false
+        page += 1
+    }
+
+    return documents
+}
+
 function buildFolderTree(folders: FolderResponse[]): FolderTreeNode[] {
     // Bước 0: Flatten tất cả subfolder
     const flatFolders = flattenAllFolders(folders)
@@ -252,16 +279,16 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
             const [folderData, documentData] = await Promise.all([
                 canReadFolders ? fetchAllFolders() : Promise.resolve([]),
                 canReadDocuments
-                    ? fetchAllDocuments({ page_size: 100, include_versions: true })
-                    : Promise.resolve({ items: [], pagination: null }),
+                    ? fetchEveryDocumentPage()
+                    : Promise.resolve([]),
             ])
 
             setFolders(folderData)
             setTree(buildFolderTree(folderData))
-            setAllDocuments(documentData.items)
+            setAllDocuments(documentData)
 
             // Categorize documents not in any folder
-            const otherDocs = categorizeOtherDocuments(documentData.items)
+            const otherDocs = categorizeOtherDocuments(documentData)
             setOtherDocuments(otherDocs)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Không thể tải danh sách thư mục'
@@ -434,13 +461,10 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
         if (!canReadDocuments) return
 
         try {
-            const documentData = await fetchAllDocuments({
-                page_size: 100,
-                include_versions: true,
-            })
-            setAllDocuments(documentData.items)
+            const documents = await fetchEveryDocumentPage()
+            setAllDocuments(documents)
             setOtherDocuments((prev) => ({
-                ...categorizeOtherDocuments(documentData.items),
+                ...categorizeOtherDocuments(documents),
                 isExpanded: prev.isExpanded,
             }))
         } catch (err) {

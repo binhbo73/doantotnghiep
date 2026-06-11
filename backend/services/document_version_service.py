@@ -17,6 +17,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from core.exceptions import BusinessLogicError, NotFoundError, PermissionDeniedError, ValidationError
+from core.permissions import get_permission_manager
 from repositories.document_repository import DocumentRepository
 
 logger = logging.getLogger(__name__)
@@ -301,7 +302,11 @@ class DocumentVersionService:
         if update_mode not in {'auto', 'full', 'amendment'}:
             raise ValidationError("update_mode must be 'auto', 'full', or 'amendment'")
 
-        if not self.document_repo.check_user_can_write(base_document_id, user_id):
+        if not get_permission_manager().check_document_access(
+            user_id,
+            base_document_id,
+            action='write',
+        ):
             raise PermissionDeniedError(f"No write permission on document {base_document_id}")
 
         Document = apps.get_model('documents', 'Document')

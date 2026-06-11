@@ -14,7 +14,7 @@ interface PreviewModalProps {
     documentId?: string
     fileUrl: string
     fileName: string
-    fileType: string
+    fileType?: string | null
 }
 
 type DocumentAssetSource = {
@@ -68,8 +68,11 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
         setViewerStatus(null)
     }, [fileUrl])
 
-    // Detect file types - handle both MIME types and extensions
-    const fileTypeNorm = fileType.toLowerCase().trim()
+    // Partial document payloads may omit file_type; infer it from the filename.
+    const filenameExtension = fileName?.includes('.')
+        ? fileName.split('.').pop() || ''
+        : ''
+    const fileTypeNorm = String(fileType || filenameExtension).toLowerCase().trim()
     logger.debug('Preview file type detection', { fileTypeNorm, fileType })
 
     // MIME type detection
@@ -270,7 +273,7 @@ export function PreviewModal({ isOpen, onClose, documentId, fileUrl, fileName, f
                             <AppIcon name="description" className="text-5xl text-slate-400" />
                             <p className="text-slate-700 text-sm font-medium">Định dạng không được hỗ trợ</p>
                             <p className="text-slate-400 text-xs text-center">
-                                Định dạng {fileType.toUpperCase()} không thể xem trực tiếp. Vui lòng tải xuống để xem.
+                                Định dạng {(fileTypeNorm || 'không xác định').toUpperCase()} không thể xem trực tiếp. Vui lòng tải xuống để xem.
                             </p>
                             <p className="text-slate-500 text-xs mt-2 text-center max-w-sm">
                                 Hỗ trợ: PDF, Word (.doc, .docx), Excel (.xls, .xlsx), TXT, Markdown, Hình ảnh (JPG, PNG, GIF, WebP)

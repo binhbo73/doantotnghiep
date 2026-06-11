@@ -310,7 +310,7 @@ class PermissionManager:
             # Check folder inheritance
             from core.constants import ObjectPermissionLevel
             access_scope = self._check_folder_inheritance(user, user_department, folder)
-            return access_scope in [ObjectPermissionLevel.READ, ObjectPermissionLevel.WRITE, ObjectPermissionLevel.DELETE]
+            return self._scope_allows_action(access_scope, action)
             
         except Exception as e:
             logger.error(f"Error checking folder access: {str(e)}", exc_info=True)
@@ -443,7 +443,7 @@ class PermissionManager:
             # LEVEL 5: Inherit from folder
             if document.folder:
                 folder_access = self._check_folder_inheritance(user, user_department, document.folder)
-                if folder_access in [ObjectPermissionLevel.WRITE, ObjectPermissionLevel.DELETE]:
+                if self._scope_allows_action(folder_access, action):
                     # WRITE/ADMIN on folder → can do all on document
                     logger.debug(f"User {user.id} has folder-level permission on parent folder")
                     return True

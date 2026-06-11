@@ -86,6 +86,7 @@ class DocumentService(BaseService):
         super().__init__()
         self.document_repo = self.repository
         self.permission_repo = PermissionRepository()
+        self.Account = apps.get_model('users', 'Account')
 
     @staticmethod
     def _normalize_file_type(file_name: str, mime_type: str) -> str:
@@ -112,10 +113,6 @@ class DocumentService(BaseService):
             'text/markdown': 'markdown',
         }
         return mime_map.get(mime_type, ext.lstrip('.') or 'bin')
-
-        # ✅ CORRECT: Add UserRepository to avoid ORM calls
-        from repositories.user_repository import UserRepository
-        self.user_repository = UserRepository()
 
     # ============================================================================
     # DOCUMENT CREATION
@@ -591,14 +588,15 @@ class DocumentService(BaseService):
             # Get document
             document = self.document_repo.get_by_id(document_id)
 
-            # Check permission (owner or admin)
-            if document.uploader_id != user_id:
-                if not self.permission_repo.check_user_has_permission(
-                    user_id, PermissionCodes.DOCUMENT_DELETE
-                ):
-                    raise ValidationError(
-                        f"User {user_id} cannot delete document {document_id}"
-                    )
+            from core.permissions import get_permission_manager
+            if not get_permission_manager().check_document_access(
+                user_id,
+                document_id,
+                action='delete',
+            ):
+                raise PermissionDeniedError(
+                    f"User {user_id} cannot delete document {document_id}"
+                )
 
             # Delete
             with transaction.atomic():
@@ -740,29 +738,32 @@ class DocumentService(BaseService):
             NotFoundError: If document not found
             PermissionDeniedError: If user lacks permission
         """
-        from django.apps import apps
-        Document = apps.get_model('documents', 'Document')
-
         try:
             document = self.document_repo.get_by_id(doc_id)
             if not document:
                 raise NotFoundError(f"Document {doc_id} not found")
 
-            # Check permission
-            if permission_required == 'read':
-                if not self.document_repo.check_user_can_read(doc_id, user_id):
-                    raise PermissionDeniedError(f"No read permission on document {doc_id}")
-            elif permission_required == 'write':
-                if not self.document_repo.check_user_can_write(doc_id, user_id):
-                    raise PermissionDeniedError(f"No write permission on document {doc_id}")
-            elif permission_required == 'delete':
-                if not self.document_repo.check_user_can_delete(doc_id, user_id):
-                    raise PermissionDeniedError(f"No delete permission on document {doc_id}")
+            if permission_required not in {'read', 'write', 'delete'}:
+                raise ValidationError(f"Unsupported document permission: {permission_required}")
+
+            # Use the unified ACL engine so explicit document grants, role grants,
+            # folder inheritance, access scope, and explicit deny are consistent
+            # with status, preview, and download endpoints.
+            from core.permissions import get_permission_manager
+            permission_manager = get_permission_manager()
+            if not permission_manager.check_document_access(
+                user_id,
+                doc_id,
+                action=permission_required,
+            ):
+                raise PermissionDeniedError(
+                    f"No {permission_required} permission on document {doc_id}"
+                )
 
             return document
 
         except Exception as e:
-            if isinstance(e, (NotFoundError, PermissionDeniedError)):
+            if isinstance(e, (NotFoundError, PermissionDeniedError, ValidationError)):
                 raise
             logger.error(f"Error getting document detail: {e}", exc_info=True)
             raise NotFoundError(f"Failed to retrieve document {doc_id}")

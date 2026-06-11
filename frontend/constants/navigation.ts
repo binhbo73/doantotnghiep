@@ -1,11 +1,10 @@
 'use client'
 
-import React from 'react'
-
 export interface NavItem {
     id: string
     label: string
     icon: string
+    iconName?: string
     href: string
     badge?: number
     permissions?: string[]
@@ -23,6 +22,7 @@ export const dashboardNavigation: NavItem[] = [
         id: 'my-documents',
         label: 'Tài liệu của tôi',
         icon: '👤',
+        iconName: 'description',
         href: '/dashboard/my-documents',
         permissions: ['document_read', 'folder_read'],
         requireAllPermissions: true,
