@@ -1,0 +1,47 @@
+@startuml
+title Tạo và kích hoạt phiên bản tài liệu mới
+
+autonumber
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 45
+hide footbox
+
+actor "Người dùng" as User
+participant "Frontend" as FE
+participant "Version API" as API
+participant "Version Service" as Service
+database "PostgreSQL" as DB
+participant "Pipeline xử lý" as Pipeline
+database "Qdrant" as Qdrant
+
+User -> FE: Chọn tài liệu và file mới
+FE -> API: Gửi file + mô tả thay đổi\n+ version_lock
+
+API -> Service: Yêu cầu tạo phiên bản
+Service -> Service: Kiểm tra quyền\nvà version_lock
+Service -> DB: Đọc phiên bản hiện hành
+
+alt Yêu cầu hợp lệ
+  Service -> DB: Tạo phiên bản mới\ntrạng thái staging
+  Service -> Pipeline: Xử lý và lập chỉ mục
+  Pipeline -> DB: Lưu chunk và metadata
+  Pipeline -> Qdrant: Lưu vector phiên bản mới
+
+  alt Xử lý thành công
+    Pipeline --> Service: completed
+    Service -> DB: Bản cũ = superseded\nBản mới = active, is_current
+    Service --> API: Phiên bản mới đã kích hoạt
+  else Xử lý thất bại
+    Pipeline --> Service: failed
+    Service -> DB: Bản mới = failed\nGiữ nguyên bản hiện hành
+    Service --> API: Không thể kích hoạt
+  end
+else Sai quyền hoặc xung đột
+  Service --> API: Trả lỗi quyền / version_lock
+end
+
+API --> FE: Trạng thái phiên bản
+FE --> User: Hiển thị kết quả
+
+@enduml

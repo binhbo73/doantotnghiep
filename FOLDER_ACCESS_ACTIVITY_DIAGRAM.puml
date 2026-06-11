@@ -1,0 +1,46 @@
+@startuml
+title Quản lý thư mục và quyền truy cập
+
+skinparam defaultFontSize 15
+skinparam ranksep 22
+skinparam nodesep 18
+skinparam activity {
+  BackgroundColor white
+  BorderColor #4B5563
+  DiamondBackgroundColor #FEF3C7
+  DiamondBorderColor #92400E
+}
+
+start
+
+:Chọn tạo, cập nhật,\ndi chuyển hoặc chia sẻ thư mục;
+
+:Kiểm tra JWT và\nquyền chức năng;
+
+:Xác định thư mục cha,\nphạm vi và phòng ban;
+
+if (Phạm vi hợp lệ?) then (Có)
+  :Kiểm tra ACL\nread / write / delete;
+else (Không)
+  :Từ chối do sai phạm vi;
+  stop
+endif
+
+if (Được phép thao tác?) then (Có)
+  :Lưu thay đổi thư mục;
+else (Không)
+  :Trả lỗi không đủ quyền;
+  stop
+endif
+
+if (Có cấu hình chia sẻ?) then (Có)
+  :Cấp quyền cho\ntài khoản hoặc vai trò;
+else (Không)
+endif
+
+:Áp dụng phạm vi và quyền\ncho tài liệu liên quan;
+
+:Ghi audit log và\ntrả cây thư mục mới;
+
+stop
+@enduml

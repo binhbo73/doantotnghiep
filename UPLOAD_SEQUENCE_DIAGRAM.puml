@@ -1,0 +1,47 @@
+@startuml
+title Tương tác khi tải lên tài liệu
+
+autonumber
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 45
+hide footbox
+
+actor "Người dùng" as User
+participant "Frontend" as FE
+participant "Upload API" as API
+participant "Pipeline xử lý" as Pipeline
+database "PostgreSQL" as DB
+database "Qdrant" as Qdrant
+
+User -> FE: Chọn file và phạm vi
+FE -> API: Gửi file + metadata
+
+API -> API: Kiểm tra quyền,\nfile và phạm vi
+API -> DB: Lưu Document (pending)
+
+alt Xử lý bất đồng bộ
+  API -> Pipeline: Đưa task vào Celery
+  API --> FE: Trả trạng thái pending
+else Xử lý đồng bộ
+  API -> Pipeline: Chạy pipeline
+end
+
+Pipeline -> Pipeline: Parse và chia chunk
+Pipeline -> Pipeline: Tạo embedding
+Pipeline -> DB: Lưu chunk và metadata
+Pipeline -> Qdrant: Lưu vector tìm kiếm
+Pipeline -> DB: Cập nhật completed
+
+opt Xử lý mở rộng
+  Pipeline -> Pipeline: OCR ảnh và xây RAPTOR
+  Pipeline -> DB: Lưu asset/summary
+  Pipeline -> Qdrant: Lưu vector mở rộng
+end
+
+FE -> API: Kiểm tra trạng thái
+API -> DB: Đọc trạng thái tài liệu
+API --> FE: completed / failed
+FE --> User: Hiển thị kết quả
+
+@enduml

@@ -1,0 +1,46 @@
+@startuml
+title Quy trình hỏi đáp tài liệu bằng RAG
+
+skinparam defaultFontSize 15
+skinparam ranksep 22
+skinparam nodesep 18
+skinparam activity {
+  BackgroundColor white
+  BorderColor #4B5563
+  DiamondBackgroundColor #DBEAFE
+  DiamondBorderColor #1E40AF
+}
+
+start
+
+:Nhập câu hỏi và\nchọn nguồn tài liệu;
+
+:Kiểm tra JWT,\nquyền chat và RAG;
+
+if (Đủ quyền?) then (Có)
+  :Lưu câu hỏi và xác định\ntài liệu được truy cập;
+else (Không)
+  :Từ chối yêu cầu;
+  stop
+endif
+
+:Phân loại ý định\ncâu hỏi;
+
+if (Câu hỏi có cấu trúc?) then (Có)
+  :Truy xuất bảng, mục,\nảnh hoặc spreadsheet;
+else (Không)
+  :Tìm kiếm kết hợp\nBM25 + vector + RAPTOR;
+endif
+
+:Hợp nhất, xếp hạng\nvà chọn nguồn tốt nhất;
+
+:Xây dựng ngữ cảnh RAG\ncó đánh số nguồn;
+
+:Sinh câu trả lời\ntrực tiếp hoặc bằng LLM;
+
+:Kiểm tra grounding,\ntạo trích dẫn và lưu;
+
+:Hiển thị câu trả lời\nkèm nguồn kiểm chứng;
+
+stop
+@enduml

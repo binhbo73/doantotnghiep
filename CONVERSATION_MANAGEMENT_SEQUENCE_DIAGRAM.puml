@@ -1,0 +1,47 @@
+@startuml
+title Quản lý hội thoại và nguồn tài liệu
+
+autonumber
+skinparam defaultFontSize 14
+skinparam sequenceMessageAlign center
+skinparam maxMessageSize 45
+hide footbox
+
+actor "Người dùng" as User
+participant "Frontend" as FE
+participant "Conversation API" as API
+participant "Conversation Service" as Service
+participant "Access Control" as ACL
+database "PostgreSQL" as DB
+
+User -> FE: Tạo hoặc mở hội thoại
+FE -> API: Gửi thông tin hội thoại
+API -> Service: Create / Get conversation
+Service -> DB: Tạo hoặc đọc hội thoại
+DB --> Service: Conversation
+
+opt Gắn tài liệu hoặc thư mục
+  FE -> API: Gửi document_ids / folder_ids
+  API -> ACL: Kiểm tra quyền truy cập
+  ACL -> DB: Đọc scope và ACL
+  DB --> ACL: Tập nguồn được phép
+  ACL --> API: Danh sách hợp lệ
+  API -> Service: Cập nhật nguồn đính kèm
+  Service -> DB: Lưu document/folder links
+end
+
+Service -> DB: Đọc tin nhắn và citations
+DB --> Service: Lịch sử hội thoại
+Service --> API: Hội thoại + nguồn + tin nhắn
+API --> FE: Trả dữ liệu hiển thị
+FE --> User: Hiển thị hội thoại
+
+opt Đổi tên hoặc xóa hội thoại
+  User -> FE: Chọn thao tác quản lý
+  FE -> API: Update / Delete conversation
+  API -> Service: Kiểm tra chủ sở hữu
+  Service -> DB: Cập nhật hoặc xóa mềm
+  API --> FE: Trả kết quả
+end
+
+@enduml
