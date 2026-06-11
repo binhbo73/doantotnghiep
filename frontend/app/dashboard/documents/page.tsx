@@ -141,6 +141,8 @@ function DocumentsPageContent() {
     const [activeTab, setActiveTab] = useState<DocumentsPageTab>('browse')
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
     const [isCreateFolderModalOpen, setIsCreateFolderModalOpen] = useState(false)
+    const [uploadTargetFolder, setUploadTargetFolder] = useState<FolderResponse | null>(null)
+    const [createParentFolder, setCreateParentFolder] = useState<FolderResponse | null>(null)
     const [folderToDelete, setFolderToDelete] = useState<FolderResponse | null>(null)
     const [isDeletingFolder, setIsDeletingFolder] = useState(false)
     const [folderDeleteBlockers, setFolderDeleteBlockers] = useState<string[]>([])
@@ -161,6 +163,8 @@ function DocumentsPageContent() {
         setSearchQuery,
         toggleFolder,
         toggleOtherDocuments,
+        refreshFolderDocuments,
+        refreshOtherDocuments,
         selectDocument,
         clearSelection,
         removeFolder,
@@ -226,6 +230,26 @@ function DocumentsPageContent() {
     const canCreateFolder = hasPermission('folder_create')
     const canDeleteFolder = hasPermission('folder_delete')
     const canUpload = hasPermission('document_create')
+
+    const openUploadModal = (folder?: FolderResponse | null) => {
+        setUploadTargetFolder(folder ?? null)
+        setIsUploadModalOpen(true)
+    }
+
+    const closeUploadModal = () => {
+        setIsUploadModalOpen(false)
+        setUploadTargetFolder(null)
+    }
+
+    const openCreateFolderModal = (parentFolder?: FolderResponse | null) => {
+        setCreateParentFolder(parentFolder ?? null)
+        setIsCreateFolderModalOpen(true)
+    }
+
+    const closeCreateFolderModal = () => {
+        setIsCreateFolderModalOpen(false)
+        setCreateParentFolder(null)
+    }
 
     const openFolderDeleteDialog = (folder: FolderResponse) => {
         setFolderDeleteBlockers([])
@@ -319,7 +343,7 @@ function DocumentsPageContent() {
                     totalDocuments={stats.totalDocuments}
                     searchQuery={searchQuery}
                     onSearchChange={setSearchQuery}
-                    onCreateFolder={canCreateFolder ? () => setIsCreateFolderModalOpen(true) : undefined}
+                    onCreateFolder={canCreateFolder ? () => openCreateFolderModal() : undefined}
                     compact={activeTab === 'permissions'}
                 />
 
@@ -355,6 +379,8 @@ function DocumentsPageContent() {
                             onToggleFolder={toggleFolder}
                             onToggleOtherDocuments={toggleOtherDocuments}
                             onSelectDocument={selectDocument}
+                            onUploadToFolder={canUpload ? openUploadModal : undefined}
+                            onCreateSubfolder={canCreateFolder ? openCreateFolderModal : undefined}
                             onDeleteFolder={canDeleteFolder ? openFolderDeleteDialog : undefined}
                             deletingFolderId={isDeletingFolder ? folderToDelete?.id : null}
                             searchQuery={searchQuery}
@@ -390,7 +416,7 @@ function DocumentsPageContent() {
             {/* Floating Upload Button */}
             {canUpload && (
                 <button
-                    onClick={() => setIsUploadModalOpen(true)}
+                    onClick={() => openUploadModal()}
                     className="fixed bottom-10 right-10 w-16 h-16 bg-[#9d4300] text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
                 >
                     <AppIcon name="upload_file" className="text-3xl" />
@@ -403,20 +429,30 @@ function DocumentsPageContent() {
             {/* Upload Modal */}
             <UploadDocumentModal
                 isOpen={isUploadModalOpen}
-                onClose={() => setIsUploadModalOpen(false)}
-                onSuccess={() => {
-                    void refetch()
+                onClose={closeUploadModal}
+                onSuccess={(folderId) => {
+                    if (folderId) {
+                        void refreshFolderDocuments(folderId, uploadTargetFolder?.id === folderId)
+                    } else {
+                        void refreshOtherDocuments()
+                    }
                 }}
+                defaultAccessScope={uploadTargetFolder?.access_scope}
+                defaultDepartmentId={uploadTargetFolder?.department_id}
+                defaultFolderId={uploadTargetFolder?.id}
             />
 
             {/* Create Folder Modal */}
             {canCreateFolder && (
                 <CreateFolderModal
                     isOpen={isCreateFolderModalOpen}
-                    onClose={() => setIsCreateFolderModalOpen(false)}
+                    onClose={closeCreateFolderModal}
                     onSuccess={() => {
                         void refetch()
                     }}
+                    defaultAccessScope={createParentFolder?.access_scope}
+                    defaultDepartmentId={createParentFolder?.department_id}
+                    defaultParentFolderId={createParentFolder?.id}
                 />
             )}
 

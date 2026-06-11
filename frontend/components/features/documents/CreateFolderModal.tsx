@@ -14,6 +14,8 @@ interface CreateFolderModalProps {
     onClose: () => void
     onSuccess?: () => void
     defaultAccessScope?: 'company' | 'department' | 'personal'
+    defaultDepartmentId?: string | null
+    defaultParentFolderId?: string | null
     allowedScopes?: Array<'company' | 'department' | 'personal'>
 }
 
@@ -28,6 +30,8 @@ export function CreateFolderModal({
     onClose,
     onSuccess,
     defaultAccessScope,
+    defaultDepartmentId,
+    defaultParentFolderId,
     allowedScopes: allowedScopesProp,
 }: CreateFolderModalProps) {
     const { user } = useAuthContext()
@@ -68,15 +72,16 @@ export function CreateFolderModal({
 
     useEffect(() => {
         if (isOpen) {
+            const initialAccessScope = defaultAccessScope ?? (canUseGlobalFolderScopes ? 'company' : 'department')
             setFolderName('')
             setDescription('')
-            setAccessScope(defaultAccessScope ?? (canUseGlobalFolderScopes ? 'company' : 'department'))
-            setDepartmentId(canUseGlobalFolderScopes ? '' : userDepartmentId)
-            setParentFolderId('')
+            setAccessScope(initialAccessScope)
+            setDepartmentId(defaultDepartmentId ?? (canUseGlobalFolderScopes ? '' : userDepartmentId))
+            setParentFolderId(defaultParentFolderId ?? '')
             setError(null)
             setIsCreating(false)
         }
-    }, [isOpen, defaultAccessScope, canUseGlobalFolderScopes, userDepartmentId])
+    }, [isOpen, defaultAccessScope, defaultDepartmentId, defaultParentFolderId, canUseGlobalFolderScopes, userDepartmentId])
 
     useEffect(() => {
         if (accessScope !== 'department' && !isDepartmentUser) {

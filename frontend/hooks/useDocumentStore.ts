@@ -381,6 +381,73 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
     }, [])
 
     // ── Select a document ──────────────────────────────────
+    const refreshFolderDocuments = useCallback(async (folderId: string, expandFolder = false) => {
+        if (!canReadDocuments) return
+
+        setTree((prev) =>
+            updateTreeNode(prev, folderId, (node) => ({
+                ...node,
+                isExpanded: expandFolder || node.isExpanded,
+                isLoadingDocs: true,
+            }))
+        )
+
+        try {
+            const { items } = await fetchFolderDocuments(folderId, {
+                page_size: 50,
+                include_versions: true,
+            })
+
+            setTree((prev) =>
+                updateTreeNode(prev, folderId, (node) => ({
+                    ...node,
+                    folder: {
+                        ...node.folder,
+                        document_count: items.length,
+                    },
+                    documents: items,
+                    isExpanded: expandFolder || node.isExpanded,
+                    isLoadingDocs: false,
+                    hasLoadedDocs: true,
+                }))
+            )
+
+            setAllDocuments((prev) => [
+                ...prev.filter((document) => {
+                    const documentFolderId = document.folder ?? document.folder_id ?? null
+                    return documentFolderId !== folderId
+                }),
+                ...items,
+            ])
+        } catch (err) {
+            console.warn(`Failed to refresh documents for folder ${folderId}:`, err)
+            setTree((prev) =>
+                updateTreeNode(prev, folderId, (node) => ({
+                    ...node,
+                    isLoadingDocs: false,
+                }))
+            )
+        }
+    }, [canReadDocuments])
+
+    const refreshOtherDocuments = useCallback(async () => {
+        if (!canReadDocuments) return
+
+        try {
+            const documentData = await fetchAllDocuments({
+                page_size: 100,
+                include_versions: true,
+            })
+            setAllDocuments(documentData.items)
+            setOtherDocuments((prev) => ({
+                ...categorizeOtherDocuments(documentData.items),
+                isExpanded: prev.isExpanded,
+            }))
+        } catch (err) {
+            console.warn('Failed to refresh root documents:', err)
+        }
+    }, [canReadDocuments])
+
     const selectDocument = useCallback((doc: FolderDocumentResponse | null, folder?: FolderResponse) => {
         setSelectedDocument(doc)
         setSelectedFolder(folder || null)
@@ -442,6 +509,8 @@ export function useDocumentStore(options: UseDocumentStoreOptions = {}) {
         setSearchQuery,
         toggleFolder,
         toggleOtherDocuments,
+        refreshFolderDocuments,
+        refreshOtherDocuments,
         selectDocument,
         clearSelection,
         removeFolder,

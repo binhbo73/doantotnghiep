@@ -14,6 +14,8 @@ interface FolderTreeNodeProps {
     selectedDocId: string | null
     onToggleFolder: (folderId: string) => void
     onSelectDocument: (doc: FolderDocumentResponse, folder: FolderResponse) => void
+    onUploadToFolder?: (folder: FolderResponse) => void
+    onCreateSubfolder?: (folder: FolderResponse) => void
     onDeleteFolder?: (folder: FolderResponse) => void
     deletingFolderId?: string | null
     searchQuery?: string
@@ -74,6 +76,8 @@ export function FolderTreeNodeComponent({
     selectedDocId,
     onToggleFolder,
     onSelectDocument,
+    onUploadToFolder,
+    onCreateSubfolder,
     onDeleteFolder,
     deletingFolderId,
     searchQuery = '',
@@ -81,12 +85,35 @@ export function FolderTreeNodeComponent({
     showPersonal = true,
 }: FolderTreeNodeProps) {
     const { folder, children, documents, isExpanded, isLoadingDocs, hasLoadedDocs } = node
-    const { canWrite, hasPermission } = useRBAC()
-    const folderPerm = folder.my_permission
+    const { canWrite, hasPermission, getEffectivePermission } = useRBAC()
+    const folderPerm = getEffectivePermission(folder, 'folder')
     const canInspectFolderOwner = hasPermission('system_admin') || hasPermission('folder_update') || hasPermission('folder_delete')
     const canOpenFolder = hasPermission('folder_read')
     const canReadFolderDocuments = hasPermission('document_read')
-    const canWriteFolder = hasPermission('folder_update') || canWrite(folderPerm)
+    const canWriteFolder = canWrite(folderPerm)
+    const canUploadHere = Boolean(onUploadToFolder)
+    const canCreateChildHere = Boolean(onCreateSubfolder) && canWriteFolder
+    const hasContextActions = canUploadHere || canCreateChildHere
+    const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number } | null>(null)
+
+    React.useEffect(() => {
+        if (!contextMenu) return
+
+        const closeMenu = () => setContextMenu(null)
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') closeMenu()
+        }
+
+        window.addEventListener('click', closeMenu)
+        window.addEventListener('scroll', closeMenu, true)
+        window.addEventListener('keydown', closeOnEscape)
+
+        return () => {
+            window.removeEventListener('click', closeMenu)
+            window.removeEventListener('scroll', closeMenu, true)
+            window.removeEventListener('keydown', closeOnEscape)
+        }
+    }, [contextMenu])
 
     const folderIcon = getFolderIcon(folder.name, isExpanded)
 
@@ -118,6 +145,19 @@ export function FolderTreeNodeComponent({
     const subfolderCount = toSafeCount(children.length, folder.subfolder_count)
     const documentCount = toSafeCount(docCount, folder.document_count)
 
+    const openContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+        if (!hasContextActions || restricted) return
+
+        event.preventDefault()
+        event.stopPropagation()
+
+        const menuWidth = 224
+        const menuHeight = 96
+        const x = Math.min(event.clientX, window.innerWidth - menuWidth - 8)
+        const y = Math.min(event.clientY, window.innerHeight - menuHeight - 8)
+        setContextMenu({ x: Math.max(8, x), y: Math.max(8, y) })
+    }
+
     return (
         <div className="relative">
             {/* Connector line from parent */}
@@ -128,6 +168,7 @@ export function FolderTreeNodeComponent({
             {/* Folder Row */}
             <div
                 onClick={!restricted ? () => onToggleFolder(folder.id) : undefined}
+                onContextMenu={openContextMenu}
                 className={`group flex items-center gap-2.5 px-3 py-2 rounded-xl ${restricted ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'} transition-all duration-200 select-none ${isExpanded
                     ? 'bg-amber-50 border border-amber-200'
                     : 'hover:bg-white hover:shadow-sm border border-transparent'
@@ -212,6 +253,42 @@ export function FolderTreeNodeComponent({
                 )}
             </div>
 
+            {contextMenu && hasContextActions && (
+                <div
+                    className="fixed z-[120] w-56 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl shadow-slate-900/15"
+                    style={{ left: contextMenu.x, top: contextMenu.y }}
+                    onClick={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                >
+                    {canUploadHere && (
+                        <button
+                            type="button"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-amber-50 hover:text-[#9d4300]"
+                            onClick={() => {
+                                setContextMenu(null)
+                                onUploadToFolder?.(folder)
+                            }}
+                        >
+                            <AppIcon name="upload_file" className="text-base text-[#9d4300]" />
+                            Tải file vào thư mục
+                        </button>
+                    )}
+                    {canCreateChildHere && (
+                        <button
+                            type="button"
+                            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-slate-700 transition-colors hover:bg-amber-50 hover:text-[#9d4300]"
+                            onClick={() => {
+                                setContextMenu(null)
+                                onCreateSubfolder?.(folder)
+                            }}
+                        >
+                            <AppIcon name="create_new_folder" className="text-base text-[#9d4300]" />
+                            Tạo thư mục con
+                        </button>
+                    )}
+                </div>
+            )}
+
             {/* Expanded Content */}
             {isExpanded && (() => {
                 // FIXED: Check access_scope BEFORE checking department restrictions
@@ -248,6 +325,8 @@ export function FolderTreeNodeComponent({
                                     selectedDocId={selectedDocId}
                                     onToggleFolder={onToggleFolder}
                                     onSelectDocument={onSelectDocument}
+                                    onUploadToFolder={onUploadToFolder}
+                                    onCreateSubfolder={onCreateSubfolder}
                                     onDeleteFolder={onDeleteFolder}
                                     deletingFolderId={deletingFolderId}
                                     searchQuery={searchQuery}

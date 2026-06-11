@@ -13,8 +13,10 @@ import { filterVisibleDepartments } from '@/lib/departmentAccess'
 interface UploadDocumentModalProps {
     isOpen: boolean
     onClose: () => void
-    onSuccess?: () => void
+    onSuccess?: (folderId: string | null) => void
     defaultAccessScope?: 'company' | 'department' | 'personal'
+    defaultDepartmentId?: string | null
+    defaultFolderId?: string | null
     allowedScopes?: Array<'company' | 'department' | 'personal'>
 }
 
@@ -23,6 +25,8 @@ export function UploadDocumentModal({
     onClose,
     onSuccess,
     defaultAccessScope,
+    defaultDepartmentId,
+    defaultFolderId,
     allowedScopes: allowedScopesProp,
 }: UploadDocumentModalProps) {
     const { user } = useAuthContext()
@@ -80,17 +84,18 @@ export function UploadDocumentModal({
     // Reset state when modal opens
     useEffect(() => {
         if (isOpen) {
+            const initialAccessScope = defaultAccessScope ?? (canUseAllScopes ? 'company' : 'department')
             setFile(null)
-            setAccessScope(defaultAccessScope ?? (canUseAllScopes ? 'company' : 'department'))
-            setDepartmentId(userDepartmentId)
-            setFolderId('')
+            setAccessScope(initialAccessScope)
+            setDepartmentId(defaultDepartmentId ?? userDepartmentId)
+            setFolderId(defaultFolderId ?? '')
             setDescription('')
             setTagsInput('')
             setProgress(0)
             setError(null)
             setIsUploading(false)
         }
-    }, [isOpen, defaultAccessScope, canUseAllScopes, userDepartmentId])
+    }, [isOpen, defaultAccessScope, defaultDepartmentId, defaultFolderId, canUseAllScopes, userDepartmentId])
 
     // Flatten folder tree for select options
     const flattenTree = (
@@ -299,7 +304,7 @@ export function UploadDocumentModal({
             }
 
             console.log('✅ Upload successful!')
-            if (onSuccess) onSuccess()
+            if (onSuccess) onSuccess(folderId || null)
             onClose()
         } catch (err: any) {
             const errorMsg = err.message || 'Upload thất bại.'
