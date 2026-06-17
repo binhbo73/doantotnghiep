@@ -10,7 +10,7 @@ interface CreateRoleDialogLeftPanelProps {
 export function CreateRoleDialogLeftPanel({ isEdit = false }: CreateRoleDialogLeftPanelProps) {
     return (
         <div
-            className="hidden lg:flex flex-col justify-between p-4 rounded-l-2xl text-white w-[30%]"
+            className="hidden w-72 flex-col justify-between rounded-l-2xl p-6 text-white lg:flex"
             style={{ backgroundColor: '#b75b00' }}
         >
             {/* Header Content */}

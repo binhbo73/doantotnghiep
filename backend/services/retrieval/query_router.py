@@ -126,6 +126,30 @@ class QueryRouter:
         effective_top_k = top_k if top_k != 5 else intent_config.top_k
         effective_sparse_k = intent_config.sparse_k
 
+        spreadsheet_probe_candidates: List[Dict[str, Any]] = []
+        spreadsheet_probe_score = 0.0
+        if self._should_probe_spreadsheets(query, intent, document_ids):
+            try:
+                spreadsheet_probe_candidates = self.spreadsheet.retrieve(
+                    query=query,
+                    document_ids=document_ids,
+                    top_k=max(3, effective_top_k),
+                )
+                spreadsheet_probe_score = max(
+                    (float(candidate.get('score', 0.0) or 0.0) for candidate in spreadsheet_probe_candidates),
+                    default=0.0,
+                )
+                if spreadsheet_probe_candidates:
+                    logger.info(
+                        f"[ROUTER_PROFILE] strategy=spreadsheet_probe intent={intent.value} "
+                        f"query='{query[:40]}...' docs={len(document_ids)} "
+                        f"results={len(spreadsheet_probe_candidates)} top_score={spreadsheet_probe_score:.1f}"
+                    )
+            except Exception as exc:
+                logger.debug(f"[SPREADSHEET_PROBE] failed: {exc}")
+                spreadsheet_probe_candidates = []
+                spreadsheet_probe_score = 0.0
+
         # quick heuristics
         q_words = query.split()
         word_count = len(q_words)
@@ -260,7 +284,17 @@ class QueryRouter:
             or re.search(r'\S+@\S+\.\S+', query_lower)
             or re.search(r'https?://|www\.', query_lower)
         )
-        if (word_count <= 12 or has_structured_token or intent in skip_raptor_intents) and not broad_raptor_intent:
+        spreadsheet_direct_threshold = float(
+            getattr(settings, 'RAG_SPREADSHEET_DIRECT_MATCH_SCORE', 68.0)
+        )
+        if spreadsheet_probe_candidates and spreadsheet_probe_score >= spreadsheet_direct_threshold:
+            candidates = spreadsheet_probe_candidates
+            logger.info(
+                f"[ROUTER_PROFILE] strategy=spreadsheet_content intent={intent.value} "
+                f"query='{query[:40]}...' docs={len(document_ids)} "
+                f"results={len(candidates)} top_score={spreadsheet_probe_score:.1f}"
+            )
+        elif (word_count <= 12 or has_structured_token or intent in skip_raptor_intents) and not broad_raptor_intent:
             t_strategy_start = time.monotonic()
             candidate_lists = [
                 self.hybrid.retrieve(
@@ -430,6 +464,40 @@ class QueryRouter:
         )
         return ranked
 
+    def _should_probe_spreadsheets(
+        self,
+        query: str,
+        intent: QueryIntent,
+        document_ids: List[str],
+    ) -> bool:
+        """Run content-first spreadsheet discovery for table-like broad searches.
+
+        This is intentionally not a filename shortcut. It lets spreadsheet row,
+        sheet-title, and whole-table chunks compete only when the user asks a
+        table/list-style question with spreadsheet-ish business terms.
+        """
+        if not document_ids:
+            return False
+
+        if not bool(getattr(settings, 'RAG_SPREADSHEET_CONTENT_DISCOVERY_ENABLED', True)):
+            return False
+
+        if intent not in {QueryIntent.TABLE, QueryIntent.LIST, QueryIntent.FACTUAL}:
+            return False
+
+        normalized = self.rewriter._normalize_text(query or '')
+        if not normalized:
+            return False
+
+        markers = (
+            'bang', 'table', 'bang tinh', 'excel', 'csv', 'sheet',
+            'dong', 'hang', 'cot', 'row', 'column',
+            'luong', 'thuong', 'phu cap', 'khau tru', 'kpi',
+            'san pham', 'nhan vien', 'cong nhan',
+            'so lieu', 'du lieu', 'thong ke', 'bao cao',
+        )
+        return any(marker in normalized for marker in markers)
+
     def _hydrate_candidate_snippets(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Replace short retrieval previews with stored chunk content for reranking."""
         if not candidates:
@@ -459,6 +527,9 @@ class QueryRouter:
             )
             row_map = {str(row['id']): row for row in rows}
             max_chars = int(getattr(settings, 'RAG_RERANK_SNIPPET_CHARS', 1800))
+            spreadsheet_max_chars = int(
+                getattr(settings, 'RAG_SPREADSHEET_RERANK_SNIPPET_CHARS', 5000)
+            )
 
             for candidate in candidates:
                 chunk_id = str(candidate.get('chunk_id') or '')
@@ -468,8 +539,14 @@ class QueryRouter:
 
                 content = (row.get('content') or '').strip()
                 if content:
+                    metadata = row.get('metadata') or candidate.get('metadata') or {}
+                    is_spreadsheet = (
+                        candidate.get('source') == 'spreadsheet'
+                        or metadata.get('content_format') == 'spreadsheet_markdown'
+                        or metadata.get('source') == 'excel_chunker_v2'
+                    )
                     candidate['_retrieval_preview'] = candidate.get('snippet') or ''
-                    candidate['snippet'] = content[:max_chars]
+                    candidate['snippet'] = content[:spreadsheet_max_chars if is_spreadsheet else max_chars]
                 candidate['document_id'] = str(row.get('document_id') or candidate.get('document_id') or '')
                 candidate['page'] = row.get('page_number') or candidate.get('page')
                 candidate['chunk_index'] = row.get('chunk_index')

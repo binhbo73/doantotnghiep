@@ -100,7 +100,7 @@ export function ResetPasswordModal({
                                 type="password"
                                 value={newPassword}
                                 onChange={(e) => setNewPassword(e.target.value)}
-                                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                                 required
                                 minLength={8}
                                 placeholder="Ít nhất 8 ký tự"
@@ -115,7 +115,7 @@ export function ResetPasswordModal({
                                 type="password"
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                className="w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                                 required
                                 minLength={8}
                             />
@@ -127,7 +127,7 @@ export function ResetPasswordModal({
                                 id="sendEmail"
                                 checked={sendEmail}
                                 onChange={(e) => setSendEmail(e.target.checked)}
-                                className="h-4 w-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                className="h-4 w-4 rounded border-gray-300 accent-[#b75b00] focus:ring-orange-500"
                             />
                             <label htmlFor="sendEmail" className="ml-2 block text-sm text-gray-700">
                                 Gửi email thông báo mật khẩu mới cho người dùng
@@ -146,7 +146,7 @@ export function ResetPasswordModal({
                         </button>
                         <button
                             type="submit"
-                            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                            className="px-4 py-2 bg-[#b75b00] text-white rounded-md hover:bg-[#9d4300] focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:opacity-50"
                             disabled={loading}
                         >
                             {loading ? 'Đang xử lý...' : 'Xác nhận'}

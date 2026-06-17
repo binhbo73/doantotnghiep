@@ -50,7 +50,7 @@ export function RoleCarousel({
                                     name: role.name,
                                     code: role.code,
                                     description: role.description || '',
-                                    memberCount: 0, // TODO: Get from API
+                                    memberCount: role.account_count ?? role.user_count ?? role.assigned_accounts ?? 0,
                                     permissionCount: role.permission_count,
                                 }}
                                 isSelected={selectedRoleId === role.id}

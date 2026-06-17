@@ -28,7 +28,6 @@ import { useRouter } from 'next/navigation'
 import type { Department } from '@/types/api'
 import { addUsersToDepartment } from '@/services/department'
 import { DeleteConfirmDialog } from '@/components/common/DeleteConfirmDialog'
-import { getSafeDeleteBlockers } from '@/lib/safeDelete'
 
 function DepartmentManagementContent() {
     const { hasPermission, hasAnyPermission } = useRBAC()
@@ -47,7 +46,6 @@ function DepartmentManagementContent() {
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [departmentToDelete, setDepartmentToDelete] = useState<Department | null>(null)
     const [isDeletingDepartment, setIsDeletingDepartment] = useState(false)
-    const [departmentDeleteBlockers, setDepartmentDeleteBlockers] = useState<string[]>([])
     const [detailRefreshKey, setDetailRefreshKey] = useState(0)
 
     const {
@@ -170,26 +168,8 @@ function DepartmentManagementContent() {
             }
 
             setDepartmentToDelete(null)
-            setDepartmentDeleteBlockers([])
             toast.success(`Đã xóa phòng ban "${deletedDepartment.name}"`)
         } catch (err) {
-            const blockers = getSafeDeleteBlockers(err)
-            if (blockers) {
-                const items = [
-                    blockers.users ? `${blockers.users} nhân viên trực tiếp` : null,
-                    blockers.child_departments ? `${blockers.child_departments} phòng ban con` : null,
-                    blockers.folders ? `${blockers.folders} thư mục` : null,
-                    blockers.documents ? `${blockers.documents} tài liệu` : null,
-                ].filter((item): item is string => Boolean(item))
-
-                setDepartmentDeleteBlockers(
-                    items.length > 0
-                        ? items
-                        : ['Phòng ban vẫn còn dữ liệu liên quan']
-                )
-                return
-            }
-
             const message = err instanceof Error
                 ? err.message
                 : 'Không thể xóa phòng ban'
@@ -255,7 +235,6 @@ function DepartmentManagementContent() {
                             onDelete={canManageDepartments ? (deptId) => {
                                 const department = displayedDepartments.find((item) => item.id === deptId)
                                 if (department) {
-                                    setDepartmentDeleteBlockers([])
                                     setDepartmentToDelete(department)
                                 }
                             } : undefined}
@@ -289,7 +268,6 @@ function DepartmentManagementContent() {
                             setIsEditDialogOpen(true)
                         }}
                         onDelete={canManageDepartments ? (department) => {
-                            setDepartmentDeleteBlockers([])
                             setDepartmentToDelete(department)
                         } : undefined}
                         deletingId={isDeletingDepartment ? departmentToDelete?.id : null}
@@ -329,17 +307,13 @@ function DepartmentManagementContent() {
 
                 <DeleteConfirmDialog
                     open={departmentToDelete !== null}
-                    title={departmentDeleteBlockers.length > 0 ? 'Không thể xóa phòng ban' : 'Xóa phòng ban?'}
-                    description={departmentDeleteBlockers.length > 0
-                        ? 'Đây là cơ chế bảo vệ dữ liệu. Phòng ban chỉ được xóa sau khi đã chuyển hoặc xử lý hết dữ liệu liên quan.'
-                        : 'Chỉ có thể xóa phòng ban rỗng. Hệ thống sẽ từ chối nếu còn nhân viên, phòng ban con, thư mục hoặc tài liệu.'}
+                    title="Xóa phòng ban?"
+                    description="Phòng ban con, thư mục và tài liệu sẽ được chuyển vào thùng rác để có thể khôi phục. Tài khoản và vai trò của nhân viên được giữ nguyên; phòng ban hiện tại của họ sẽ được đặt thành chưa phân công."
                     resourceName={departmentToDelete?.name}
                     isDeleting={isDeletingDepartment}
-                    blockedItems={departmentDeleteBlockers}
                     onOpenChange={(open) => {
                         if (!open) {
                             setDepartmentToDelete(null)
-                            setDepartmentDeleteBlockers([])
                         }
                     }}
                     onConfirm={handleDeleteDepartment}

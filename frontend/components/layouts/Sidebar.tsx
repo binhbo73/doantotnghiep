@@ -65,7 +65,7 @@ export function Sidebar({
                 >
                     <div
                         className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm flex-shrink-0"
-                        style={{ backgroundColor: '#0058be' }}
+                        style={{ backgroundColor: '#b75b00' }}
                     >
                         K
                     </div>
@@ -82,7 +82,7 @@ export function Sidebar({
                     onClick={() => setIsCollapsed(!isCollapsed)}
                     className="p-2 rounded-md transition-all hover:bg-gray-200 flex-shrink-0 flex items-center justify-center"
                     style={{
-                        backgroundColor: '#f0f3ff',
+                        backgroundColor: '#fff7ed',
                         minWidth: '36px',
                         minHeight: '36px',
                     }}
@@ -106,9 +106,9 @@ export function Sidebar({
                                 className="flex items-center gap-3 px-3 py-3 rounded-lg transition-all relative group"
                                 style={{
                                     backgroundColor: active
-                                        ? '#f0f3ff'
+                                        ? '#fff7ed'
                                         : 'transparent',
-                                    color: active ? '#0058be' : '#424754',
+                                    color: active ? '#b75b00' : '#424754',
                                 }}
                                 title={item.label}
                             >
@@ -142,7 +142,7 @@ export function Sidebar({
                                         className="absolute left-0 top-1/2 w-1 h-6 rounded-r-lg -translate-y-1/2"
                                         style={{
                                             backgroundColor:
-                                                '#0058be',
+                                                '#b75b00',
                                         }}
                                     />
                                 )}

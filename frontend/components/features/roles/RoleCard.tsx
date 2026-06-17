@@ -56,7 +56,7 @@ export function RoleCard({ role, isSelected, onViewDetails, onEdit }: RoleCardPr
                     className="px-1.5 py-0.5 rounded-full text-xs font-bold"
                     style={{ backgroundColor: '#f0f3ff', color: '#0058be' }}
                 >
-                    👥 +{role.memberCount}
+                    👥 {role.memberCount}
                 </span>
                 <span
                     className="px-1.5 py-0.5 rounded-full text-xs font-bold"

@@ -46,9 +46,9 @@ export function CreateRoleDialog({
             />
 
             {/* Dialog Container - Only on main content area */}
-            <div className="fixed top-0 right-0 bottom-0 z-30 flex items-center justify-center p-2" style={{ left: '240px' }}>
+            <div className="fixed top-0 right-0 bottom-0 z-30 flex items-center justify-center p-3" style={{ left: '240px' }}>
                 <div
-                    className="bg-white rounded-2xl shadow-2xl flex flex-col lg:flex-row w-full h-[96vh] max-w-[1800px] overflow-hidden"
+                    className="flex h-[82vh] max-h-[720px] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl lg:flex-row"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Left Panel - Branding */}

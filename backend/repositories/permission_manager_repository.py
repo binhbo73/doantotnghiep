@@ -45,6 +45,9 @@ class PermissionManagerRepository:
             return Document.objects.select_related(
                 'uploader', 'department', 'folder'
             ).get(pk=document_id, is_deleted=False)
+        except Document.DoesNotExist:
+            logger.info(f"Document {document_id} not found")
+            return None
         except Exception as e:
             logger.error(f"Error getting document {document_id}: {str(e)}")
             return None

@@ -10,6 +10,13 @@ interface RecentActivityCardProps {
     onViewAll?: () => void
 }
 
+function formatActivityTitle(title: string) {
+    return title.replace(
+        /\s*\([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\)\s*$/i,
+        ''
+    )
+}
+
 export function RecentActivityCard({ activities: initialActivities, onViewAll }: RecentActivityCardProps) {
     const [activities, setActivities] = useState<ActivityItem[]>(initialActivities || [])
     const [loading, setLoading] = useState(true)
@@ -106,13 +113,13 @@ export function RecentActivityCard({ activities: initialActivities, onViewAll }:
                 >
                     Hoạt động gần đây
                 </h2>
-                <button
+                {/* <button
                     onClick={onViewAll}
                     className="text-xs font-medium hover:underline"
                     style={{ color: '#0058be' }}
                 >
                     Xem tất cả
-                </button>
+                </button> */}
             </div>
 
             {/* Activity Items */}
@@ -144,7 +151,7 @@ export function RecentActivityCard({ activities: initialActivities, onViewAll }:
                                         className="text-xs font-bold"
                                         style={{ color: '#151c27' }}
                                     >
-                                        {activity.title}
+                                        {formatActivityTitle(activity.title)}
                                     </h3>
                                     <span
                                         className="text-xs font-medium flex-shrink-0"

@@ -47,12 +47,7 @@ export function DashboardHeader({
                         {badge.label}
                     </span>
                 </div>
-                <p
-                    className="text-xs"
-                    style={{ color: '#727785' }}
-                >
-                    Hệ thống đang vận hành tốt. Dưới đây là tóm tắt dữ liệu hôm nay.
-                </p>
+         
             </div>
 
             {/* Right: Time period and Export button */}

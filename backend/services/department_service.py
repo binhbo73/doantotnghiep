@@ -27,15 +27,15 @@ from typing import List, Dict, Optional, Any
 from uuid import UUID
 
 from django.db import transaction, models
-from django.utils import timezone
 from django.db.models import Q
+from django.utils import timezone
 
 from repositories.department_repository import DepartmentRepository
 from repositories.role_repository import RoleRepository
 from repositories.user_repository import UserRepository
 from services.audit_service import AuditService
 from services.base_service import BaseService
-from apps.users.models import Department
+from apps.users.models import Department, DepartmentDeletionOperation, UserProfile
 from core.constants import PermissionCodes
 from core.permissions.drf_permissions import user_has_any_permission, user_has_permission
 from core.exceptions import (
@@ -213,8 +213,16 @@ class DepartmentService(BaseService):
                 "name": dept.name,
                 "description": dept.description,
                 "parent_id": str(dept.parent_id) if dept.parent_id else None,
-                "manager_id": str(dept.manager_id) if dept.manager_id else None,
-                "manager_name": dept.manager.username if dept.manager else None,
+                "manager_id": (
+                    str(dept.manager_id)
+                    if dept.manager_id and dept.manager and not dept.manager.is_deleted
+                    else None
+                ),
+                "manager_name": (
+                    dept.manager.username
+                    if dept.manager and not dept.manager.is_deleted
+                    else None
+                ),
                 "member_count": member_count,
                 "created_at": dept.created_at.isoformat() if dept.created_at else None,
                 "updated_at": dept.updated_at.isoformat() if dept.updated_at else None,
@@ -529,111 +537,308 @@ class DepartmentService(BaseService):
             raise BusinessLogicError(f"Failed to update department: {str(e)}")
     
     # ============================================================================
-    # DELETE (SOFT DELETE WITH CASCADE CHECKS)
+    # DELETE / RESTORE
     # ============================================================================
-    
+
+    @staticmethod
+    def _active_department_subtree_ids(root_department_id: str) -> List[str]:
+        department_ids = []
+        queue = [str(root_department_id)]
+        while queue:
+            current_id = queue.pop(0)
+            if current_id in department_ids:
+                continue
+            department_ids.append(current_id)
+            queue.extend(
+                str(child_id)
+                for child_id in Department.objects.filter(
+                    parent_id=current_id,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            )
+        return department_ids
+
+    @staticmethod
+    def _active_folder_subtree_ids(root_folder_ids) -> List[str]:
+        from apps.documents.models import Folder
+
+        folder_ids = []
+        queue = [str(folder_id) for folder_id in root_folder_ids]
+        while queue:
+            current_id = queue.pop(0)
+            if current_id in folder_ids:
+                continue
+            folder_ids.append(current_id)
+            queue.extend(
+                str(child_id)
+                for child_id in Folder.objects.filter(
+                    parent_id=current_id,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            )
+        return folder_ids
+
     @transaction.atomic()
     def delete_department(
         self,
         dept_id: str,
         requested_by_user_id: Optional[str] = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
         """
-        Delete department (soft delete).
-        
-        Args:
-            dept_id: Department UUID
-            requested_by_user_id: User deleting (for audit)
-        
-        Raises:
-            NotFoundError: If department not found
-            BusinessLogicError: If cascade check fails
-        
-        Workflow:
-        1. Check department exists
-        2. Check for direct users in this department
-        3. Check for active child departments
-        4. Check for active folders and documents
-        5. Soft delete only when the department is empty
-        6. Log audit
-        
-        Note:
-        - This is a safe delete: no users, child departments, folders, or
-          documents are moved, detached, archived, or deleted automatically.
+        Soft-delete a department subtree and its document content.
+
+        Accounts and roles are preserved. Active profiles in the subtree are
+        detached by setting department=NULL. The exact affected IDs are stored
+        in DepartmentDeletionOperation for deterministic rollback.
         """
         try:
-            # ========== STEP 1: GET DEPARTMENT ==========
-            dept = self.department_repo.get_by_id(dept_id)
+            from apps.documents.models import Document, Folder
+
+            dept = Department.objects.select_for_update().filter(
+                id=dept_id,
+                is_deleted=False,
+            ).first()
             if not dept:
                 raise NotFoundError(f"Department {dept_id} not found")
-            
-            # ========== STEP 2: CHECK ALL DEPENDENCIES ==========
-            from apps.documents.models import Document
+            department_ids = self._active_department_subtree_ids(str(dept.id))
+            list(
+                Department.objects.select_for_update().filter(
+                    id__in=department_ids,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            )
 
-            users_in_dept = dept.get_all_members(include_subdepts=False).count()
-            sub_depts = dept.sub_departments.filter(is_deleted=False).count()
-            folders_in_dept = dept.folders.filter(is_deleted=False).count()
-            documents_in_dept = Document.objects.filter(
-                Q(department=dept) | Q(folder__department=dept),
-                is_current=True,
+            department_folder_ids = list(
+                Folder.objects.filter(
+                    department_id__in=department_ids,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            )
+            folder_ids = self._active_folder_subtree_ids(department_folder_ids)
+            list(
+                Folder.objects.select_for_update().filter(
+                    id__in=folder_ids,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            )
+            document_ids = [
+                str(document_id)
+                for document_id in Document.objects.select_for_update().filter(
+                    Q(department_id__in=department_ids) | Q(folder_id__in=folder_ids),
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            ]
+            profiles = list(
+                UserProfile.objects.select_for_update().filter(
+                    department_id__in=department_ids,
+                    is_deleted=False,
+                    account__is_deleted=False,
+                ).values('id', 'account_id', 'department_id')
+            )
+
+            actor = None
+            if requested_by_user_id:
+                actor = self.user_repo.get_by_filter(id=requested_by_user_id)
+
+            snapshot = {
+                'department_ids': department_ids,
+                'folder_ids': folder_ids,
+                'document_ids': document_ids,
+                'profiles': [
+                    {
+                        'profile_id': str(profile['id']),
+                        'account_id': str(profile['account_id']),
+                        'department_id': str(profile['department_id']),
+                    }
+                    for profile in profiles
+                ],
+            }
+            operation = DepartmentDeletionOperation.objects.create(
+                root_department=dept,
+                deleted_by=actor,
+                snapshot=snapshot,
+            )
+
+            # Employees remain active accounts with their roles intact.
+            detached_at = timezone.now()
+            UserProfile.objects.filter(
+                id__in=[profile['id'] for profile in profiles],
+                department_id__in=department_ids,
                 is_deleted=False,
-            ).distinct().count()
+            ).update(department=None, updated_at=detached_at)
 
-            blockers = {
-                'users': users_in_dept,
-                'child_departments': sub_depts,
-                'folders': folders_in_dept,
-                'documents': documents_in_dept,
+            # Documents are deleted first so all chunks, embeddings, assets,
+            # permissions, caches and tasks follow BaseModel's soft cascade.
+            for document in Document.objects.filter(id__in=document_ids, is_deleted=False):
+                document.delete()
+
+            # Child folders/departments are deleted before their parents.
+            for folder_id in reversed(folder_ids):
+                folder = Folder.objects.filter(id=folder_id, is_deleted=False).first()
+                if folder:
+                    folder.delete()
+
+            for department_id in reversed(department_ids):
+                department = Department.objects.filter(
+                    id=department_id,
+                    is_deleted=False,
+                ).first()
+                if department:
+                    department.delete()
+
+            impact = {
+                'operation_id': str(operation.id),
+                'department_id': str(dept.id),
+                'department_name': dept.name,
+                'departments_deleted': len(department_ids),
+                'child_departments_deleted': max(len(department_ids) - 1, 0),
+                'folders_deleted': len(folder_ids),
+                'documents_deleted': len(document_ids),
+                'users_detached': len(profiles),
+                'accounts_deleted': 0,
+                'roles_deleted': 0,
+                'external_files_deleted': 0,
+                'vectors_deleted': 0,
             }
-            active_blockers = {
-                key: count for key, count in blockers.items() if count > 0
-            }
 
-            if active_blockers:
-                blocker_labels = {
-                    'users': 'direct user(s)',
-                    'child_departments': 'child department(s)',
-                    'folders': 'folder(s)',
-                    'documents': 'document(s)',
-                }
-                blocker_summary = ', '.join(
-                    f"{count} {blocker_labels[key]}"
-                    for key, count in active_blockers.items()
-                )
-                raise ConflictError(
-                    (
-                        f"Cannot delete department '{dept.name}' because it still contains "
-                        f"{blocker_summary}. Reassign or remove these resources first."
-                    ),
-                    detail={
-                        'department_id': str(dept.id),
-                        'department_name': dept.name,
-                        'blockers': blockers,
-                    },
-                )
-
-            # ========== STEP 3: SOFT DELETE ==========
-            dept.is_deleted = True
-            dept.deleted_at = timezone.now()
-            dept.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
-            
-            logger.info(f"Department soft-deleted: {dept_id} (name={dept.name})")
-            
-            # ========== STEP 4: AUDIT LOG ==========
             self.audit_log_action(
                 action='DELETE',
                 user_id=requested_by_user_id,
                 resource_id=str(dept_id),
                 resource_type='Department',
-                query_text=f"Deleted department: {dept.name}",
-                details={'safe_delete_checks': blockers}
+                query_text=f"Deleted department subtree: {dept.name}",
+                details={'impact': impact},
             )
-        
+            logger.info("Department cascade soft-deleted: %s operation=%s", dept_id, operation.id)
+            return impact
+
         except (NotFoundError, ConflictError, BusinessLogicError, ValidationError):
             raise
         except Exception as e:
             logger.error(f"Unexpected error deleting department: {e}", exc_info=True)
             raise BusinessLogicError(f"Failed to delete department: {str(e)}")
+
+    @transaction.atomic()
+    def restore_deleted_department(
+        self,
+        dept_id: str,
+        requested_by_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Restore the latest active deletion operation for a department."""
+        try:
+            from apps.documents.models import Document, Folder
+
+            dept = Department.objects.all_records().select_for_update().filter(
+                id=dept_id,
+            ).first()
+            if not dept:
+                raise NotFoundError(f"Department {dept_id} not found")
+            if not dept.is_deleted:
+                raise ConflictError(f"Department '{dept.name}' is already active")
+
+            operation = DepartmentDeletionOperation.objects.select_for_update().filter(
+                root_department_id=dept_id,
+                status=DepartmentDeletionOperation.STATUS_DELETED,
+            ).order_by('-created_at').first()
+            if not operation:
+                raise ConflictError(
+                    "This department was not deleted by a tracked cascade operation"
+                )
+
+            snapshot = operation.snapshot or {}
+            department_ids = [str(value) for value in snapshot.get('department_ids', [])]
+            folder_ids = [str(value) for value in snapshot.get('folder_ids', [])]
+            document_ids = [str(value) for value in snapshot.get('document_ids', [])]
+
+            if dept.parent_id:
+                parent = Department.objects.all_records().filter(id=dept.parent_id).first()
+                if not parent or parent.is_deleted:
+                    raise ConflictError(
+                        "Cannot restore department while its parent department is deleted"
+                    )
+
+            restored_departments = 0
+            restored_folders = 0
+            restored_documents = 0
+            users_reattached = 0
+
+            # Snapshot order is parent-first.
+            for department_id in department_ids:
+                department = Department.objects.all_records().filter(
+                    id=department_id,
+                    is_deleted=True,
+                ).first()
+                if department:
+                    department.restore()
+                    restored_departments += 1
+
+            for folder_id in folder_ids:
+                folder = Folder.objects.all_records().filter(
+                    id=folder_id,
+                    is_deleted=True,
+                ).first()
+                if folder:
+                    folder.restore()
+                    restored_folders += 1
+
+            for document_id in document_ids:
+                document = Document.objects.all_records().filter(
+                    id=document_id,
+                    is_deleted=True,
+                ).first()
+                if document:
+                    document.restore()
+                    restored_documents += 1
+
+            # Do not overwrite a newer transfer. Reattach only profiles that
+            # are still unassigned and still active.
+            for profile_snapshot in snapshot.get('profiles', []):
+                profile = UserProfile.objects.filter(
+                    id=profile_snapshot.get('profile_id'),
+                    department__isnull=True,
+                    is_deleted=False,
+                    account__is_deleted=False,
+                ).first()
+                previous_department_id = profile_snapshot.get('department_id')
+                if (
+                    profile
+                    and previous_department_id in department_ids
+                    and Department.objects.filter(id=previous_department_id).exists()
+                ):
+                    profile.department_id = previous_department_id
+                    profile.save(update_fields=['department', 'updated_at'])
+                    users_reattached += 1
+
+            operation.status = DepartmentDeletionOperation.STATUS_RESTORED
+            operation.restored_at = timezone.now()
+            operation.save(update_fields=['status', 'restored_at'])
+
+            result = {
+                'operation_id': str(operation.id),
+                'department_id': str(dept.id),
+                'department_name': dept.name,
+                'departments_restored': restored_departments,
+                'folders_restored': restored_folders,
+                'documents_restored': restored_documents,
+                'users_reattached': users_reattached,
+                'accounts_restored': 0,
+                'roles_restored': 0,
+            }
+            self.audit_log_action(
+                action='UPDATE',
+                user_id=requested_by_user_id,
+                resource_id=str(dept_id),
+                resource_type='Department',
+                query_text=f"Restored department subtree: {dept.name}",
+                details={'restore': result},
+            )
+            return result
+
+        except (NotFoundError, ConflictError, BusinessLogicError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error restoring department: {e}", exc_info=True)
+            raise BusinessLogicError(f"Failed to restore department: {str(e)}")
     
     # ============================================================================
     # HELPER: GET SINGLE DEPARTMENT

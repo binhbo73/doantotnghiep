@@ -100,6 +100,21 @@ type DocumentAssetSource = {
     thumbnail_url?: string | null
 }
 
+class SourceRequestError extends Error {
+    constructor(public status: number) {
+        super(
+            status === 404
+                ? 'Nguon trich dan khong con ton tai. Tai lieu co the da bi xoa hoac du lieu test da duoc lam moi.'
+                : status === 403
+                    ? 'Ban khong con quyen truy cap nguon trich dan nay.'
+                    : status === 401
+                        ? 'Phien dang nhap da het han. Vui long dang nhap lai.'
+                        : `Khong the tai nguon trich dan: ${status}`
+        )
+        this.name = 'SourceRequestError'
+    }
+}
+
 type AssetImageHint = {
     id?: string
     pageNumber?: number
@@ -578,7 +593,7 @@ function CitationViewerContent() {
                     })
 
                     if (!response.ok) {
-                        throw new Error(`Khong the tai anh minh chung: ${response.status}`)
+                        throw new SourceRequestError(response.status)
                     }
 
                     const blob = await response.blob()
@@ -610,7 +625,7 @@ function CitationViewerContent() {
                         })
 
                         if (!response.ok) {
-                            throw new Error(`Khong the tai preview Word: ${response.status}`)
+                            throw new SourceRequestError(response.status)
                         }
 
                         const blob = await response.blob()
@@ -623,9 +638,12 @@ function CitationViewerContent() {
                         return
                     } catch (previewError) {
                         if ((previewError as Error).name === 'AbortError') throw previewError
+                        if (previewError instanceof SourceRequestError && [401, 403, 404].includes(previewError.status)) {
+                            throw previewError
+                        }
                         setViewer({
                             kind: 'word',
-                            fileUrl: `/documents/${payload.document_id}/preview?format=html`,
+                            fileUrl: `/documents/${payload.document_id}/preview?preview_mode=html`,
                             fileType: payload.type || 'docx',
                         })
                         return
@@ -640,7 +658,7 @@ function CitationViewerContent() {
                 })
 
                 if (!response.ok) {
-                    throw new Error(`Khong the tai tai lieu: ${response.status}`)
+                    throw new SourceRequestError(response.status)
                 }
 
                 const contentType = response.headers.get('content-type') || ''
@@ -665,7 +683,7 @@ function CitationViewerContent() {
                         })
 
                         if (!previewResponse.ok) {
-                            throw new Error(`Khong the tai preview Word: ${previewResponse.status}`)
+                            throw new SourceRequestError(previewResponse.status)
                         }
 
                         const previewBlob = await previewResponse.blob()
@@ -678,9 +696,12 @@ function CitationViewerContent() {
                         return
                     } catch (previewError) {
                         if ((previewError as Error).name === 'AbortError') throw previewError
+                        if (previewError instanceof SourceRequestError && [401, 403, 404].includes(previewError.status)) {
+                            throw previewError
+                        }
                         setViewer({
                             kind: 'word',
-                            fileUrl: `/documents/${payload.document_id}/preview?format=html`,
+                            fileUrl: `/documents/${payload.document_id}/preview?preview_mode=html`,
                             fileType: payload.type || contentType || getFileExtension(resolvedTitle) || 'docx',
                         })
                         return
@@ -694,7 +715,7 @@ function CitationViewerContent() {
 
                     setViewer({
                         kind: 'word',
-                        fileUrl: `/documents/${payload.document_id}/preview?format=html`,
+                        fileUrl: `/documents/${payload.document_id}/preview?preview_mode=html`,
                         fileType: payload.type || contentType || getFileExtension(resolvedTitle) || 'text',
                     })
                     return
@@ -746,8 +767,20 @@ function CitationViewerContent() {
 
             <main className="min-h-0 flex-1">
                 {error && (
-                    <div className="flex h-full items-center justify-center p-8 text-center text-sm font-medium text-red-500">
-                        {error}
+                    <div className="flex h-full items-center justify-center p-8">
+                        <div className="max-w-3xl rounded-xl border border-amber-200 bg-amber-50 p-6 text-left">
+                            <p className="text-sm font-semibold text-amber-800">{error}</p>
+                            {(payload.excerpt || payload.description) && (
+                                <>
+                                    <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                        Doan trich da luu trong lich su hoi thoai
+                                    </p>
+                                    <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                                        {payload.excerpt || payload.description}
+                                    </p>
+                                </>
+                            )}
+                        </div>
                     </div>
                 )}
 

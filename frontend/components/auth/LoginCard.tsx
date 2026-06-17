@@ -29,17 +29,7 @@ export const LoginCard: React.FC<LoginCardProps> = (props) => {
                 <LoginForm {...props} />
 
                 {/* Footer */}
-                <div className="pt-4 border-t border-gray-200">
-                    <p className="text-center text-gray-600 text-xs">
-                        Chưa có tài khoản?{' '}
-                        <Link
-                            href="/request-access"
-                            className="text-amber-600 hover:text-amber-700 font-semibold"
-                        >
-                            Yêu cầu quyền truy cập
-                        </Link>
-                    </p>
-                </div>
+                
             </div>
         </div>
     );

@@ -61,7 +61,10 @@ class BaseRepository(ABC):
     
     def get_all_including_deleted(self) -> QuerySet:
         """Get tất cả records (cả deleted - admin only)"""
-        queryset = self.model_class.objects.all()
+        if hasattr(self.model_class.objects, "all_records"):
+            queryset = self.model_class.objects.all_records()
+        else:
+            queryset = self.model_class.objects.all()
         if self.default_select_related:
             queryset = queryset.select_related(*self.default_select_related)
         if self.default_prefetch_related:

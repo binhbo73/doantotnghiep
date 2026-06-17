@@ -605,29 +605,6 @@ class DocumentService(BaseService):
 
                 # ✅ CORRECT: Use repository for DocumentChunk deletion
                 # Get DocumentChunk model и delete via repository pattern
-                DocumentChunk = apps.get_model('documents', 'DocumentChunk')
-                DocumentEmbedding = apps.get_model('documents', 'DocumentEmbedding')
-                DocumentAsset = apps.get_model('documents', 'DocumentAsset')
-                deleted_at = timezone.now()
-                chunks_to_delete = DocumentChunk.objects.filter(
-                    document_id=document_id,
-                    is_deleted=False
-                )
-                chunk_ids = list(chunks_to_delete.values_list('id', flat=True))
-                for chunk in chunks_to_delete:
-                    chunk.is_deleted = True
-                    chunk.deleted_at = deleted_at
-                    chunk.save(update_fields=['is_deleted', 'deleted_at'])
-
-                DocumentEmbedding.objects.filter(
-                    chunk_id__in=chunk_ids,
-                    is_deleted=False,
-                ).update(is_deleted=True, deleted_at=deleted_at)
-                DocumentAsset.objects.filter(
-                    document_id=document_id,
-                    is_deleted=False,
-                ).update(is_deleted=True, deleted_at=deleted_at)
-
                 self.log_action(
                     'DELETE_DOCUMENT',
                     document_id,
@@ -643,21 +620,9 @@ class DocumentService(BaseService):
                     query_text=f"Deleted document {document_id}"
                 )
 
-            # Qdrant is outside the SQL transaction, so clean it only after
-            # PostgreSQL has committed the soft delete.
-            try:
-                from services.ai.qdrant_client import QdrantClient
-
-                qdrant = QdrantClient()
-                qdrant.delete_by_filter({'document_id': str(document_id)})
-                qdrant.delete_asset_embeddings(str(document_id))
-            except Exception as cleanup_error:
-                logger.error(
-                    "Document %s was deleted but Qdrant cleanup failed: %s",
-                    document_id,
-                    cleanup_error,
-                    exc_info=True,
-                )
+            # Keep source files, extracted assets and Qdrant vectors intact.
+            # Active-model managers and retrieval validation hide soft-deleted
+            # documents while preserving everything needed for restoration.
 
             return result
 
@@ -941,8 +906,7 @@ class DocumentService(BaseService):
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
 
-            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
-                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            perm_manager.check_document_access_strict(user_id, doc_id, action='read')
 
             file_ref = self.get_document_file_reference(doc_id, user_id)
             with open(file_ref['path'], 'rb') as f:
@@ -975,8 +939,7 @@ class DocumentService(BaseService):
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
 
-            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
-                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            perm_manager.check_document_access_strict(user_id, doc_id, action='read')
 
             document = self.document_repo.get_by_id(doc_id)
             if not document or not document.storage_path:
@@ -1083,8 +1046,7 @@ class DocumentService(BaseService):
         try:
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
-            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
-                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            perm_manager.check_document_access_strict(user_id, doc_id, action='read')
 
             document = self.document_repo.get_by_id(doc_id)
             if not document or not document.storage_path:
@@ -1140,8 +1102,7 @@ class DocumentService(BaseService):
         try:
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
-            if not perm_manager.check_document_access(user_id, doc_id, action='read'):
-                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            perm_manager.check_document_access_strict(user_id, doc_id, action='read')
 
             DocumentChunk = apps.get_model('documents', 'DocumentChunk')
             chunk = DocumentChunk.objects.filter(

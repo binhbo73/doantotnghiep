@@ -58,7 +58,7 @@ Ghi chú: Bộ câu hỏi này được viết lại theo logic `query_intent.py
 50. Quyết định xử lý vi phạm kỷ luật lao động cần nêu những nội dung gì?
 51. Quy trình tính lương gồm các bước tính, kiểm tra và phê duyệt nào?
 52. Một quyết định ban hành chung thường gồm bố cục và điều khoản nào?
-53. Quy định quản lý nhà ăn gồm phạm vi áp dụng, trách nhiệm và yêu cầu vận hành nào?
+53. Nội dung Quy định quản lý nhà ăn ?
 54. Hội đồng tuyển dụng gồm thành phần nào và có nhiệm vụ gì?
 55. Tham gia hoạt động đào tạo có điều kiện, quyền lợi và trách nhiệm nào?
 56. Nhân viên mới cần được hội nhập với những nội dung nào?
@@ -85,14 +85,14 @@ Ghi chú: Bộ câu hỏi này được viết lại theo logic `query_intent.py
 77. KPI và lương thưởng của Ban Giám đốc được xác định theo tiêu chí nào?
 78. Bảng KPI, lương thưởng của Ban Giám đốc gồm những cột và chỉ tiêu nào?
 79. Bảng theo dõi chỉnh sửa tài liệu gồm những trường dữ liệu nào?
-80. Phí chức năng và phúc lợi nội bộ gồm những khoản nào?
+80. Phúc lợi nội bộ và trách nhiệm hành chính gồm những nhóm nội dung hoặc khoản mục nào?
 81. Quy chế lương thưởng và chế độ cho người lao động gồm những chế độ nào?
 82. Quyết định khen thưởng gồm căn cứ, đối tượng và hình thức khen thưởng nào?
 83. Quy định mừng sinh nhật cho CBNV và khách hàng gồm những nội dung nào?
 84. Quy định tổ chức sinh nhật CBNV gồm phạm vi, kinh phí và trách nhiệm nào?
 85. Biên bản họp xét khen thưởng cần ghi nhận những nội dung nào?
 86. Công tác phí và thanh toán chi phí công tác gồm khoản chi và điều kiện thanh toán nào?
-87. Quyết định nâng lương gồm căn cứ và nội dung nâng lương nào?
+
 88. Quyết định tăng lương gồm những điều khoản nào?
 89. Đánh giá công việc nhân viên gồm tiêu chí và quy trình đánh giá nào?
 90. Tiêu chí đánh giá công việc gồm những nhóm tiêu chí nào?
@@ -164,7 +164,6 @@ Ghi chú: Bộ câu hỏi này được viết lại theo logic `query_intent.py
 150. Sử dụng máy tính mạng có những hành vi nào bị hạn chế?
 151. Người dùng máy fax phải bảo quản và sử dụng như thế nào?
 152. Máy photocopy được sử dụng, bảo trì và kiểm soát ra sao?
-153. Sử dụng ô tô cá nhân để phục vụ công việc được hỗ trợ trong điều kiện nào?
 154. Quy trình điều xe từ đề nghị đến xét duyệt và sử dụng là gì?
 155. Người được giao phương tiện có trách nhiệm gì?
 156. Quy trình mua sắm và quản lý máy móc thiết bị gồm những bước nào?
@@ -208,10 +207,10 @@ Ghi chú: Bộ câu hỏi này được viết lại theo logic `query_intent.py
 194. Trình tự báo cáo tai nạn lao động từ lúc phát hiện đến khi xử lý là gì?
 195. Kiểm tra an toàn, VSLĐ, PCCC và 5S định kỳ gồm những nội dung nào?
 196. Nếu xảy ra tai nạn lao động trong khu vực sản xuất, cần xử lý và lập hồ sơ như thế nào?
-197. Trích xuất nguyên bảng liên quan đến câu hỏi hiện tại nếu nguồn có bảng; giữ đúng tên cột và hàng dữ liệu.
-198. Liệt kê các biểu mẫu nội bộ và nêu mục đích sử dụng từng biểu mẫu theo từng nguồn.
-199. Khi hỏi một mục hoặc quy định cần đầy đủ, hệ thống đã lấy được mục chính, mục con và chi tiết liên quan chưa?
-200. Tạo checklist kiểm thử RAG gồm: đúng nguồn, đủ nội dung, giữ bảng/biểu mẫu, citation đúng và xử lý khi không có thông tin.
+197. Trích xuất nguyên bảng theo dõi chỉnh sửa tài liệu; giữ đúng tên cột và các hàng dữ liệu có trong nguồn.
+198. Liệt kê các biểu mẫu nội bộ có trong tài liệu và nêu mục đích sử dụng từng biểu mẫu theo từng nguồn.
+199. Trình bày đầy đủ quy định quản lý và sử dụng máy tính mạng, giữ cấu trúc mục chính, mục con và chi tiết trong nguồn.
+200. Tạo checklist kiểm tra việc tuân thủ quy định bảo mật thông tin cho nhân viên; chỉ dùng các yêu cầu có trong tài liệu.
 
 ## D. Câu hỏi kiểm thử sai phạm vi quyền/phòng ban
 
@@ -258,3 +257,316 @@ Kỳ vọng: Không lấy nguồn từ nhóm tuyển dụng.
 
 N14. Thiết lập user chỉ có quyền nhóm lương, phúc lợi. Câu hỏi: Việc lưu chuyển thông tin được kiểm soát như thế nào?
 Kỳ vọng: Không lấy nguồn từ nhóm bảo mật thông tin.
+
+## E. Câu hỏi ngắn theo phạm vi toàn công ty và từng phòng ban
+
+Mục tiêu: mỗi câu chỉ hỏi một dữ kiện nhỏ để hệ thống trả lời nhanh, chính xác và ngắn gọn.
+
+Quy tắc sử dụng:
+
+- Chỉ nhập phần câu hỏi in đậm vào hệ thống; không nhập dòng “Ý trả lời” hoặc “Nguồn”.
+- Câu hỏi dùng cụm từ xuất hiện trực tiếp trong tài liệu nhưng không nhắc tên file.
+- Mỗi câu chỉ hỏi một người, một mốc thời gian, một con số, một điều kiện hoặc một hành động.
+- Tránh “liệt kê”, “trình bày”, “tóm tắt”, “đầy đủ”, “tất cả”, “gồm những gì” vì các từ này làm tăng số chunk và thời gian trả lời.
+- Muốn câu trả lời ngắn, ưu tiên “ai”, “bao lâu”, “mấy ngày”, “bao nhiêu”, “khi nào”, “có được không”, “phải làm gì”.
+- Các câu `S001-S070` là nhóm **factual ngắn**. Các mục A-C phía trên là nhóm tổng hợp, quy trình hoặc đối chiếu nên thường cần nhiều thời gian hơn.
+
+### E.1. Cách phân loại phòng ban trong thư mục tài liệu
+
+- Có **4 đơn vị cấp chính**: Ban Giám đốc, Phòng Hành chính Tổng hợp, Phòng Kỹ thuật Kinh tế và Phòng Tài chính Kế toán.
+- Trong đó có **3 phòng chuyên môn cấp chính** và **1 Ban Giám đốc**.
+- Có **9 bộ phận chuyên môn trực thuộc**: Nhân sự; Văn thư Lưu trữ; Tài sản Hậu cần; Quản lý Dự án; Chất lượng An toàn; Dự toán Kinh tế; Kế toán Thanh toán; Kế toán Công nợ; Lương Phúc lợi.
+- Nếu tính cả cấp chính và bộ phận trực thuộc thì có **13 phạm vi đơn vị**.
+- Thư mục `0-TAI-LIEU-CHUNG-CUA-TAT-CA-CAC-PHONG-BAN` là phạm vi **toàn công ty**, không tính là một phòng ban.
+
+### E.2. Toàn công ty
+
+S001. **[TOÀN CÔNG TY]** Lịch và nội dung cuộc họp phải được gửi trước tối thiểu mấy ngày?  
+Ý trả lời ngắn cần kiểm tra: Tối thiểu 1 ngày.  
+Nguồn: `1.2 Quy định nội quy hội họp.docx`.
+
+S002. **[TOÀN CÔNG TY]** Cán bộ dự họp phải tắt máy điện thoại cầm tay hoặc chuyển sang chế độ gì?  
+Ý trả lời ngắn cần kiểm tra: Tắt máy hoặc chuyển sang chế độ rung.  
+Nguồn: `1.2 Quy định nội quy hội họp.docx`.
+
+S003. **[TOÀN CÔNG TY]** Cán bộ nhân viên nào có quyền cung cấp thông tin sản xuất kinh doanh ra bên ngoài công ty?  
+Ý trả lời ngắn cần kiểm tra: Người được giao nhiệm vụ cung cấp thông tin.  
+Nguồn: `3.1 Quy định bảo mật thông tin.docx`.
+
+S004. **[TOÀN CÔNG TY]** Thông tin được Tổng Giám đốc xác định cần bảo mật qua email có được chuyển cho người khác không?  
+Ý trả lời ngắn cần kiểm tra: Không; chỉ người được phép mới được tiếp cận hoặc chuyển thông tin.  
+Nguồn: `3.1 Quy định bảo mật thông tin.docx`.
+
+S005. **[TOÀN CÔNG TY]** Thời hiệu xử lý vi phạm kỷ luật lao động tối đa là mấy tháng kể từ ngày xảy ra hoặc phát hiện vi phạm?  
+Ý trả lời ngắn cần kiểm tra: 3 tháng kể từ ngày xảy ra hoặc phát hiện vi phạm.  
+Nguồn: `5.5 Quy định về kĩ luật lao động.docx`.
+
+### E.3. Ban Giám đốc
+
+S006. **[BAN GIÁM ĐỐC]** Nhu cầu quản trị viên tập sự phải được xác định vào tháng nào hằng năm?  
+Ý trả lời ngắn cần kiểm tra: Tháng 6 hằng năm.  
+Nguồn: `1.3 Quy định quản trị viên tập sự.docx`.
+
+S007. **[BAN GIÁM ĐỐC]** Kế hoạch tuyển dụng quản trị viên tập sự phải hoàn thành chậm nhất vào ngày nào hằng năm?  
+Ý trả lời ngắn cần kiểm tra: Ngày 15/07 hằng năm.  
+Nguồn: `1.3 Quy định quản trị viên tập sự.docx`.
+
+S008. **[BAN GIÁM ĐỐC]** Quản trị viên tập sự được đánh giá kết quả công việc bao lâu một lần?  
+Ý trả lời ngắn cần kiểm tra: Hằng tháng.  
+Nguồn: `1.3 Quy định quản trị viên tập sự.docx`.
+
+S009. **[BAN GIÁM ĐỐC]** Thời gian tập sự của quản trị viên kéo dài từ bao nhiêu đến bao nhiêu năm?  
+Ý trả lời ngắn cần kiểm tra: Từ 1,5 đến 2 năm.  
+Nguồn: `1.3 Quy định quản trị viên tập sự.docx`.
+
+S010. **[BAN GIÁM ĐỐC]** Tổng Giám đốc được duyệt chi phí tối đa bao nhiêu đồng cho mỗi lần?  
+Ý trả lời ngắn cần kiểm tra: 500.000.000 đồng/lần.  
+Nguồn: `2.2 Quy chế phối hợp công tác quản lý.docx`.
+
+### E.4. Phòng Hành chính Tổng hợp
+
+S011. **[PHÒNG HÀNH CHÍNH TỔNG HỢP]** Khi nội dung cuộc họp thuộc phạm vi chức năng của một đơn vị, đơn vị nào phải chuẩn bị cuộc họp?  
+Ý trả lời ngắn cần kiểm tra: Đơn vị có chức năng liên quan đến nội dung cuộc họp.  
+Nguồn: `1.2 Quy định nội quy hội họp.docx`.
+
+
+S014. **[PHÒNG HÀNH CHÍNH TỔNG HỢP]** Hồ sơ ghi nhận cuộc họp nội bộ thuộc nhóm nào?  
+Ý trả lời ngắn cần kiểm tra: Hành chính Tổng hợp.  
+Nguồn: `00-Danh mục biểu mẫu chung.pdf`.
+
+S015. **[PHÒNG HÀNH CHÍNH TỔNG HỢP]** Khi một vấn đề liên quan nhiều phòng, mỗi phòng có được đùn đẩy công việc cho phòng khác không?  
+Ý trả lời ngắn cần kiểm tra: Không; các phòng phải phối hợp, nghiên cứu và đề xuất biện pháp giải quyết.  
+Nguồn: `2.5 Quy định về phân công trong nội bộ công ty.docx`.
+
+### E.5. Bộ phận Nhân sự
+
+S016. **[NHÂN SỰ]** Thời gian hội nhập của cán bộ quản lý và cán bộ điều hành mới kéo dài bao nhiêu tháng?  
+Ý trả lời ngắn cần kiểm tra: 6 tháng.  
+Nguồn: `1.3 Quy định hội nhập môi trường làm việc.docx`.
+
+S017. **[NHÂN SỰ]** Trong thời gian thử việc, Trưởng đơn vị phải gặp nhân viên mới ít nhất bao nhiêu giờ mỗi tuần?  
+Ý trả lời ngắn cần kiểm tra: Ít nhất 2 giờ/tuần.  
+Nguồn: `1.3 Quy định hội nhập môi trường làm việc.docx`.
+
+
+
+
+S020. **[NHÂN SỰ]** Học viên nghỉ quá bao nhiêu phần trăm giờ học trong một khóa sẽ bị xem xét vi phạm?  
+Ý trả lời ngắn cần kiểm tra: Quá 30% giờ học của khóa học.  
+Nguồn: `1.2 Quy định tham gia hoạt động đào tạo.docx`.
+
+### E.6. Bộ phận Văn thư Lưu trữ
+
+S021. **[VĂN THƯ LƯU TRỮ]** Ngoài số đến, ngày nhận, đơn vị gửi và trích yếu, công văn đến phải ghi thêm mức độ gì?  
+Ý trả lời ngắn cần kiểm tra: Mức độ khẩn.  
+Nguồn: `01-Quy trình quản lý công văn đi đến.pdf`.
+
+S022. **[VĂN THƯ LƯU TRỮ]** Công văn có nội dung mật phải được làm gì trước khi chuyển xử lý?  
+Ý trả lời ngắn cần kiểm tra: Phân quyền tiếp cận.  
+Nguồn: `01-Quy trình quản lý công văn đi đến.pdf`.
+
+S023. **[VĂN THƯ LƯU TRỮ]** Ai kiểm tra thể thức, số hiệu, ngày ban hành và nơi nhận của công văn đi?  
+Ý trả lời ngắn cần kiểm tra: Văn thư.  
+Nguồn: `01-Quy trình quản lý công văn đi đến.pdf`.
+
+S024. **[VĂN THƯ LƯU TRỮ]** Công văn đi chỉ được phát hành sau khi có điều kiện gì?  
+Ý trả lời ngắn cần kiểm tra: Sau khi người có thẩm quyền ký duyệt.  
+Nguồn: `01-Quy trình quản lý công văn đi đến.pdf`.
+
+S025. **[VĂN THƯ LƯU TRỮ]** Ngoài năm và loại văn bản, công văn đi đến còn được lưu theo yếu tố nào?  
+Ý trả lời ngắn cần kiểm tra: Đơn vị liên quan.  
+Nguồn: `01-Quy trình quản lý công văn đi đến.pdf`.
+
+### E.7. Bộ phận Tài sản Hậu cần
+
+S026. **[TÀI SẢN HẬU CẦN]** Hồ sơ bàn giao tài sản phải ghi mã gì để nhận diện tài sản?  
+Ý trả lời ngắn cần kiểm tra: Mã tài sản.  
+Nguồn: `01-Danh mục biểu mẫu kiểm kê và bàn giao tài sản.pdf`.
+
+S027. **[TÀI SẢN HẬU CẦN]** Tăng ca đột xuất từ mấy giờ trở lên thì được phục vụ một suất ăn cho mỗi người?  
+Ý trả lời ngắn cần kiểm tra: Từ 4 giờ trở lên.  
+Nguồn: `2.3 Quy định quản lý nhà ăn.docx`.
+
+S028. **[TÀI SẢN HẬU CẦN]** Tăng ca đột xuất phải báo Phòng Hành chính trước ít nhất mấy giờ?  
+Ý trả lời ngắn cần kiểm tra: Ít nhất 3 giờ.  
+Nguồn: `2.3 Quy định quản lý nhà ăn.docx`.
+
+S029. **[TÀI SẢN HẬU CẦN]** Giấy nhận suất ăn có giá trị trong ngày hay trong cả tuần?  
+Ý trả lời ngắn cần kiểm tra: Chỉ có giá trị trong ngày.  
+Nguồn: `2.3 Quy định quản lý nhà ăn.docx`.
+
+S030. **[TÀI SẢN HẬU CẦN]** Khi chuyển làm công việc khác, người lao động phải làm gì với phương tiện bảo vệ cá nhân đã được cấp?  
+Ý trả lời ngắn cần kiểm tra: Trả lại phương tiện đã được trang bị.  
+Nguồn: `2.4 Quy định quản lý và sử dụng phương tiện.docx`.
+
+### E.8. Phòng Kỹ thuật Kinh tế
+
+S031. **[PHÒNG KỸ THUẬT KINH TẾ]** Ngoài đầu mối tiếp nhận, đề nghị phối hợp kỹ thuật phải có thông tin thời gian nào?  
+Ý trả lời ngắn cần kiểm tra: Thời hạn phản hồi.  
+Nguồn: `01-Quy trình phồi hợp kỹ thuật kinh tế.pdf`.
+
+S032. **[PHÒNG KỸ THUẬT KINH TẾ]** Ngoài tài liệu nền và phạm vi công việc, hồ sơ phối hợp phải nêu rõ tiêu chí gì?  
+Ý trả lời ngắn cần kiểm tra: Tiêu chí cần kiểm tra.  
+Nguồn: `01-Quy trình phồi hợp kỹ thuật kinh tế.pdf`.
+
+
+
+S034. **[PHÒNG KỸ THUẬT KINH TẾ]** Hồ sơ nào dùng để xác nhận khối lượng hoàn thành?  
+Ý trả lời ngắn cần kiểm tra: Biên bản xác nhận khối lượng hoàn thành.  
+Nguồn: `01-Danh mục biểu mẫu kỹ thuật kinh tế.pdf`.
+
+S035. **[PHÒNG KỸ THUẬT KINH TẾ]** Khi cập nhật hồ sơ kỹ thuật, ngày nào của phiên bản mới phải được ghi rõ?  
+Ý trả lời ngắn cần kiểm tra: Ngày hiệu lực.  
+Nguồn: `01-Danh mục biểu mẫu kỹ thuật kinh tế.pdf`.
+
+### E.9. Bộ phận Quản lý Dự án
+
+S036. **[QUẢN LÝ DỰ ÁN]** Đề nghị triển khai dự án phải ghi ngân sách thực tế hay ngân sách dự kiến?  
+Ý trả lời ngắn cần kiểm tra: Ngân sách dự kiến.  
+Nguồn: `01-Quy trình quản lý dự án nội bộ.docx`.
+
+
+
+S038. **[QUẢN LÝ DỰ ÁN]** Sau nghiệm thu và bàn giao hồ sơ, dự án phải hoàn tất việc gì về chi phí trước khi đóng?  
+Ý trả lời ngắn cần kiểm tra: Quyết toán chi phí.  
+Nguồn: `01-Quy trình quản lý dự án nội bộ.docx`.
+
+S039. **[QUẢN LÝ DỰ ÁN]** Tài liệu dự án sau khi sửa đổi phải giữ lại thông tin gì về lần sửa trước?  
+Ý trả lời ngắn cần kiểm tra: Lịch sử phiên bản.  
+Nguồn: `01- Danh mục hồ sơ dự án và trách nhiệm lưu trữ.docx`.
+
+S040. **[QUẢN LÝ DỰ ÁN]** Bảng theo dõi tiến độ phải ghi tỷ lệ hoàn thành hay tỷ lệ chi phí?  
+Ý trả lời ngắn cần kiểm tra: Tỷ lệ hoàn thành.  
+Nguồn: `01-Mẫu biểu theo dõi dự án.docx`.
+// dừng lại ở đây , mai t iếp tục
+### E.10. Bộ phận Chất lượng An toàn
+
+S041. **[CHẤT LƯỢNG AN TOÀN]** Khi nghi ngờ thiết bị có thể xảy ra sự cố, công nhân viên phải báo ngay cho ai?  
+Ý trả lời ngắn cần kiểm tra: Tổ trưởng.  
+Nguồn: `4.1 Qui định về an toàn & vệ sinh lao động.docx`.
+
+S042. **[CHẤT LƯỢNG AN TOÀN]** Trước khi sửa máy, sau khi ngắt công tắc điện còn phải đặt thêm gì?  
+Ý trả lời ngắn cần kiểm tra: Biển báo.  
+Nguồn: `4.1 Qui định về an toàn & vệ sinh lao động.docx`.
+
+S043. **[CHẤT LƯỢNG AN TOÀN]** Tổ cơ điện kiểm tra an toàn hệ thống điện hằng tuần vào ngày nào?  
+Ý trả lời ngắn cần kiểm tra: Thứ Bảy hằng tuần.  
+Nguồn: `4.1 Qui định về an toàn & vệ sinh lao động.docx`.
+
+S044. **[CHẤT LƯỢNG AN TOÀN]** Bình phòng cháy chữa cháy phải được kiểm tra mấy tháng một lần?  
+Ý trả lời ngắn cần kiểm tra: 3 tháng/lần.  
+Nguồn: `4.3 Quy định kiểm tra an toàn - VSLD-PCCC-5S.docx`.
+
+S045. **[CHẤT LƯỢNG AN TOÀN]** Quá thời hạn mà vi phạm chưa được khắc phục, mức xử lý lần hai gấp mấy lần lần đầu?  
+Ý trả lời ngắn cần kiểm tra: Gấp 2 lần mức vi phạm lần đầu.  
+Nguồn: `4.3 Quy định kiểm tra an toàn - VSLD-PCCC-5S.docx`.
+
+### E.11. Bộ phận Dự toán Kinh tế
+
+S046. **[DỰ TOÁN KINH TẾ]** Hồ sơ dự toán thiếu dữ liệu trọng yếu phải được trả lại trong mấy ngày làm việc?  
+Ý trả lời ngắn cần kiểm tra: Trong 1 ngày làm việc.  
+Nguồn: `01-Quy trình lập thẩm định và phê duyệt dự toán.pdf`.
+
+S047. **[DỰ TOÁN KINH TẾ]** Sai lệch khối lượng trên bao nhiêu phần trăm phải được giải trình và tính lại?  
+Ý trả lời ngắn cần kiểm tra: Trên 3%.  
+Nguồn: `01-Quy trình lập thẩm định và phê duyệt dự toán.pdf`.
+
+S048. **[DỰ TOÁN KINH TẾ]** Dự toán có từ 20 đến 100 đầu việc được xử lý tối đa trong mấy ngày làm việc?  
+Ý trả lời ngắn cần kiểm tra: 5 ngày làm việc.  
+Nguồn: `01-Quy trình lập thẩm định và phê duyệt dự toán.pdf`.
+
+S049. **[DỰ TOÁN KINH TẾ]** Giá mua gần nhất của vật tư biến động thông thường được sử dụng trong vòng tối đa bao nhiêu ngày?  
+Ý trả lời ngắn cần kiểm tra: Trong vòng 90 ngày.  
+Nguồn: `02-Quy định quản lý dinh mục đơn giá và chi phí.pdf`.
+
+S050. **[DỰ TOÁN KINH TẾ]** Vật tư có biến động giá từ bao nhiêu phần trăm trở lên phải được cập nhật ngay?  
+Ý trả lời ngắn cần kiểm tra: Từ 5% trở lên.  
+Nguồn: `02-Quy định quản lý dinh mục đơn giá và chi phí.pdf`.
+
+### E.12. Phòng Tài chính Kế toán
+
+S051. **[PHÒNG TÀI CHÍNH KẾ TOÁN]** Hồ sơ gửi kế toán phải có phê duyệt và loại giấy tờ nào kèm theo?  
+Ý trả lời ngắn cần kiểm tra: Chứng từ kèm theo.  
+Nguồn: `01-Quy trình phối hợp tài chính kế toán.pdf`.
+
+S052. **[PHÒNG TÀI CHÍNH KẾ TOÁN]** Khoản chi ngoài ngân sách phải có giải trình và bổ sung thêm điều gì?  
+Ý trả lời ngắn cần kiểm tra: Giải trình và phê duyệt bổ sung.  
+Nguồn: `01-Quy trình phối hợp tài chính kế toán.pdf`.
+
+S053. **[PHÒNG TÀI CHÍNH KẾ TOÁN]** Bộ phận nào bảo đảm tính thực tế của nghiệp vụ thanh toán?  
+Ý trả lời ngắn cần kiểm tra: Bộ phận đề nghị thanh toán.  
+Nguồn: `01-Quy trình phối hợp tài chính kế toán.pdf`.
+
+S054. **[PHÒNG TÀI CHÍNH KẾ TOÁN]** Hồ sơ tài chính phải ghi căn cứ nào liên quan đến việc chấp thuận nghiệp vụ?  
+Ý trả lời ngắn cần kiểm tra: Căn cứ phê duyệt.  
+Nguồn: `01-Danh mục biểu mẫu tài chính kế toán.pdf`.
+
+S055. **[PHÒNG TÀI CHÍNH KẾ TOÁN]** Thông tin tài chính nội bộ phải được bảo mật theo phạm vi gì?  
+Ý trả lời ngắn cần kiểm tra: Bảo mật theo phạm vi phân quyền.  
+Nguồn: `01-Quy trình phối hợp tài chính kế toán.pdf`.
+
+### E.13. Bộ phận Kế toán Thanh toán
+
+S056. **[KẾ TOÁN THANH TOÁN]** Người còn khoản tạm ứng cũ quá hạn chưa hoàn ứng có được cấp khoản mới không?  
+Ý trả lời ngắn cần kiểm tra: Không, trừ trường hợp được phê duyệt riêng.  
+Nguồn: `01- Quy trình tạm ứng hoàn ứng.pdf`.
+
+S057. **[KẾ TOÁN THANH TOÁN]** Hồ sơ hoàn ứng phải giải trình phần chênh lệch so với khoản tiền nào?  
+Ý trả lời ngắn cần kiểm tra: Giải trình chênh lệch so với số tiền đã tạm ứng.  
+Nguồn: `01- Quy trình tạm ứng hoàn ứng.pdf`.
+
+S058. **[KẾ TOÁN THANH TOÁN]** Số tiền tạm ứng chưa sử dụng phải được nộp lại cho ai?  
+Ý trả lời ngắn cần kiểm tra: Nộp lại công ty.  
+Nguồn: `01- Quy trình tạm ứng hoàn ứng.pdf`.
+
+S059. **[KẾ TOÁN THANH TOÁN]** Chi phí vượt số tiền tạm ứng chỉ được thanh toán bổ sung khi có chứng từ hợp lệ và điều kiện gì nữa?  
+Ý trả lời ngắn cần kiểm tra: Khi có chứng từ hợp lệ và được phê duyệt.  
+Nguồn: `01- Quy trình tạm ứng hoàn ứng.pdf`.
+
+S060. **[KẾ TOÁN THANH TOÁN]** Chi phí thuê xe gắn máy theo ngày tối đa là bao nhiêu đồng?  
+Ý trả lời ngắn cần kiểm tra: 100.000 đồng/ngày.  
+Nguồn: `2.6 Quy định công tác phí và thanh toán chi phí công tác.docx`.
+
+### E.14. Bộ phận Kế toán Công nợ
+
+S061. **[KẾ TOÁN CÔNG NỢ]** Chứng từ phải được nhập hệ thống trong mấy ngày làm việc kể từ khi nhận đủ hồ sơ?  
+Ý trả lời ngắn cần kiểm tra: Trong 2 ngày làm việc từ khi nhận đủ hồ sơ.  
+Nguồn: `01-Quy trình kế toán công nợ phải thu trả.pdf`.
+
+S062. **[KẾ TOÁN CÔNG NỢ]** Trước hạn thanh toán mấy ngày, kế toán phải gửi tin cho đơn vị phụ trách khách hàng?  
+Ý trả lời ngắn cần kiểm tra: Trước 5 ngày.  
+Nguồn: `01-Quy trình kế toán công nợ phải thu trả.pdf`.
+
+S063. **[KẾ TOÁN CÔNG NỢ]** Đối tác có mấy ngày làm việc để phản hồi kết quả đối chiếu?  
+Ý trả lời ngắn cần kiểm tra: 5 ngày làm việc.  
+Nguồn: `02-Quy trình đối chiếu và xác nhận công nợ.pdf`.
+
+S064. **[KẾ TOÁN CÔNG NỢ]** Chênh lệch công nợ trên bao nhiêu đồng phải chuyển Kế toán trưởng xử lý?  
+Ý trả lời ngắn cần kiểm tra: Trên 10.000.000 đồng.  
+Nguồn: `02-Quy trình đối chiếu và xác nhận công nợ.pdf`.
+
+S065. **[KẾ TOÁN CÔNG NỢ]** Thông tin công nợ tuần phải được gửi trước mấy giờ vào thứ Sáu?  
+Ý trả lời ngắn cần kiểm tra: Trước 16 giờ thứ Sáu.  
+Nguồn: `03-Quy trình thu hồi và báo cáo tuổi nợ.pdf`.
+
+### E.15. Bộ phận Lương Phúc lợi
+
+S066. **[LƯƠNG PHÚC LỢI]** Giờ công của nhân viên được xác định dựa theo loại thẻ nào?  
+Ý trả lời ngắn cần kiểm tra: Thẻ chấm công.  
+Nguồn: `2.3 Quy trình tính lương.docx`.
+
+S067. **[LƯƠNG PHÚC LỢI]** Người làm tăng ca vượt quá mấy giờ trong một ngày mà không có giấy tăng ca phải giải trình?  
+Ý trả lời ngắn cần kiểm tra: Vượt quá 1 giờ/ngày làm việc.  
+Nguồn: `2.3 Quy trình tính lương.docx`.
+
+S068. **[LƯƠNG PHÚC LỢI]** Nhân viên làm đủ từ mấy ngày công trong tháng thì khoản chức vụ được tính nguyên mức?  
+Ý trả lời ngắn cần kiểm tra: Từ 23 ngày công trong tháng.  
+Nguồn: `2.3 Quy trình tính lương.docx`.
+
+S069. **[LƯƠNG PHÚC LỢI]** Phòng Tài chính Kế toán phải gửi tiền vào ngân hàng chậm nhất ngày nào hằng tháng?  
+Ý trả lời ngắn cần kiểm tra: Ngày 9 hằng tháng.  
+Nguồn: `2.3 Quy trình tính lương.docx`.
+
+S070. **[LƯƠNG PHÚC LỢI]** `NS-17-BM01` là mã số của hồ sơ nào?  
+Ý trả lời ngắn cần kiểm tra: Bảng lương.  
+Nguồn: `2.3 Quy trình tính lương.docx`.

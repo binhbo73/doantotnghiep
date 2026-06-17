@@ -109,15 +109,7 @@ class UserService(BaseService):
     def deactivate_account(self, user_id: int):
         """Soft-delete tài khoản và profile liên quan."""
         user = self.get_by_id(user_id)
-        deleted_at = timezone.now()
-        self.repository.update_account(user_id, is_deleted=True, deleted_at=deleted_at)
-        user.is_deleted = True
-        user.deleted_at = deleted_at
-
-        try:
-            self.profile_repository.soft_delete_profile(user_id)
-        except Exception as e:
-            logger.warning(f"Failed to soft-delete profile for account {user_id}: {str(e)}")
+        user.delete()
 
         logger.warning(f"Account {user_id} soft-deleted")
     

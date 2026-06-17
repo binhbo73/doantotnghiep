@@ -513,16 +513,7 @@ class RoleService(BaseService):
                 accounts_affected = self.role_repo.get_accounts_with_role(role_id)
                 accounts_count = len(accounts_affected) if accounts_affected else 0
                 
-                # Soft delete role
-                self.role_repo.update(
-                    role_id,
-                    is_deleted=True,
-                    deleted_at=timezone.now()
-                )
-                
-                # Remove role from all accounts
-                if accounts_count > 0:
-                    self.role_repo.remove_role_from_all_accounts(role_id)
+                role.delete()
                 
                 # Log audit
                 self.audit_log_action(

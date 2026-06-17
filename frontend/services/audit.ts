@@ -104,7 +104,7 @@ function getRelativeTime(isoDate?: string): string {
 function buildActivityItem(log: AuditLogResponse): ActivityItem {
     const username = log.account_username || 'Hệ thống'
     const action = log.action?.toUpperCase() || 'UNKNOWN'
-    const resourceName = log.resource_id ? `tài nguyên (${log.resource_id})` : 'tài nguyên'
+    const resourceName = 'tài nguyên'
 
     const titleMap: Record<string, string> = {
         LOGIN: `${username} đã đăng nhập`,

@@ -170,9 +170,7 @@ class AuditLogRecentActivitySerializer(serializers.ModelSerializer):
     
     def _get_resource_name(self, resource_id):
         """Get resource name from resource_id"""
-        if not resource_id:
-            return 'tài nguyên'
-        return f'tài nguyên ({resource_id})'
+        return 'tài nguyên'
 
 
 class AuditLogListQuerySerializer(serializers.Serializer):

@@ -479,11 +479,23 @@ class PermissionRepository(BaseRepository):
             if granted_by_user_id:
                 granted_by = Account.objects.get(pk=granted_by_user_id)
             
-            AccountRole.objects.get_or_create(
+            account_role = AccountRole.objects.all_records().filter(
                 account_id=user_id,
                 role_id=role_id,
-                defaults={'granted_by': granted_by}
-            )
+            ).first()
+
+            if account_role:
+                if account_role.is_deleted:
+                    account_role.restore()
+                if granted_by and account_role.granted_by_id != granted_by.id:
+                    account_role.granted_by = granted_by
+                    account_role.save(update_fields=['granted_by', 'updated_at'])
+            else:
+                AccountRole.objects.create(
+                    account_id=user_id,
+                    role_id=role_id,
+                    granted_by=granted_by
+                )
             
             logger.info(f"Granted role {role_id} to user {user_id}")
             return True
@@ -532,11 +544,23 @@ class PermissionRepository(BaseRepository):
             if granted_by_user_id:
                 granted_by = Account.objects.get(pk=granted_by_user_id)
             
-            RolePermission.objects.get_or_create(
+            role_permission = RolePermission.objects.all_records().filter(
                 role_id=role_id,
                 permission=permission,
-                defaults={'granted_by': granted_by}
-            )
+            ).first()
+
+            if role_permission:
+                if role_permission.is_deleted:
+                    role_permission.restore()
+                if granted_by and role_permission.granted_by_id != granted_by.id:
+                    role_permission.granted_by = granted_by
+                    role_permission.save(update_fields=['granted_by', 'updated_at'])
+            else:
+                RolePermission.objects.create(
+                    role_id=role_id,
+                    permission=permission,
+                    granted_by=granted_by
+                )
             
             logger.info(f"Granted permission {permission_code} to role {role_id}")
             return True

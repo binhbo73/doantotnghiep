@@ -90,19 +90,12 @@ export function useDepartments(initialParams?: DepartmentQueryParams, enabled: b
     const removeDepartment = useCallback(async (id: string) => {
         try {
             await deleteDepartment(id)
-            setDepartments((current) => current.filter((department) => department.id !== id))
-            setPagination((current) => current
-                ? {
-                    ...current,
-                    total_items: Math.max(0, current.total_items - 1),
-                }
-                : current
-            )
+            await loadDepartments(initialParams)
         } catch (err) {
             console.warn('Error deleting department:', err)
             throw err
         }
-    }, [])
+    }, [initialParams, loadDepartments])
 
     const getStats = useCallback(() => {
         return {

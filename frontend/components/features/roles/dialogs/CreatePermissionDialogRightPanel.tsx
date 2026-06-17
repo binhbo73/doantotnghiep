@@ -52,7 +52,7 @@ export function CreatePermissionDialogRightPanel({
     }
 
     return (
-        <div className="flex flex-col p-6 lg:p-8 flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-col p-5">
             {/* Close Button - Mobile */}
             <button
                 onClick={onClose}
@@ -61,10 +61,10 @@ export function CreatePermissionDialogRightPanel({
                 <X size={24} style={{ color: '#151c27' }} />
             </button>
 
-            <form onSubmit={handleSubmit} className="flex flex-col gap-5 h-full overflow-y-auto pr-2">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-3">
                 {/* Permission Code */}
                 <div>
-                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                    <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                         Mã quyền hạn
                     </label>
                     <input
@@ -72,7 +72,7 @@ export function CreatePermissionDialogRightPanel({
                         value={formData.code}
                         onChange={(e) => setFormData({ ...formData, code: e.target.value.toLowerCase() })}
                         placeholder="document_approve"
-                        className="w-full px-4 py-3 rounded-lg border text-sm"
+                        className="w-full rounded-lg border px-3 py-2 text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
@@ -83,7 +83,7 @@ export function CreatePermissionDialogRightPanel({
 
                 {/* Permission Name */}
                 <div>
-                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                    <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                         Tên quyền hạn
                     </label>
                     <input
@@ -91,7 +91,7 @@ export function CreatePermissionDialogRightPanel({
                         value={formData.name}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                         placeholder="e.g. Đọc dữ liệu"
-                        className="w-full px-4 py-3 rounded-lg border text-sm"
+                        className="w-full rounded-lg border px-3 py-2 text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
@@ -102,13 +102,13 @@ export function CreatePermissionDialogRightPanel({
 
                 {/* Category */}
                 <div>
-                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                    <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                         Resource
                     </label>
                     <select
                         value={formData.resource}
                         onChange={(e) => setFormData({ ...formData, resource: e.target.value })}
-                        className="w-full px-4 py-3 rounded-lg border text-sm"
+                        className="w-full rounded-lg border px-3 py-2 text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
@@ -124,7 +124,7 @@ export function CreatePermissionDialogRightPanel({
 
                 {/* Action */}
                 <div>
-                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                    <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                         Action
                     </label>
                     <input
@@ -132,7 +132,7 @@ export function CreatePermissionDialogRightPanel({
                         value={formData.action}
                         onChange={(e) => setFormData({ ...formData, action: e.target.value.toLowerCase() })}
                         placeholder="approve"
-                        className="w-full px-4 py-3 rounded-lg border text-sm"
+                        className="w-full rounded-lg border px-3 py-2 text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
@@ -143,15 +143,15 @@ export function CreatePermissionDialogRightPanel({
 
                 {/* Description */}
                 <div>
-                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                    <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                         Mô tả chi tiết
                     </label>
                     <textarea
                         value={formData.description}
                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                         placeholder="Mô tả chi tiết về quyền hạn này..."
-                        rows={4}
-                        className="w-full px-4 py-3 rounded-lg border text-sm resize-none"
+                        rows={3}
+                        className="w-full resize-none rounded-lg border px-3 py-2 text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
@@ -160,19 +160,16 @@ export function CreatePermissionDialogRightPanel({
                     />
                 </div>
 
-                {/* Spacer */}
-                <div className="flex-1" />
-
                 {/* Action Buttons */}
-                <div className="flex gap-3 pt-6 mt-6 border-t" style={{ borderColor: '#dce2f3' }}>
+                <div className="mt-2 flex gap-3 border-t pt-4" style={{ borderColor: '#dce2f3' }}>
                     <button
                         type="button"
                         onClick={onClose}
-                        className="flex-1 px-6 py-3 rounded-lg font-medium transition border-2"
+                        className="flex-1 rounded-lg border-2 px-4 py-2 text-sm font-medium transition"
                         style={{
                             backgroundColor: '#ffffff',
-                            color: '#0058be',
-                            borderColor: '#0058be',
+                            color: '#b75b00',
+                            borderColor: '#b75b00',
                         }}
                     >
                         Hủy bỏ
@@ -180,7 +177,7 @@ export function CreatePermissionDialogRightPanel({
                     <button
                         type="submit"
                         disabled={isSubmitting}
-                        className="flex-1 px-6 py-3 rounded-lg font-medium text-white transition disabled:opacity-60"
+                        className="flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition disabled:opacity-60"
                         style={{ backgroundColor: '#b75b00' }}
                     >
                         {isSubmitting ? 'Đang tạo...' : 'Tạo quyền hạn'}

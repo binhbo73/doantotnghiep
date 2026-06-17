@@ -12,13 +12,6 @@ import { z } from 'zod'
 const UUIDSchema = z.string().uuid()
 const DateTimeSchema = z.string().datetime()
 
-const BaseEntitySchema = z.object({
-    is_deleted: z.boolean(),
-    deleted_at: z.string().nullable(),
-    created_at: DateTimeSchema,
-    updated_at: DateTimeSchema,
-})
-
 // ============================================
 // ACCOUNT / USER SCHEMAS
 // ============================================
@@ -472,6 +465,9 @@ export const IamRoleSchema = z.object({
     created_at: DateTimeSchema,
     updated_at: DateTimeSchema,
     permission_count: z.number().int(),
+    account_count: z.number().int().optional(),
+    user_count: z.number().int().optional(),
+    assigned_accounts: z.number().int().optional(),
 })
 export type IamRole = z.infer<typeof IamRoleSchema>
 

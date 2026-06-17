@@ -4,8 +4,11 @@ Includes soft delete, timestamps, and fine-grained permission system.
 """
 from django.db import models
 from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import UserManager
+from django.utils import timezone
 import uuid
 from core.models import BaseModel
+from core.models.base import SoftDeleteManager, SoftDeleteQuerySet
 from core.constants import (
     AccountStatus,
     ACCOUNT_STATUSES,
@@ -14,6 +17,21 @@ from core.constants import (
     RoleIds,
     ROLES,
 )
+
+
+class AccountQuerySet(SoftDeleteQuerySet):
+    pass
+
+
+class AccountManager(UserManager.from_queryset(AccountQuerySet)):
+    def get_queryset(self):
+        return AccountQuerySet(self.model, using=self._db).active()
+
+    def all_records(self):
+        return AccountQuerySet(self.model, using=self._db).all_records()
+
+    def deleted_only(self):
+        return AccountQuerySet(self.model, using=self._db).deleted()
 
 
 class Account(AbstractUser):
@@ -52,6 +70,8 @@ class Account(AbstractUser):
     
     # Last login tracking
     last_login_at = models.DateTimeField(null=True, blank=True)
+
+    objects = AccountManager()
     
     class Meta:
         db_table = "accounts"
@@ -104,6 +124,104 @@ class Account(AbstractUser):
             permission__code=permission_code,
             is_deleted=False
         ).exists()
+
+    def delete(self, using=None, keep_parents=False):
+        """Soft delete account and soft-deletable CASCADE relations."""
+        if self.is_deleted:
+            return
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save(using=using, update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+        self._soft_delete_cascade(using=using, keep_parents=keep_parents)
+
+    def hard_delete(self, using=None, keep_parents=False):
+        """Permanently delete account. Use only for explicit maintenance paths."""
+        super().delete(using=using, keep_parents=keep_parents)
+
+    def restore(self):
+        restore_children_after = self.deleted_at
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+        self._restore_soft_delete_cascade(deleted_after=restore_children_after)
+
+    def _soft_delete_cascade(self, using=None, keep_parents=False):
+        from django.db.models.deletion import CASCADE
+
+        for relation in self._meta.related_objects:
+            if relation.on_delete is not CASCADE:
+                continue
+
+            accessor_name = relation.get_accessor_name()
+            if not accessor_name:
+                continue
+
+            try:
+                related = getattr(self, accessor_name)
+            except relation.related_model.DoesNotExist:
+                continue
+            except AttributeError:
+                continue
+
+            if relation.one_to_one:
+                self._soft_delete_related_object(related, using, keep_parents)
+                continue
+
+            if not any(field.name == 'is_deleted' for field in relation.related_model._meta.fields):
+                continue
+
+            queryset = related.all()
+            if hasattr(queryset, 'all_records'):
+                queryset = queryset.all_records()
+
+            for obj in queryset.filter(is_deleted=False):
+                self._soft_delete_related_object(obj, using, keep_parents)
+
+    @staticmethod
+    def _soft_delete_related_object(obj, using=None, keep_parents=False):
+        if not hasattr(obj, 'is_deleted') or getattr(obj, 'is_deleted', False):
+            return
+        obj.delete(using=using, keep_parents=keep_parents)
+
+    def _restore_soft_delete_cascade(self, deleted_after=None):
+        from django.db.models.deletion import CASCADE
+
+        if deleted_after is None:
+            return
+
+        for relation in self._meta.related_objects:
+            if relation.on_delete is not CASCADE:
+                continue
+
+            accessor_name = relation.get_accessor_name()
+            if not accessor_name:
+                continue
+
+            if not any(field.name == 'is_deleted' for field in relation.related_model._meta.fields):
+                continue
+
+            relation_filter = {relation.field.name: self}
+
+            if relation.one_to_one:
+                related = (
+                    relation.related_model.objects.all_records()
+                    .filter(**relation_filter)
+                    .first()
+                )
+                if not related:
+                    continue
+                if (
+                    getattr(related, 'is_deleted', False)
+                    and related.deleted_at
+                    and related.deleted_at >= deleted_after
+                ):
+                    related.restore()
+                continue
+
+            queryset = relation.related_model.objects.all_records().filter(**relation_filter)
+
+            for obj in queryset.filter(is_deleted=True, deleted_at__gte=deleted_after):
+                obj.restore()
 
 
 class Department(BaseModel):
@@ -179,6 +297,47 @@ class Department(BaseModel):
             return Account.objects.filter(user_profile__department_id__in=dept_ids, is_deleted=False)
         else:
             return Account.objects.filter(user_profile__department_id=self.id, is_deleted=False)
+
+
+class DepartmentDeletionOperation(models.Model):
+    """Tracks one department cascade delete so it can be restored exactly."""
+
+    STATUS_DELETED = 'deleted'
+    STATUS_RESTORED = 'restored'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    root_department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='deletion_operations',
+    )
+    deleted_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='department_deletion_operations',
+    )
+    snapshot = models.JSONField(default=dict)
+    status = models.CharField(
+        max_length=20,
+        default=STATUS_DELETED,
+        choices=[
+            (STATUS_DELETED, 'Deleted'),
+            (STATUS_RESTORED, 'Restored'),
+        ],
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    restored_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'department_deletion_operations'
+        indexes = [
+            models.Index(fields=['root_department', 'status']),
+            models.Index(fields=['created_at']),
+        ]
+        ordering = ['-created_at']
 
 
 class Role(BaseModel):
@@ -449,6 +608,10 @@ class PasswordResetToken(models.Model):
     is_used = models.BooleanField(default=False, help_text="Token has been used")
     used_at = models.DateTimeField(null=True, blank=True, help_text="Khi token được sử dụng")
     
+    is_deleted = models.BooleanField(default=False, db_index=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     # Admin action (optional)
     is_admin_action = models.BooleanField(
         default=False,
@@ -462,6 +625,8 @@ class PasswordResetToken(models.Model):
         related_name='generated_reset_tokens',
         help_text="Admin who generated this token (if admin action)"
     )
+
+    objects = SoftDeleteManager()
     
     class Meta:
         db_table = "password_reset_tokens"
@@ -472,13 +637,29 @@ class PasswordResetToken(models.Model):
             models.Index(fields=['account_id']),
             models.Index(fields=['expires_at']),
             models.Index(fields=['is_used']),
+            models.Index(fields=['is_deleted']),
         ]
         ordering = ['-created_at']
     
     def __str__(self):
         return f"Reset token for {self.account.username} (expires: {self.expires_at})"
+
+    def delete(self, using=None, keep_parents=False):
+        if self.is_deleted:
+            return
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.save(using=using, update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+
+    def hard_delete(self, using=None, keep_parents=False):
+        super().delete(using=using, keep_parents=keep_parents)
+
+    def restore(self):
+        self.is_deleted = False
+        self.deleted_at = None
+        self.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
     
     def is_valid(self) -> bool:
         """Check if token is still valid (not expired and not used)"""
         from django.utils import timezone
-        return not self.is_used and self.expires_at > timezone.now()
+        return not self.is_deleted and not self.is_used and self.expires_at > timezone.now()

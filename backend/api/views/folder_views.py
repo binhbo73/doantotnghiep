@@ -395,8 +395,8 @@ class FolderDetailView(APIView):
         """
         DELETE /api/v1/folders/{folder_id}
         
-        Safely soft-delete an empty folder.
-        Returns 409 if the folder contains child folders or documents.
+        Soft-delete the complete folder subtree and its documents.
+        Source files and vectors are retained for restoration.
         
         Response:
         {
@@ -410,8 +410,7 @@ class FolderDetailView(APIView):
 
             service = FolderService()
             
-            # Safe delete: service rejects folders with children or documents.
-            service.delete_folder_recursive(
+            impact = service.delete_folder_recursive(
                 folder_id=folder_id,
                 user_id=str(request.user.id),
             )
@@ -420,7 +419,7 @@ class FolderDetailView(APIView):
             
             return Response(
                 ResponseBuilder.success(
-                    data={"id": str(folder_id)},
+                    data=impact,
                     message="Folder deleted successfully",
                     status_code=200,
                 ),

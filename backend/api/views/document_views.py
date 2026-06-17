@@ -1022,7 +1022,7 @@ class DocumentPreviewView(APIView):
 
             service = DocumentService()
 
-            if request.query_params.get('format') == 'html':
+            if request.query_params.get('preview_mode') == 'html':
                 html = service.get_document_preview_html(
                     doc_id=doc_id,
                     user_id=request.user.id,

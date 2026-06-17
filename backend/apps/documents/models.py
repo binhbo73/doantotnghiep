@@ -61,6 +61,53 @@ class Folder(BaseModel):
         return self.name
 
 
+class FolderDeletionOperation(models.Model):
+    """Tracks one folder cascade delete for deterministic restoration."""
+
+    STATUS_DELETED = 'deleted'
+    STATUS_RESTORED = 'restored'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    root_folder = models.ForeignKey(
+        Folder,
+        on_delete=models.CASCADE,
+        related_name='deletion_operations',
+    )
+    deleted_by = models.ForeignKey(
+        Account,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='folder_deletion_operations',
+    )
+    snapshot = models.JSONField(default=dict)
+    status = models.CharField(
+        max_length=20,
+        default=STATUS_DELETED,
+        choices=[
+            (STATUS_DELETED, 'Deleted'),
+            (STATUS_RESTORED, 'Restored'),
+        ],
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    restored_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'folder_deletion_operations'
+        indexes = [
+            models.Index(
+                fields=['root_folder', 'status'],
+                name='folder_dele_root_fo_68adca_idx',
+            ),
+            models.Index(
+                fields=['created_at'],
+                name='folder_dele_created_2453bd_idx',
+            ),
+        ]
+        ordering = ['-created_at']
+
+
 class Tag(BaseModel):
     """
     Tags for categorizing and organizing documents.

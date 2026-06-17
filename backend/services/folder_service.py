@@ -17,8 +17,8 @@ from collections import defaultdict
 
 from uuid import UUID
 from django.db import transaction, models
-from django.utils import timezone
 from django.apps import apps
+from django.utils import timezone
 
 from repositories.folder_repository import FolderRepository
 from services.base_service import BaseService
@@ -647,7 +647,7 @@ class FolderService(BaseService):
             raise BusinessLogicError(f"Failed to update folder: {str(e)}")
     
     # ============================================================
-    # DELETE FOLDER (SAFE SOFT DELETE)
+    # DELETE / RESTORE FOLDER
     # ============================================================
     
     @transaction.atomic
@@ -655,30 +655,24 @@ class FolderService(BaseService):
         self,
         folder_id: str,
         user_id: str,
-    ) -> None:
+    ) -> Dict[str, Any]:
         """
-        Safely soft-delete an empty folder.
-        
-        Business Logic:
-        1. Get folder
-        2. Check user has delete permission
-        3. Check all descendant folders
-        4. Check documents in this folder and all descendants
-        5. Reject with conflict when any dependent content exists
-        6. Soft-delete only the selected empty folder
-        7. Log AuditLog
-        
-        Args:
-            folder_id: Folder to delete
-            user_id: User performing deletion
-        
-        Raises:
-            NotFoundError: If folder not found
-            PermissionDeniedError: If user not authorized
-            ConflictError: If the folder contains active child folders or documents
+        Soft-delete a folder subtree and every active document inside it.
+
+        Files and vectors are retained. The affected IDs are stored in a
+        FolderDeletionOperation so restore never revives older deleted data.
         """
         try:
-            folder = self.repository.get_by_id(folder_id)
+            Document = apps.get_model('documents', 'Document')
+            FolderDeletionOperation = apps.get_model(
+                'documents',
+                'FolderDeletionOperation',
+            )
+
+            folder = self.Folder.objects.select_for_update().filter(
+                id=folder_id,
+                is_deleted=False,
+            ).first()
             if not folder:
                 raise NotFoundError(f"Folder {folder_id} not found")
             
@@ -687,61 +681,185 @@ class FolderService(BaseService):
                 raise PermissionDeniedError("You don't have delete permission on this folder")
             
             descendant_folders = self.repository.get_all_descendants(folder_id)
-            descendant_folder_ids = [str(item.id) for item in descendant_folders]
-            folder_tree_ids = [str(folder.id), *descendant_folder_ids]
+            folder_ids = [
+                str(folder.id),
+                *[str(item.id) for item in descendant_folders],
+            ]
+            list(
+                self.Folder.objects.select_for_update().filter(
+                    id__in=folder_ids,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            )
+            document_ids = [
+                str(document_id)
+                for document_id in Document.objects.select_for_update().filter(
+                    folder_id__in=folder_ids,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            ]
 
-            Document = apps.get_model('documents', 'Document')
-            document_count = Document.objects.filter(
-                folder_id__in=folder_tree_ids,
+            user_account = self.Account.objects.filter(
+                id=user_id,
                 is_deleted=False,
-            ).count()
+            ).first()
+            operation = FolderDeletionOperation.objects.create(
+                root_folder=folder,
+                deleted_by=user_account,
+                snapshot={
+                    'folder_ids': folder_ids,
+                    'document_ids': document_ids,
+                },
+            )
 
-            blockers = {
-                'child_folders': len(descendant_folder_ids),
-                'documents': document_count,
+            for document in Document.objects.filter(
+                id__in=document_ids,
+                is_deleted=False,
+            ):
+                document.delete()
+
+            for current_folder_id in reversed(folder_ids):
+                current_folder = self.Folder.objects.filter(
+                    id=current_folder_id,
+                    is_deleted=False,
+                ).first()
+                if current_folder:
+                    current_folder.delete()
+
+            impact = {
+                'operation_id': str(operation.id),
+                'folder_id': str(folder.id),
+                'folder_name': folder.name,
+                'folders_deleted': len(folder_ids),
+                'child_folders_deleted': max(len(folder_ids) - 1, 0),
+                'documents_deleted': len(document_ids),
+                'external_files_deleted': 0,
+                'vectors_deleted': 0,
             }
-            if blockers['child_folders'] > 0 or blockers['documents'] > 0:
-                active_blockers = []
-                if blockers['child_folders'] > 0:
-                    active_blockers.append(f"{blockers['child_folders']} child folder(s)")
-                if blockers['documents'] > 0:
-                    active_blockers.append(f"{blockers['documents']} document(s)")
-
-                raise ConflictError(
-                    (
-                        f"Cannot delete folder '{folder.name}' because it still contains "
-                        f"{', '.join(active_blockers)}. Move or delete these resources first."
-                    ),
-                    detail={
-                        'folder_id': str(folder.id),
-                        'folder_name': folder.name,
-                        'blockers': blockers,
-                    },
-                )
-
-            folder.is_deleted = True
-            folder.deleted_at = timezone.now()
-            folder.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
             
             # Log audit
             try:
-                user_account = self.Account.objects.get(id=user_id)
                 self.AuditLog.log_action(
                     account=user_account,
                     action='DELETE_FOLDER',
                     resource_id=str(folder_id),
-                    query_text="Safely deleted empty folder",
+                    query_text=f"Soft-deleted folder subtree: {folder.name}",
                 )
             except Exception as e:
                 logger.warning(f"Failed to log DELETE_FOLDER action: {str(e)}")
             
-            logger.info(f"Empty folder safely deleted: {folder_id} by user {user_id}")
+            logger.info(
+                "Folder cascade soft-deleted: %s operation=%s",
+                folder_id,
+                operation.id,
+            )
+            return impact
             
         except (NotFoundError, PermissionDeniedError, ConflictError):
             raise
         except Exception as e:
             logger.error(f"Error deleting folder: {str(e)}")
             raise BusinessLogicError(f"Failed to delete folder: {str(e)}")
+
+    @transaction.atomic
+    def restore_deleted_folder(
+        self,
+        folder_id: str,
+        requested_by_user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Restore the latest tracked cascade deletion for a root folder."""
+        try:
+            Document = apps.get_model('documents', 'Document')
+            FolderDeletionOperation = apps.get_model(
+                'documents',
+                'FolderDeletionOperation',
+            )
+
+            folder = self.Folder.objects.all_records().select_for_update().filter(
+                id=folder_id,
+            ).first()
+            if not folder:
+                raise NotFoundError(f"Folder {folder_id} not found")
+            if not folder.is_deleted:
+                raise ConflictError(f"Folder '{folder.name}' is already active")
+
+            operation = FolderDeletionOperation.objects.select_for_update().filter(
+                root_folder_id=folder_id,
+                status=FolderDeletionOperation.STATUS_DELETED,
+            ).order_by('-created_at').first()
+            if not operation:
+                raise ConflictError(
+                    "This folder was not deleted by a tracked cascade operation"
+                )
+
+            if folder.parent_id:
+                parent = self.Folder.objects.all_records().filter(
+                    id=folder.parent_id,
+                ).first()
+                if not parent or parent.is_deleted:
+                    raise ConflictError(
+                        "Cannot restore folder while its parent folder is deleted"
+                    )
+            if folder.department_id:
+                Department = apps.get_model('users', 'Department')
+                department = Department.objects.all_records().filter(
+                    id=folder.department_id,
+                ).first()
+                if not department or department.is_deleted:
+                    raise ConflictError(
+                        "Cannot restore folder while its department is deleted"
+                    )
+
+            snapshot = operation.snapshot or {}
+            folder_ids = [str(value) for value in snapshot.get('folder_ids', [])]
+            document_ids = [str(value) for value in snapshot.get('document_ids', [])]
+            folders_restored = 0
+            documents_restored = 0
+
+            for current_folder_id in folder_ids:
+                current_folder = self.Folder.objects.all_records().filter(
+                    id=current_folder_id,
+                    is_deleted=True,
+                ).first()
+                if current_folder:
+                    current_folder.restore()
+                    folders_restored += 1
+
+            for document_id in document_ids:
+                document = Document.objects.all_records().filter(
+                    id=document_id,
+                    is_deleted=True,
+                ).first()
+                if document:
+                    document.restore()
+                    documents_restored += 1
+
+            operation.status = FolderDeletionOperation.STATUS_RESTORED
+            operation.restored_at = timezone.now()
+            operation.save(update_fields=['status', 'restored_at'])
+
+            result = {
+                'operation_id': str(operation.id),
+                'folder_id': str(folder.id),
+                'folder_name': folder.name,
+                'folders_restored': folders_restored,
+                'documents_restored': documents_restored,
+            }
+            self.audit_log_action(
+                action='UPDATE',
+                user_id=requested_by_user_id,
+                resource_id=str(folder.id),
+                resource_type='Folder',
+                query_text=f"Restored folder subtree: {folder.name}",
+                details={'restore': result},
+            )
+            return result
+
+        except (NotFoundError, PermissionDeniedError, ConflictError):
+            raise
+        except Exception as e:
+            logger.error(f"Error restoring folder: {str(e)}", exc_info=True)
+            raise BusinessLogicError(f"Failed to restore folder: {str(e)}")
     
     # ============================================================
     # MOVE FOLDER
@@ -1023,10 +1141,7 @@ class FolderService(BaseService):
                     f"Permission {permission_id} not found for folder {folder_id}"
                 )
             
-            # Soft-delete the permission
-            perm.is_deleted = True
-            perm.deleted_at = timezone.now()
-            perm.save()
+            perm.delete()
             
             # Audit log
             try:
@@ -1329,10 +1444,7 @@ class FolderService(BaseService):
                     f"access to folder {folder_id}"
                 )
             
-            # Soft-delete the permission
-            perm.is_deleted = True
-            perm.deleted_at = timezone.now()
-            perm.save()
+            perm.delete()
             
             # Audit log
             try:

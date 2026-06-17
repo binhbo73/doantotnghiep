@@ -159,6 +159,9 @@ class PermissionManager:
             # Check permission hierarchy
             return self._check_document_permission_hierarchy(user, user_department, document, action)
             
+        except DocumentNotFoundError as e:
+            logger.info(str(e))
+            return False
         except Exception as e:
             logger.error(f"Error checking document access: {str(e)}", exc_info=True)
             return False

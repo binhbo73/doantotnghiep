@@ -125,7 +125,7 @@ export function PermissionsSelector({
 
                         {/* Info */}
                         <p className="text-xs mt-3" style={{ color: '#727785' }}>
-                            Đã chọn <span style={{ color: '#0058be', fontWeight: 600 }}>{checkedCount}</span> quyền hạn
+                            Đã chọn <span style={{ color: '#b75b00', fontWeight: 600 }}>{checkedCount}</span> quyền hạn
                         </p>
                     </div>
 
@@ -138,8 +138,6 @@ export function PermissionsSelector({
                         ) : (
                             Object.entries(groupedPermissions).map(([resource, perms]) => {
                                 const allChecked = perms.every((p) => p.checked)
-                                const someChecked = perms.some((p) => p.checked)
-
                                 return (
                                     <div key={resource}>
                                         {/* Category Header */}
@@ -154,13 +152,13 @@ export function PermissionsSelector({
                                                 checked={allChecked}
                                                 onChange={() => handleSelectAllCategory(resource)}
                                                 className="w-5 h-5 rounded cursor-pointer"
-                                                style={{ accentColor: '#0058be' }}
+                                                style={{ accentColor: '#b75b00' }}
                                             />
                                             <h3 className="text-sm font-bold" style={{ color: '#151c27' }}>
                                                 {RESOURCE_CATEGORIES[resource as keyof typeof RESOURCE_CATEGORIES]?.label || resource}
                                             </h3>
                                             {allChecked && (
-                                                <span className="ml-auto text-lg" style={{ color: '#0058be' }}>
+                                                <span className="ml-auto text-lg" style={{ color: '#b75b00' }}>
                                                     ✓
                                                 </span>
                                             )}
@@ -173,8 +171,8 @@ export function PermissionsSelector({
                                                     key={permission.id}
                                                     className="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition border"
                                                     style={{
-                                                        backgroundColor: permission.checked ? '#f0f3ff' : '#ffffff',
-                                                        borderColor: permission.checked ? '#0058be' : '#dce2f3',
+                                                        backgroundColor: permission.checked ? '#fff7ed' : '#ffffff',
+                                                        borderColor: permission.checked ? '#b75b00' : '#dce2f3',
                                                     }}
                                                 >
                                                     <div className="flex-shrink-0 mt-0.5">
@@ -183,7 +181,7 @@ export function PermissionsSelector({
                                                             checked={permission.checked}
                                                             onChange={() => onToggle(permission.id)}
                                                             className="w-5 h-5 rounded cursor-pointer"
-                                                            style={{ accentColor: '#0058be' }}
+                                                            style={{ accentColor: '#b75b00' }}
                                                         />
                                                     </div>
                                                     <div className="flex-1 min-w-0">
@@ -202,7 +200,7 @@ export function PermissionsSelector({
                                                         )}
                                                     </div>
                                                     {permission.checked && (
-                                                        <span className="flex-shrink-0 text-lg" style={{ color: '#0058be' }}>
+                                                        <span className="flex-shrink-0 text-lg" style={{ color: '#b75b00' }}>
                                                             ✓
                                                         </span>
                                                     )}
@@ -222,8 +220,8 @@ export function PermissionsSelector({
                             className="flex-1 px-4 py-3 rounded-lg font-medium transition border-2"
                             style={{
                                 backgroundColor: '#ffffff',
-                                color: '#0058be',
-                                borderColor: '#0058be',
+                                color: '#b75b00',
+                                borderColor: '#b75b00',
                             }}
                         >
                             ➕ Tạo quyền hạn mới
@@ -231,7 +229,7 @@ export function PermissionsSelector({
                         <button
                             onClick={onClose}
                             className="flex-1 px-4 py-3 rounded-lg font-medium text-white transition"
-                            style={{ backgroundColor: '#0058be' }}
+                            style={{ backgroundColor: '#b75b00' }}
                         >
                             Hoàn tất
                         </button>

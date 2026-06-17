@@ -138,14 +138,18 @@ class ConversationCreateSerializer(serializers.Serializer):
             except Document.DoesNotExist:
                 continue
 
-            attachment, created = ConversationAttachedDocument.objects.get_or_create(
+            attachment = ConversationAttachedDocument.objects.all_records().filter(
+                conversation=conversation,
+                document=document,
+            ).first()
+            if attachment:
+                if attachment.is_deleted:
+                    attachment.restore()
+                continue
+            ConversationAttachedDocument.objects.create(
                 conversation=conversation,
                 document=document,
             )
-            if not created and attachment.is_deleted:
-                attachment.is_deleted = False
-                attachment.deleted_at = None
-                attachment.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
 
     def _attach_folders(self, conversation, folder_ids):
         for folder_id in folder_ids:
@@ -154,14 +158,18 @@ class ConversationCreateSerializer(serializers.Serializer):
             except Folder.DoesNotExist:
                 continue
 
-            attachment, created = ConversationAttachedFolder.objects.get_or_create(
+            attachment = ConversationAttachedFolder.objects.all_records().filter(
+                conversation=conversation,
+                folder=folder,
+            ).first()
+            if attachment:
+                if attachment.is_deleted:
+                    attachment.restore()
+                continue
+            ConversationAttachedFolder.objects.create(
                 conversation=conversation,
                 folder=folder,
             )
-            if not created and attachment.is_deleted:
-                attachment.is_deleted = False
-                attachment.deleted_at = None
-                attachment.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
     
     def create(self, validated_data):
         """Create RAG conversation with attached documents/folders"""
@@ -432,7 +440,7 @@ class HumanFeedbackCreateSerializer(serializers.Serializer):
         message = Message.objects.get(id=message_id, is_deleted=False)
         
         # Handle soft-delete recovery: if feedback was soft-deleted, restore it
-        existing_feedback = HumanFeedback.objects.filter(
+        existing_feedback = HumanFeedback.objects.all_records().filter(
             message=message,
             account=account
         ).first()  # Get even deleted records
@@ -440,11 +448,10 @@ class HumanFeedbackCreateSerializer(serializers.Serializer):
         if existing_feedback:
             if existing_feedback.is_deleted:
                 # Recover soft-deleted feedback
-                existing_feedback.is_deleted = False
-                existing_feedback.deleted_at = None
+                existing_feedback.restore()
                 existing_feedback.rating = rating
                 existing_feedback.comment = comment
-                existing_feedback.save(update_fields=['is_deleted', 'deleted_at', 'rating', 'comment', 'updated_at'])
+                existing_feedback.save(update_fields=['rating', 'comment', 'updated_at'])
                 feedback = existing_feedback
                 created = False
             else:

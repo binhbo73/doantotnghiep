@@ -23,6 +23,7 @@ const RESOURCE_GROUP_MAP: Record<string, { name: string; icon: string }> = {
     users: { name: 'Nhóm Người dùng', icon: '👤' },
     chat: { name: 'Nhóm AI/Chat', icon: '💬' },
     documents: { name: 'Nhóm Tài liệu', icon: '📄' },
+    departments: { name: 'Nhóm phòng ban', icon: '🏢' },
     folders: { name: 'Nhóm Thư mục', icon: '📁' },
     system: { name: 'Nhóm Hệ thống', icon: '⚙️' },
     audit: { name: 'Nhóm Kiểm toán', icon: '📊' },

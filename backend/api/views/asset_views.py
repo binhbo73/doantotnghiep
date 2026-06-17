@@ -49,8 +49,7 @@ class DocumentAssetsListView(APIView):
 
             from core.permissions import get_permission_manager
             perm_manager = get_permission_manager()
-            if not perm_manager.check_document_access(request.user.id, doc_id, action='read'):
-                raise PermissionDeniedError(f"No read permission on document {doc_id}")
+            perm_manager.check_document_access_strict(request.user.id, doc_id, action='read')
 
             from apps.documents.models import DocumentAsset
             from api.serializers.document_serializers import DocumentAssetSerializer
@@ -69,6 +68,11 @@ class DocumentAssetsListView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except NotFoundError as e:
+            return Response(
+                ResponseBuilder.error(str(e), status_code=404),
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except PermissionDeniedError as e:
             return Response(
                 ResponseBuilder.error(str(e), status_code=403),

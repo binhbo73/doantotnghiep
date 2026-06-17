@@ -212,7 +212,7 @@ export default function ResetPasswordContent() {
                                                     : passwordStrength.score === 1
                                                         ? 'w-1/2 bg-yellow-500'
                                                         : passwordStrength.score === 2
-                                                            ? 'w-3/4 bg-blue-500'
+                                                            ? 'w-3/4 bg-orange-500'
                                                             : 'w-full bg-green-500'
                                                     }`}
                                             ></div>

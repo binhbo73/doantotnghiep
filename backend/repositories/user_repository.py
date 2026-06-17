@@ -510,10 +510,7 @@ class UserRepository(BaseRepository):
                 role_id=role_id,
                 is_deleted=False
             )
-            ar.is_deleted = True
-            from django.utils import timezone
-            ar.deleted_at = timezone.now()
-            ar.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+            ar.delete()
             logger.info(f"Account role deleted for account {account_id} role {role_id}")
             return True
         except AccountRole.DoesNotExist:

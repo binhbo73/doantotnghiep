@@ -244,36 +244,7 @@ export default function DashboardPage() {
                     </div>
                 </section>
 
-                {/* Activity Summary Section */}
-                <section className="mb-4">
-                    <ActivitySummary
-                        title="Biểu đồ Hoạt động Tri Thức"
-                        subtitle="Lưu ý truy cập & đồng góp kiến thức thực tế các giai đoạn"
-                        badges={[
-                            {
-                                label: 'Tuần này',
-                                color: 'success',
-                                onClick: () => console.log('This week'),
-                            },
-                            {
-                                label: 'Dùng giấy',
-                                color: 'warning',
-                                onClick: () => console.log('Draft'),
-                            },
-                        ]}
-                    >
-                        {/* Placeholder for chart */}
-                        <div
-                            className="h-24 rounded-lg flex items-center justify-center text-sm"
-                            style={{
-                                backgroundColor: '#f0f3ff',
-                                color: '#727785',
-                            }}
-                        >
-                            <p>📊 Biểu đồ hoạt động sẽ được hiển thị ở đây</p>
-                        </div>
-                    </ActivitySummary>
-                </section>
+
 
                 {/* Quick actions are filtered by permission codes. */}
                 {quickActions.length > 0 && (
@@ -314,7 +285,7 @@ export default function DashboardPage() {
                     className="text-center text-xs py-4"
                     style={{ color: '#727785' }}
                 >
-                    <p>© 2024 Enterprise Knowledge OS. Hệ thống quản lý tài liệu tích hợp.</p>
+                    <p>© 2026 Enterprise Knowledge OS. Hệ thống quản lý tài liệu tích hợp.</p>
                 </footer>
             </div>
         </main>

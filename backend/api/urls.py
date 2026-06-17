@@ -95,6 +95,7 @@ from api.views.audit_views import (
     AuditLogStatisticsView,
     AuditLogExportView,
 )
+from api.views.restore_views import DeletedRecordsView, RestoreRecordView
 
 # UUID regex pattern for URL routing
 UUID_PATTERN = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
@@ -175,6 +176,10 @@ urlpatterns = [
     
     # Change account department
     re_path(rf"^accounts/(?P<account_id>{UUID_PATTERN})/department/?$", UserDepartmentChangeView.as_view(), name="account_change_department"),
+
+    # SOFT DELETE RESTORE ENDPOINTS
+    re_path(r"^deleted/(?P<resource>[a-z_]+)/?$", DeletedRecordsView.as_view(), name="deleted_records"),
+    re_path(rf"^deleted/(?P<resource>[a-z_]+)/(?P<object_id>{UUID_PATTERN})/restore/?$", RestoreRecordView.as_view(), name="restore_deleted_record"),
     
     # ============================================================
     # IAM ENDPOINTS (Phase 3 - Role & Permission Management)

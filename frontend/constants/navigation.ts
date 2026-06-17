@@ -62,6 +62,23 @@ export const dashboardNavigation: NavItem[] = [
         href: '/dashboard/roles',
         permissions: ['role_manage', 'permission_manage'],
     },
+    {
+        id: 'deleted',
+        label: 'Kh\u00f4i ph\u1ee5c d\u1eef li\u1ec7u',
+        icon: 'restore',
+        iconName: 'restore',
+        href: '/dashboard/deleted',
+        permissions: [
+            'system_admin',
+            'user_delete',
+            'department_manage',
+            'folder_delete',
+            'document_delete',
+            'role_manage',
+            'permission_manage',
+            'audit_log_view',
+        ],
+    },
     // {
     //     id: 'projects',
     //     label: 'Dự án',

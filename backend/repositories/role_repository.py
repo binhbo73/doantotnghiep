@@ -161,19 +161,22 @@ class RoleRepository(BaseRepository):
             if not role:
                 return False
             
-            # Create RolePermission records
             for perm_id in permission_ids:
-                # Skip if already exists
-                if not RolePermission.objects.filter(
+                role_permission = RolePermission.objects.all_records().filter(
                     role_id=role_id,
                     permission_id=perm_id,
-                    is_deleted=False
-                ).exists():
-                    RolePermission.objects.get_or_create(
-                        role_id=role_id,
-                        permission_id=perm_id,
-                        defaults={'is_deleted': False, 'created_at': timezone.now()}
-                    )
+                ).first()
+
+                if role_permission:
+                    if role_permission.is_deleted:
+                        role_permission.restore()
+                    continue
+
+                RolePermission.objects.create(
+                    role_id=role_id,
+                    permission_id=perm_id,
+                    created_at=timezone.now()
+                )
             
             return True
             
@@ -329,14 +332,20 @@ class RoleRepository(BaseRepository):
                 'id', 'code', 'name', 'description', 'created_at', 'updated_at'
             ))
             
-            # Add permission count for each role
+            # Add counts for each role
             for role_dict in roles:
-                from apps.users.models import RolePermission
+                from apps.users.models import AccountRole, RolePermission
                 perm_count = RolePermission.objects.filter(
                     role_id=role_dict['id'],
                     is_deleted=False
                 ).count()
+                account_count = AccountRole.objects.filter(
+                    role_id=role_dict['id'],
+                    is_deleted=False,
+                    account__is_deleted=False,
+                ).count()
                 role_dict['permission_count'] = perm_count
+                role_dict['account_count'] = account_count
             
             # Calculate total pages
             total_pages = (total + page_size - 1) // page_size

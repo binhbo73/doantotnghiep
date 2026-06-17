@@ -18,7 +18,7 @@ from rest_framework.exceptions import (
     Throttled,
     ParseError,
 )
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.core.exceptions import ValidationError as DjangoValidationError, ObjectDoesNotExist
 from django.db import IntegrityError as DjangoIntegrityError
 from core.exceptions import (
@@ -204,7 +204,7 @@ def global_exception_handler(exc, context) -> Response:
         return Response(response_data, status=exc.status_code)
     
     # Handle Django Exceptions
-    if isinstance(exc, ObjectDoesNotExist):
+    if isinstance(exc, (Http404, ObjectDoesNotExist)):
         return Response(GlobalExceptionHandler.handle_drf_not_found(exc, request), status=status.HTTP_404_NOT_FOUND)
 
     if isinstance(exc, DjangoValidationError):

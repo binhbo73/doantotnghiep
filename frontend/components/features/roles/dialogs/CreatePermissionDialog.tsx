@@ -33,9 +33,9 @@ export function CreatePermissionDialog({
             />
 
             {/* Dialog Container - Only on main content area */}
-            <div className="fixed top-0 right-0 bottom-0 z-30 flex items-center justify-center p-4" style={{ left: '240px' }}>
+            <div className="fixed top-0 right-0 bottom-0 z-30 flex items-center justify-center p-3" style={{ left: '240px' }}>
                 <div
-                    className="bg-white rounded-2xl shadow-2xl flex flex-col lg:flex-row max-w-3xl w-full max-h-[90vh] overflow-hidden"
+                    className="flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl lg:flex-row"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Left Panel - Branding */}

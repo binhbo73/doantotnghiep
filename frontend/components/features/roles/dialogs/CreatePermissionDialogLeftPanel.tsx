@@ -6,24 +6,24 @@ import { Shield, Lock, Check, Settings } from 'lucide-react'
 export function CreatePermissionDialogLeftPanel() {
     return (
         <div
-            className="hidden lg:flex flex-col justify-between p-8 rounded-l-2xl text-white w-96"
+            className="hidden w-72 flex-col justify-between rounded-l-2xl p-6 text-white lg:flex"
             style={{ backgroundColor: '#b75b00' }}
         >
             {/* Header Content */}
             <div>
                 {/* Icon */}
                 <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6"
+                    className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl"
                     style={{ backgroundColor: 'rgba(255, 255, 255, 0.25)' }}
                 >
-                    <Shield size={32} className="text-white" strokeWidth={1.5} />
+                    <Shield size={28} className="text-white" strokeWidth={1.5} />
                 </div>
 
                 {/* Title & Description */}
-                <h2 className="text-4xl font-bold mb-4 leading-tight">
+                <h2 className="mb-3 text-3xl font-bold leading-tight">
                     Tạo quyền hạn mới
                 </h2>
-                <p className="text-sm leading-relaxed opacity-95 font-light">
+                <p className="text-xs font-light leading-relaxed opacity-95">
                     Định nghĩa quyền hạn mới để phân quyền chi tiết hơn cho người dùng hệ thống.
                 </p>
             </div>
@@ -31,18 +31,18 @@ export function CreatePermissionDialogLeftPanel() {
             {/* Footer - Security Standard */}
             <div>
                 {/* Security Icons */}
-                <div className="flex gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-lg bg-black/30 flex items-center justify-center">
-                        <Lock size={20} className="text-white" />
+                <div className="mb-3 flex gap-2">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/30">
+                        <Lock size={17} className="text-white" />
                     </div>
-                    <div className="w-10 h-10 rounded-lg bg-black/30 flex items-center justify-center">
-                        <Check size={20} className="text-white" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/30">
+                        <Check size={17} className="text-white" />
                     </div>
-                    <div className="w-10 h-10 rounded-lg bg-black/30 flex items-center justify-center">
-                        <Settings size={20} className="text-white" />
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-black/30">
+                        <Settings size={17} className="text-white" />
                     </div>
                 </div>
-                <p className="text-xs font-bold uppercase tracking-wider opacity-90">Enterprise Security<br />Standard</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider opacity-90">Enterprise Security<br />Standard</p>
             </div>
         </div>
     )

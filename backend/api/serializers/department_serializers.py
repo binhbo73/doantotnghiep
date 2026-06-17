@@ -47,7 +47,7 @@ class DepartmentTreeSerializer(serializers.ModelSerializer):
     
     def get_manager_name(self, obj):
         """Get manager username if exists"""
-        return obj.manager.username if obj.manager else None
+        return obj.manager.username if obj.manager and not obj.manager.is_deleted else None
     
     def get_member_count(self, obj):
         """Count direct members (not including sub-departments)"""
@@ -61,10 +61,10 @@ class DepartmentTreeSerializer(serializers.ModelSerializer):
     def get_manager_ids(self, obj):
         try:
             ids = []
-            if obj.manager_id:
+            if obj.manager_id and obj.manager and not obj.manager.is_deleted:
                 ids.append(str(obj.manager_id))
             # include M2M managers
-            ids.extend([str(m.id) for m in obj.managers.all()])
+            ids.extend([str(m.id) for m in obj.managers.filter(is_deleted=False)])
             # dedupe
             return list(dict.fromkeys(ids))
         except Exception:
@@ -103,7 +103,7 @@ class DepartmentDetailSerializer(serializers.ModelSerializer):
     
     def get_manager(self, obj):
         """Return manager object with basic info"""
-        if not obj.manager:
+        if not obj.manager or obj.manager.is_deleted:
             return None
         return {
             'id': str(obj.manager.id),
@@ -115,9 +115,9 @@ class DepartmentDetailSerializer(serializers.ModelSerializer):
     def get_manager_ids(self, obj):
         try:
             ids = []
-            if obj.manager_id:
+            if obj.manager_id and obj.manager and not obj.manager.is_deleted:
                 ids.append(str(obj.manager_id))
-            ids.extend([str(m.id) for m in obj.managers.all()])
+            ids.extend([str(m.id) for m in obj.managers.filter(is_deleted=False)])
             return list(dict.fromkeys(ids))
         except Exception:
             return []
@@ -246,11 +246,7 @@ class DepartmentListSerializer(serializers.ModelSerializer):
     - Embeds in other serializers
     """
     
-    manager_name = serializers.CharField(
-        source='manager.username',
-        allow_null=True,
-        read_only=True
-    )
+    manager_name = serializers.SerializerMethodField()
     manager_ids = serializers.SerializerMethodField()
     
     parent_name = serializers.CharField(
@@ -266,6 +262,21 @@ class DepartmentListSerializer(serializers.ModelSerializer):
             'manager_id', 'manager_name', 'manager_ids', 'created_at'
         ]
         read_only_fields = ['id', 'created_at']
+
+    def get_manager_name(self, obj):
+        if not obj.manager or obj.manager.is_deleted:
+            return None
+        return obj.manager.username
+
+    def get_manager_ids(self, obj):
+        ids = []
+        if obj.manager_id and obj.manager and not obj.manager.is_deleted:
+            ids.append(str(obj.manager_id))
+        ids.extend(
+            str(manager.id)
+            for manager in obj.managers.filter(is_deleted=False)
+        )
+        return list(dict.fromkeys(ids))
 
 
 # ============================================================================
@@ -388,7 +399,7 @@ class DepartmentDetailWithCountsSerializer(serializers.ModelSerializer):
     
     def get_manager(self, obj):
         """Return manager object with basic info"""
-        if not obj.manager:
+        if not obj.manager or obj.manager.is_deleted:
             return None
         return {
             'id': str(obj.manager.id),

@@ -1036,8 +1036,7 @@ class PersistenceStage(PipelineStage):
                 Document = apps.get_model('documents', 'Document')
                 
                 doc = Document.objects.get(id=context.document_id)
-                doc.is_deleted = True
-                doc.save()
+                doc.delete()
                 
                 self.logger.info(f"Rolled back document {context.document_id}")
         except Exception as e:

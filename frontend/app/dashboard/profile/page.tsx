@@ -71,7 +71,7 @@ function Avatar({ name, src, size = 96 }: { name: string; src?: string | null; s
             className="rounded-full flex items-center justify-center font-bold text-white flex-shrink-0"
             style={{
                 width: size, height: size,
-                background: 'linear-gradient(135deg, #0058be, #003d82)',
+                background: 'linear-gradient(135deg, #b75b00, #9d4300)',
                 fontSize: size * 0.35,
             }}
         >
@@ -104,8 +104,8 @@ function Toast({ type, message, onClose }: { type: 'success' | 'error'; message:
 
 function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
     return (
-        <div className="flex items-start gap-3 py-3 border-b last:border-0" style={{ borderColor: '#f0f3ff' }}>
-            <span className="mt-0.5 flex-shrink-0" style={{ color: '#0058be' }}>{icon}</span>
+        <div className="flex items-start gap-3 py-3 border-b last:border-0" style={{ borderColor: '#ffedd5' }}>
+            <span className="mt-0.5 flex-shrink-0" style={{ color: '#b75b00' }}>{icon}</span>
             <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-wider mb-0.5" style={{ color: '#8c97b0' }}>{label}</p>
                 <p className="text-sm font-medium truncate" style={{ color: '#151c27' }}>{value || 'Chưa cập nhật'}</p>
@@ -161,7 +161,7 @@ function EditProfileModal({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
             <div className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl" style={{ backgroundColor: '#fff' }}>
                 {/* Header */}
-                <div className="px-6 py-5 flex items-center justify-between" style={{ background: 'linear-gradient(135deg, #0058be, #003d82)' }}>
+                <div className="px-6 py-5 flex items-center justify-between" style={{ background: 'linear-gradient(135deg, #b75b00, #9d4300)' }}>
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
                             <Edit size={18} className="text-white" />
@@ -252,7 +252,7 @@ function EditProfileModal({
                             type="submit"
                             disabled={saving}
                             className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white transition-all hover:shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
-                            style={{ background: 'linear-gradient(135deg, #0058be, #003d82)' }}
+                            style={{ background: 'linear-gradient(135deg, #b75b00, #9d4300)' }}
                         >
                             {saving ? (
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -434,7 +434,7 @@ function Skeleton() {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
-    const { user: authUser, isLoading: authLoading } = useAuthContext()
+    const { isLoading: authLoading } = useAuthContext()
 
     const [profile, setProfile] = useState<MyProfile | null>(null)
     const [loading, setLoading] = useState(true)
@@ -481,7 +481,7 @@ export default function ProfilePage() {
                     <button
                         onClick={() => window.location.reload()}
                         className="px-4 py-2 rounded-lg text-sm text-white font-medium"
-                        style={{ backgroundColor: '#0058be' }}
+                        style={{ backgroundColor: '#b75b00' }}
                     >
                         Thử lại
                     </button>
@@ -509,9 +509,9 @@ export default function ProfilePage() {
                     {/* Profile Hero Card */}
                     <div className="rounded-2xl overflow-hidden shadow-sm border" style={{ borderColor: '#dce2f3', backgroundColor: '#fff' }}>
                         {/* Banner */}
-                        <div className="h-28 relative" style={{ background: 'linear-gradient(135deg, #0058be 0%, #003d82 50%, #001f5b 100%)' }}>
+                        <div className="h-28 relative" style={{ background: 'linear-gradient(135deg, #b75b00 0%, #9d4300 50%, #783200 100%)' }}>
                             <div className="absolute inset-0 opacity-20"
-                                style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #60a5fa 0%, transparent 50%), radial-gradient(circle at 80% 20%, #818cf8 0%, transparent 40%)' }}
+                                style={{ backgroundImage: 'radial-gradient(circle at 20% 50%, #fed7aa 0%, transparent 50%), radial-gradient(circle at 80% 20%, #fb923c 0%, transparent 40%)' }}
                             />
                         </div>
 
@@ -529,7 +529,7 @@ export default function ProfilePage() {
                                     <button
                                         onClick={() => setShowEditModal(true)}
                                         className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all hover:shadow-md"
-                                        style={{ background: 'linear-gradient(135deg, #0058be, #003d82)' }}
+                                        style={{ background: 'linear-gradient(135deg, #b75b00, #9d4300)' }}
                                     >
                                         <Edit size={15} />
                                         Chỉnh sửa
@@ -549,7 +549,7 @@ export default function ProfilePage() {
                             <div className="flex items-center gap-2">
                                 <span
                                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium"
-                                    style={{ backgroundColor: '#eff4ff', color: '#0058be' }}
+                                    style={{ backgroundColor: '#fff7ed', color: '#b75b00' }}
                                 >
                                     <Mail size={12} />
                                     {profile.email}
@@ -572,8 +572,8 @@ export default function ProfilePage() {
                         {/* Personal Info */}
                         <div className="rounded-2xl border shadow-sm p-5" style={{ borderColor: '#dce2f3', backgroundColor: '#fff' }}>
                             <div className="flex items-center gap-2 mb-4">
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#eff4ff' }}>
-                                    <User size={16} style={{ color: '#0058be' }} />
+                                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#fff7ed' }}>
+                                    <User size={16} style={{ color: '#b75b00' }} />
                                 </div>
                                 <h3 className="text-sm font-bold" style={{ color: '#151c27' }}>Thông tin cá nhân</h3>
                             </div>
@@ -606,24 +606,7 @@ export default function ProfilePage() {
                     </div>
 
                     {/* Account ID info (for debugging / transparency) */}
-                    <div className="rounded-2xl border shadow-sm p-5" style={{ borderColor: '#dce2f3', backgroundColor: '#fff' }}>
-                        <div className="flex items-center gap-2 mb-3">
-                            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#f4f6fb' }}>
-                                <Info size={16} style={{ color: '#727785' }} />
-                            </div>
-                            <h3 className="text-sm font-bold" style={{ color: '#151c27' }}>ID tài khoản</h3>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                            <div className="p-3 rounded-lg" style={{ backgroundColor: '#f9f9ff' }}>
-                                <p className="text-xs font-semibold mb-1" style={{ color: '#8c97b0' }}>Profile ID</p>
-                                <p className="text-xs font-mono break-all" style={{ color: '#424754' }}>{profile.id}</p>
-                            </div>
-                            <div className="p-3 rounded-lg" style={{ backgroundColor: '#f9f9ff' }}>
-                                <p className="text-xs font-semibold mb-1" style={{ color: '#8c97b0' }}>Account ID</p>
-                                <p className="text-xs font-mono break-all" style={{ color: '#424754' }}>{profile.account_id}</p>
-                            </div>
-                        </div>
-                    </div>
+
 
                 </div>
             </main>

@@ -51,7 +51,7 @@ export function CreateRoleDialogRightPanel({
     }, canManagePermissions)
 
     // Create role hook
-    const { createRole, addPermissionsToRole, loading: createLoading, error: createError } = useCreateRole()
+    const { createRole, addPermissionsToRole, error: createError } = useCreateRole()
 
     const [permissions, setPermissions] = useState<RolePermission[]>([])
     const [isPermissionsSelectorOpen, setIsPermissionsSelectorOpen] = useState(false)
@@ -144,7 +144,7 @@ export function CreateRoleDialogRightPanel({
     const checkedCount = permissions.filter((p) => p.checked).length
 
     return (
-        <div className="flex flex-col p-4 lg:p-6 flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-col overflow-hidden p-5">
             {/* Close Button - Mobile */}
             <button
                 onClick={onClose}
@@ -153,7 +153,8 @@ export function CreateRoleDialogRightPanel({
                 <X size={24} style={{ color: '#151c27' }} />
             </button>
 
-            <form onSubmit={handleSubmit} className="flex flex-col gap-2 h-full overflow-y-auto pr-2">
+            <form onSubmit={handleSubmit} className="flex h-full min-h-0 flex-col">
+                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
                 {/* Error Messages */}
                 {(permissionsError || createError) && (
                     <div
@@ -175,10 +176,10 @@ export function CreateRoleDialogRightPanel({
                 )}
 
                 {/* Role Code & Display Name - Two Columns */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                     {/* Role Code */}
                     <div>
-                        <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                        <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                             Mã vai trò
                         </label>
                         <input
@@ -188,7 +189,7 @@ export function CreateRoleDialogRightPanel({
                                 setFormData({ ...formData, code: e.target.value.toUpperCase() })
                             }
                             placeholder="e.g. DATA_ARCHITECT"
-                            className="w-full px-4 py-3 rounded-lg border text-sm"
+                            className="w-full rounded-lg border px-3 py-2 text-sm"
                             style={{
                                 borderColor: '#dce2f3',
                                 color: '#151c27',
@@ -199,7 +200,7 @@ export function CreateRoleDialogRightPanel({
 
                     {/* Display Name */}
                     <div>
-                        <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                        <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                             Tên hiển thị
                         </label>
                         <input
@@ -207,7 +208,7 @@ export function CreateRoleDialogRightPanel({
                             value={formData.displayName}
                             onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
                             placeholder="Kiến trúc sư dữ liệu"
-                            className="w-full px-4 py-3 rounded-lg border text-sm"
+                            className="w-full rounded-lg border px-3 py-2 text-sm"
                             style={{
                                 borderColor: '#dce2f3',
                                 color: '#151c27',
@@ -219,7 +220,7 @@ export function CreateRoleDialogRightPanel({
 
                 {/* Description */}
                 <div>
-                    <label className="text-xs font-bold mb-2 block uppercase" style={{ color: '#727785' }}>
+                    <label className="mb-1 block text-[11px] font-bold uppercase" style={{ color: '#727785' }}>
                         Mô tả chức năng
                     </label>
                     <textarea
@@ -227,7 +228,7 @@ export function CreateRoleDialogRightPanel({
                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                         placeholder="Mô tả tóm tắt trách nhiệm của vai trò này..."
                         rows={2}
-                        className="w-full px-4 py-3 rounded-lg border text-sm resize-none"
+                        className="w-full resize-none rounded-lg border px-3 py-2 text-sm"
                         style={{
                             borderColor: '#dce2f3',
                             color: '#151c27',
@@ -247,7 +248,7 @@ export function CreateRoleDialogRightPanel({
 
                 {/* Permissions Quick View - Selected Permissions */}
                 {checkedCount > 0 && (
-                    <div className="max-h-[500px] overflow-y-auto p-3 rounded-lg border flex-grow" style={{ borderColor: '#dce2f3', backgroundColor: '#f9f9ff' }}>
+                    <div className="max-h-48 overflow-y-auto rounded-lg border p-3" style={{ borderColor: '#dce2f3', backgroundColor: '#f9f9ff' }}>
                         <div className="flex flex-wrap gap-2">
                             {permissions
                                 .filter((p) => p.checked)
@@ -255,7 +256,7 @@ export function CreateRoleDialogRightPanel({
                                     <span
                                         key={p.id}
                                         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium text-white"
-                                        style={{ backgroundColor: '#0058be' }}
+                                        style={{ backgroundColor: '#b75b00' }}
                                     >
                                         {p.code}
                                         <button
@@ -276,18 +277,19 @@ export function CreateRoleDialogRightPanel({
                     type="button"
                     onClick={() => setIsPermissionsSelectorOpen(true)}
                     disabled={permissionsLoading || !canManagePermissions}
-                    className="w-full px-4 py-2 rounded-lg font-medium text-sm transition border-2 mt-1 disabled:opacity-50"
+                    className="mt-1 w-full rounded-lg border-2 px-4 py-2 text-sm font-medium transition disabled:opacity-50"
                     style={{
-                        backgroundColor: '#f0f3ff',
-                        color: '#0058be',
-                        borderColor: '#0058be',
+                        backgroundColor: '#fff7ed',
+                        color: '#b75b00',
+                        borderColor: '#b75b00',
                     }}
                 >
                     📋 Chỉnh sửa quyền hạn
                 </button>
+                </div>
 
                 {/* Action Buttons */}
-                <div className="flex gap-3 pt-3 mt-3 border-t" style={{ borderColor: '#dce2f3' }}>
+                <div className="mt-auto flex shrink-0 gap-3 border-t pt-4" style={{ borderColor: '#dce2f3' }}>
                     <button
                         type="button"
                         onClick={onClose}
@@ -295,8 +297,8 @@ export function CreateRoleDialogRightPanel({
                         className="flex-1 px-4 py-2 rounded-lg font-medium text-sm transition border-2 disabled:opacity-50"
                         style={{
                             backgroundColor: '#ffffff',
-                            color: '#0058be',
-                            borderColor: '#0058be',
+                            color: '#b75b00',
+                            borderColor: '#b75b00',
                         }}
                     >
                         Hủy bỏ
@@ -334,8 +336,7 @@ export function CreateRoleDialogRightPanel({
                 <CreatePermissionDialog
                     isOpen={isCreatePermissionDialogOpen}
                     onClose={() => setIsCreatePermissionDialogOpen(false)}
-                    onSubmit={(data) => {
-                        console.log('New permission:', data)
+                    onSubmit={() => {
                         setIsCreatePermissionDialogOpen(false)
                     }}
                 />

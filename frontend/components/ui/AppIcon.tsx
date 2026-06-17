@@ -132,6 +132,7 @@ const iconMap: Record<string, LucideIcon> = {
     radio_button_checked: Radio,
     refresh: RefreshCw,
     remove_circle: MinusCircle,
+    restore: RefreshCw,
     schema: Waypoints,
     search: Search,
     security: Shield,

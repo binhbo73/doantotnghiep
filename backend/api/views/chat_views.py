@@ -299,8 +299,7 @@ class ConversationDetailView(BaseViewSet):
                     status_code=status.HTTP_404_NOT_FOUND
                 )
 
-            conversation.is_deleted = True
-            conversation.save()
+            conversation.delete()
 
             try:
                 from apps.operations.models import AuditLog
@@ -345,24 +344,32 @@ class ConversationAttachmentView(BaseViewSet):
             return None
 
     def _restore_or_create_document_attachment(self, conversation, document):
-        attachment, created = ConversationAttachedDocument.objects.get_or_create(
+        attachment = ConversationAttachedDocument.objects.all_records().filter(
+            conversation=conversation,
+            document=document,
+        ).first()
+        if attachment:
+            if attachment.is_deleted:
+                attachment.restore()
+            return
+        ConversationAttachedDocument.objects.create(
             conversation=conversation,
             document=document,
         )
-        if not created and attachment.is_deleted:
-            attachment.is_deleted = False
-            attachment.deleted_at = None
-            attachment.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
 
     def _restore_or_create_folder_attachment(self, conversation, folder):
-        attachment, created = ConversationAttachedFolder.objects.get_or_create(
+        attachment = ConversationAttachedFolder.objects.all_records().filter(
+            conversation=conversation,
+            folder=folder,
+        ).first()
+        if attachment:
+            if attachment.is_deleted:
+                attachment.restore()
+            return
+        ConversationAttachedFolder.objects.create(
             conversation=conversation,
             folder=folder,
         )
-        if not created and attachment.is_deleted:
-            attachment.is_deleted = False
-            attachment.deleted_at = None
-            attachment.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
 
     def _soft_delete_document_attachment(self, conversation, document_id):
         ConversationAttachedDocument.objects.filter(
@@ -911,10 +918,7 @@ class MessageFeedbackView(BaseViewSet):
                 is_deleted=False
             )
             
-            # Soft delete
-            feedback.is_deleted = True
-            feedback.deleted_at = timezone.now()
-            feedback.save(update_fields=['is_deleted', 'deleted_at', 'updated_at'])
+            feedback.delete()
             
             # Log audit
             try:

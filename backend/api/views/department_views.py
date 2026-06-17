@@ -423,7 +423,7 @@ class DepartmentDetailView(APIView):
             dept = service.get_department(dept_id)
             
             # Delete
-            service.delete_department(
+            impact = service.delete_department(
                 dept_id=dept_id,
                 requested_by_user_id=str(request.user.id) if request.user else None
             )
@@ -436,9 +436,10 @@ class DepartmentDetailView(APIView):
                     data={
                         "id": str(dept.id),
                         "name": dept.name,
-                        "deleted_at": timezone.now().isoformat()
+                        "deleted_at": timezone.now().isoformat(),
+                        "impact": impact,
                     },
-                    message="Department deleted successfully"
+                    message="Department and related content moved to deleted records successfully"
                 ),
                 status=status.HTTP_200_OK
             )
