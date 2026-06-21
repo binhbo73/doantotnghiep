@@ -253,6 +253,13 @@ function DocumentsPageContent() {
         setFolderToDelete(folder)
     }
 
+    const handleDocumentDeleted = async (documentId: string) => {
+        if (selectedDocument?.id === documentId) {
+            clearSelection()
+        }
+        await refetch()
+    }
+
     const handleDeleteFolder = async () => {
         if (!folderToDelete || !canDeleteFolder) return
 
@@ -360,6 +367,10 @@ function DocumentsPageContent() {
                             onUploadToFolder={canUpload ? openUploadModal : undefined}
                             onCreateSubfolder={canCreateFolder ? openCreateFolderModal : undefined}
                             onDeleteFolder={canDeleteFolder ? openFolderDeleteDialog : undefined}
+                            onDocumentDeleted={handleDocumentDeleted}
+                            onVersionCreated={() => {
+                                void refetch()
+                            }}
                             deletingFolderId={isDeletingFolder ? folderToDelete?.id : null}
                             searchQuery={searchQuery}
                             showPersonal={false}
@@ -376,9 +387,7 @@ function DocumentsPageContent() {
                             onVersionCreated={() => {
                                 void refetch()
                             }}
-                            onDocumentDeleted={async () => {
-                                await refetch()
-                            }}
+                            onDocumentDeleted={handleDocumentDeleted}
                         />
                     </div>
                 ) : (
@@ -397,7 +406,7 @@ function DocumentsPageContent() {
             {canUpload && (
                 <button
                     onClick={() => openUploadModal()}
-                    className="fixed bottom-8 right-8 w-12 h-12 bg-[#9d4300] text-white rounded-full shadow-xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
+                    className="fixed bottom-8 right-4 w-12 h-12 bg-[#9d4300] text-white rounded-full shadow-xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group z-50 hover:shadow-[#f97316]/50"
                 >
                     <AppIcon name="upload_file" className="text-2xl" />
                     <span className="absolute right-full mr-3 bg-[#0d1c2e] text-white px-3 py-1 rounded-lg text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-lg">

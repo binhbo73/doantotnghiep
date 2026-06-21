@@ -20,6 +20,8 @@ interface FolderTreeProps {
     onUploadToFolder?: (folder: FolderResponse) => void
     onCreateSubfolder?: (folder: FolderResponse) => void
     onDeleteFolder?: (folder: FolderResponse) => void
+    onDocumentDeleted?: (documentId: string) => void | Promise<void>
+    onVersionCreated?: () => void
     deletingFolderId?: string | null
     searchQuery?: string
     showPersonal?: boolean
@@ -35,6 +37,8 @@ export function FolderTree({
     onUploadToFolder,
     onCreateSubfolder,
     onDeleteFolder,
+    onDocumentDeleted,
+    onVersionCreated,
     deletingFolderId,
     searchQuery = '',
     showPersonal = true,
@@ -97,6 +101,8 @@ export function FolderTree({
                                         onUploadToFolder={onUploadToFolder}
                                         onCreateSubfolder={onCreateSubfolder}
                                         onDeleteFolder={onDeleteFolder}
+                                        onDocumentDeleted={onDocumentDeleted}
+                                        onVersionCreated={onVersionCreated}
                                         deletingFolderId={deletingFolderId}
                                         searchQuery={searchQuery}
                                         departmentMap={departmentMap}
@@ -112,6 +118,8 @@ export function FolderTree({
                             selectedDocId={selectedDocId}
                             onToggle={onToggleOtherDocuments}
                             onSelectDocument={(doc, folder) => onSelectDocument(doc, folder as any)}
+                            onDocumentDeleted={onDocumentDeleted}
+                            onVersionCreated={onVersionCreated}
                             searchQuery={searchQuery}
                             departmentMap={departmentMap}
                             showPersonal={showPersonal}

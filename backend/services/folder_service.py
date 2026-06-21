@@ -49,6 +49,45 @@ class FolderService(BaseService):
         self.UserProfile = apps.get_model('users', 'UserProfile')
         self.AuditLog = apps.get_model('operations', 'AuditLog')
 
+    def _folder_hierarchy_names(self, folder) -> List[str]:
+        chain = []
+        current = folder
+        seen = set()
+        while current and current.id not in seen:
+            seen.add(current.id)
+            chain.append(current.name)
+            current = current.parent
+        return list(reversed(chain))
+
+    def _log_folder_audit(
+        self,
+        *,
+        account,
+        action: str,
+        folder,
+        context_label: str,
+        query_text: str,
+        extra_metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        department = getattr(folder, 'department', None)
+        metadata = {
+            'resource_name': folder.name,
+            'resource_label': f"Thư mục: {folder.name}",
+            'context_label': context_label,
+            'folder_name': folder.name,
+            'folder_hierarchy': self._folder_hierarchy_names(folder),
+            'department_name': getattr(department, 'name', None),
+        }
+        metadata.update(extra_metadata or {})
+        self.AuditLog.log_action(
+            account=account,
+            action=action,
+            resource_id=str(folder.id),
+            resource_type='folders',
+            query_text=query_text,
+            metadata=metadata,
+        )
+
     def _user_can_manage_department(self, user_id: str, target_department_id: str) -> bool:
         """
         Check if user has management rights over a department.
@@ -546,11 +585,12 @@ class FolderService(BaseService):
             # Log audit
             try:
                 user_account = self.Account.objects.get(id=user_id)
-                self.AuditLog.log_action(
+                self._log_folder_audit(
                     account=user_account,
                     action='CREATE_FOLDER',
-                    resource_id=str(folder.id),
-                    query_text=f"Created folder: {name}",
+                    folder=folder,
+                    context_label='Tạo thư mục',
+                    query_text=f"Tạo thư mục: {folder.name}",
                 )
             except Exception as e:
                 logger.warning(f"Failed to log CREATE_FOLDER action: {str(e)}")
@@ -628,11 +668,12 @@ class FolderService(BaseService):
             # Log audit
             try:
                 user_account = self.Account.objects.get(id=user_id)
-                self.AuditLog.log_action(
+                self._log_folder_audit(
                     account=user_account,
                     action='UPDATE_FOLDER',
-                    resource_id=str(folder_id),
-                    query_text=f"Updated folder metadata",
+                    folder=folder,
+                    context_label='Cập nhật thư mục',
+                    query_text=f"Cập nhật thư mục: {folder.name}",
                 )
             except Exception as e:
                 logger.warning(f"Failed to log UPDATE_FOLDER action: {str(e)}")
@@ -739,11 +780,16 @@ class FolderService(BaseService):
             
             # Log audit
             try:
-                self.AuditLog.log_action(
+                self._log_folder_audit(
                     account=user_account,
                     action='DELETE_FOLDER',
-                    resource_id=str(folder_id),
-                    query_text=f"Soft-deleted folder subtree: {folder.name}",
+                    folder=folder,
+                    context_label='Xóa thư mục',
+                    query_text=f"Xóa thư mục: {folder.name}",
+                    extra_metadata={
+                        'folders_deleted': len(folder_ids),
+                        'documents_deleted': len(document_ids),
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to log DELETE_FOLDER action: {str(e)}")
@@ -846,12 +892,20 @@ class FolderService(BaseService):
                 'documents_restored': documents_restored,
             }
             self.audit_log_action(
-                action='UPDATE',
+                action='RESTORE',
                 user_id=requested_by_user_id,
                 resource_id=str(folder.id),
-                resource_type='Folder',
-                query_text=f"Restored folder subtree: {folder.name}",
-                details={'restore': result},
+                resource_type='folders',
+                query_text=f"Khôi phục thư mục: {folder.name}",
+                details={
+                    'resource_name': folder.name,
+                    'resource_label': f"Thư mục: {folder.name}",
+                    'context_label': 'Khôi phục thư mục',
+                    'folder_name': folder.name,
+                    'folder_hierarchy': self._folder_hierarchy_names(folder),
+                    'department_name': getattr(getattr(folder, 'department', None), 'name', None),
+                    'restore': result,
+                },
             )
             return result
 
@@ -932,11 +986,15 @@ class FolderService(BaseService):
             # Log audit
             try:
                 user_account = self.Account.objects.get(id=user_id)
-                self.AuditLog.log_action(
+                self._log_folder_audit(
                     account=user_account,
                     action='MOVE_FOLDER',
-                    resource_id=str(folder_id),
-                    query_text=f"Moved folder to parent {new_parent_id}",
+                    folder=folder,
+                    context_label='Di chuyển thư mục',
+                    query_text=f"Di chuyển thư mục: {folder.name}",
+                    extra_metadata={
+                        'new_parent_folder_name': getattr(new_parent, 'name', None),
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to log MOVE_FOLDER action: {str(e)}")
@@ -1052,11 +1110,18 @@ class FolderService(BaseService):
             
             # Audit log
             try:
-                self.AuditLog.objects.create(
+                subject_name = subject.username if subject_type == 'account' else subject.name
+                self._log_folder_audit(
                     account=user_account,
                     action='GRANT_PERMISSION',
-                    resource_id=str(folder_id),
-                    query_text=f"Granted {permission} permission to {subject_type} {subject_id}",
+                    folder=folder,
+                    context_label='Cấp quyền truy cập thư mục',
+                    query_text=f"Cấp quyền {permission} cho {subject_name} trên thư mục: {folder.name}",
+                    extra_metadata={
+                        'permission': permission,
+                        'subject_type': subject_type,
+                        'subject_name': subject_name,
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to log GRANT_PERMISSION action: {str(e)}")
@@ -1150,7 +1215,18 @@ class FolderService(BaseService):
                     account=user_account,
                     action='REVOKE_PERMISSION',
                     resource_id=str(folder_id),
-                    query_text=f"Revoked permission {perm.id} ({perm.subject_type}:{perm.subject_id})",
+                    resource_type='folders',
+                    query_text=f"Gỡ quyền truy cập thư mục: {folder.name}",
+                    metadata={
+                        'resource_name': folder.name,
+                        'resource_label': f"Thư mục: {folder.name}",
+                        'context_label': 'Gỡ quyền truy cập thư mục',
+                        'folder_name': folder.name,
+                        'folder_hierarchy': self._folder_hierarchy_names(folder),
+                        'department_name': getattr(getattr(folder, 'department', None), 'name', None),
+                        'permission': perm.permission,
+                        'subject_type': perm.subject_type,
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to log REVOKE_PERMISSION action: {str(e)}")
@@ -1453,7 +1529,18 @@ class FolderService(BaseService):
                     account=user_account,
                     action='REVOKE_PERMISSION',
                     resource_id=str(folder_id),
-                    query_text=f"Revoked {permission} permission from {subject_type}:{subject_id}",
+                    resource_type='folders',
+                    query_text=f"Gỡ quyền {permission} khỏi thư mục: {folder.name}",
+                    metadata={
+                        'resource_name': folder.name,
+                        'resource_label': f"Thư mục: {folder.name}",
+                        'context_label': 'Gỡ quyền truy cập thư mục',
+                        'folder_name': folder.name,
+                        'folder_hierarchy': self._folder_hierarchy_names(folder),
+                        'department_name': getattr(getattr(folder, 'department', None), 'name', None),
+                        'permission': permission,
+                        'subject_type': subject_type,
+                    },
                 )
             except Exception as e:
                 logger.warning(f"Failed to log REVOKE_PERMISSION action: {str(e)}")

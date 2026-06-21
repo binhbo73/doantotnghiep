@@ -148,7 +148,7 @@ export default function DashboardPage() {
     }
 
     const handleViewAllActivities = () => {
-        console.log('View all activities')
+        router.push('/dashboard/audit-logs')
     }
 
     const handleAddEmployee = async (formData: any) => {

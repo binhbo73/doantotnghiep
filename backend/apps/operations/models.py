@@ -226,6 +226,7 @@ class AuditLog(BaseModel):
     ACTION_CHOICES = [
         ('LOGIN', 'Login'),
         ('LOGOUT', 'Logout'),
+        ('READ', 'Read'),
         ('CREATE', 'Create'),
         ('UPLOAD', 'Upload'),
         ('DELETE', 'Delete'),
@@ -262,6 +263,7 @@ class AuditLog(BaseModel):
         ('REMOVE_PERMISSION', 'Remove Permission'),
         ('UPDATE_PERMISSION', 'Update Permission'),
         ('DELETE_PERMISSION', 'Delete Permission'),
+        ('RESTORE', 'Restore'),
         ('CREATE_DOCUMENT', 'Create Document'),
         ('DOCUMENT_UPLOAD', 'Document Upload'),
         ('DOCUMENT_DOWNLOAD', 'Document Download'),
@@ -274,7 +276,17 @@ class AuditLog(BaseModel):
         ('FEEDBACK', 'Feedback'),
         ('GRANT_ACL', 'Grant ACL'),
         ('REVOKE_ACL', 'Revoke ACL'),
+        ('CHAT_MESSAGE', 'Chat Message'),
+        ('ACCESS_DENIED', 'Access Denied'),
+        ('ERROR', 'Error'),
         ('MUTATION', 'Mutation'),
+    ]
+
+    STATUS_CHOICES = [
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+        ('denied', 'Denied'),
+        ('pending', 'Pending'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -295,6 +307,43 @@ class AuditLog(BaseModel):
         null=True,
         blank=True,
         help_text="ID of affected resource (document/folder/user)"
+    )
+    resource_type = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Type of affected resource (document/folder/user/chat/etc.)"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='success',
+        db_index=True,
+        help_text="Outcome of the action"
+    )
+    http_method = models.CharField(
+        max_length=10,
+        null=True,
+        blank=True,
+        help_text="HTTP method that triggered the action"
+    )
+    path = models.CharField(
+        max_length=1000,
+        null=True,
+        blank=True,
+        help_text="API path that triggered the action"
+    )
+    status_code = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="HTTP response status code"
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Additional non-sensitive audit metadata"
     )
     query_text = models.TextField(
         null=True,
@@ -322,6 +371,8 @@ class AuditLog(BaseModel):
             models.Index(fields=['account_id', 'created_at'], name='idx_audit_acct_time'),
             models.Index(fields=['action']),
             models.Index(fields=['resource_id']),
+            models.Index(fields=['status', 'created_at'], name='audit_logs_status_356ed1_idx'),
+            models.Index(fields=['resource_type', 'created_at'], name='audit_logs_resourc_d25499_idx'),
         ]
         ordering = ['-created_at']
     
@@ -330,7 +381,23 @@ class AuditLog(BaseModel):
         return f"{self.action} by {user} at {self.created_at}"
     
     @classmethod
-    def log_action(cls, account, action, resource_id=None, query_text=None, request=None):
+    def log_action(
+        cls,
+        account,
+        action,
+        resource_id=None,
+        query_text=None,
+        request=None,
+        resource_type=None,
+        status='success',
+        http_method=None,
+        path=None,
+        status_code=None,
+        metadata=None,
+        ip_address=None,
+        user_agent=None,
+        **_ignored,
+    ):
         """
         Helper method để ghi audit log.
         
@@ -342,9 +409,9 @@ class AuditLog(BaseModel):
                 request=request
             )
         """
-        ip_address = None
-        user_agent = None
-        
+        if not query_text and _ignored.get('description'):
+            query_text = _ignored.get('description')
+
         if request:
             # Extract IP from request
             x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
@@ -355,11 +422,19 @@ class AuditLog(BaseModel):
             
             # Extract user agent
             user_agent = request.META.get('HTTP_USER_AGENT', '')[:1000]
+            http_method = http_method or request.method
+            path = path or request.path
         
         return cls.objects.create(
             account=account,
             action=action,
             resource_id=resource_id,
+            resource_type=resource_type,
+            status=status,
+            http_method=http_method,
+            path=path,
+            status_code=status_code,
+            metadata=json.loads(json.dumps(metadata or {}, default=str)),
             query_text=query_text,
             ip_address=ip_address,
             user_agent=user_agent,

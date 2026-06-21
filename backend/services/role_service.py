@@ -338,8 +338,15 @@ class RoleService(BaseService):
                     action='CREATE_ROLE',
                     user_id=requested_by_user_id,
                     resource_id=str(role.id),
-                    query_text=f"Created role: {role_code}",
-                    details={'name': role_name, 'permissions_count': len(validated_permissions)}
+                    resource_type='roles',
+                    query_text=f"Tạo vai trò: {role_name}",
+                    details={
+                        'resource_name': role_name,
+                        'resource_label': f"Vai trò: {role_name}",
+                        'context_label': 'Tạo vai trò mới',
+                        'role_code': role_code,
+                        'permissions_count': len(validated_permissions),
+                    }
                 )
             
             # Return role with permissions
@@ -452,14 +459,22 @@ class RoleService(BaseService):
                         self.role_repo.add_permissions(role_id, list(to_add))
                 
                 logger.info(f"Role updated: {role.code}")
+                role_display_name = updates.get('name', role.name)
                 
                 # Log audit
                 self.audit_log_action(
                     action='UPDATE_ROLE',
                     user_id=requested_by_user_id,
                     resource_id=str(role_id),
-                    query_text=f"Updated role: {role.code}",
-                    details={'updates': updates}
+                    resource_type='roles',
+                    query_text=f"Cập nhật vai trò: {role_display_name}",
+                    details={
+                        'resource_name': role_display_name,
+                        'resource_label': f"Vai trò: {role_display_name}",
+                        'context_label': 'Cập nhật vai trò',
+                        'role_code': role.code,
+                        'updates': updates,
+                    }
                 )
             
             # Return updated role
@@ -520,8 +535,15 @@ class RoleService(BaseService):
                     action='DELETE_ROLE',
                     user_id=requested_by_user_id,
                     resource_id=str(role_id),
-                    query_text=f"Deleted role: {role.code}",
-                    details={'accounts_affected': accounts_count}
+                    resource_type='roles',
+                    query_text=f"Xóa vai trò: {role.name}",
+                    details={
+                        'resource_name': role.name,
+                        'resource_label': f"Vai trò: {role.name}",
+                        'context_label': 'Xóa vai trò',
+                        'role_code': role.code,
+                        'accounts_affected': accounts_count,
+                    }
                 )
             
             return {'message': f"Role '{role.code}' deleted successfully"}
@@ -680,6 +702,23 @@ class RoleService(BaseService):
             # Add permission
             with transaction.atomic():
                 self.role_repo.add_permissions(role_id, [permission_id])
+
+                self.audit_log_action(
+                    action='ASSIGN_PERMISSION',
+                    user_id=requested_by_user_id,
+                    resource_id=str(role_id),
+                    resource_type='roles',
+                    query_text=f"Gán quyền {permission.code} cho vai trò {role.name}",
+                    details={
+                        'resource_name': role.name,
+                        'resource_label': f"Vai trò: {role.name}",
+                        'context_label': 'Gán quyền cho vai trò',
+                        'role_code': role.code,
+                        'permission_name': permission.name,
+                        'permission_code': permission.code,
+                        'permission_id': str(permission_id),
+                    }
+                )
             
             # Get updated permission count using the proper relationship
             from apps.users.models import RolePermission
@@ -770,8 +809,17 @@ class RoleService(BaseService):
                     action='REMOVE_PERMISSION',
                     user_id=requested_by_user_id,
                     resource_id=str(role_id),
-                    query_text=f"Removed permission from role: {permission.code}",
-                    details={'permission_code': permission.code, 'permission_id': str(permission_id)}
+                    resource_type='roles',
+                    query_text=f"Gỡ quyền {permission.code} khỏi vai trò {role.name}",
+                    details={
+                        'resource_name': role.name,
+                        'resource_label': f"Vai trò: {role.name}",
+                        'context_label': 'Gỡ quyền khỏi vai trò',
+                        'role_code': role.code,
+                        'permission_name': permission.name,
+                        'permission_code': permission.code,
+                        'permission_id': str(permission_id),
+                    }
                 )
             
             # Get updated permission count using the proper relationship

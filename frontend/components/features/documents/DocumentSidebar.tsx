@@ -385,7 +385,7 @@ export function DocumentSidebar({
 
                 {/* AI Processing Section */}
                 <div className="space-y-2">
-                    <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">AI Processing</h4>
+                    <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Trạng thái xử lý</h4>
                     <div className="p-3 bg-gradient-to-r from-violet-50 to-indigo-50 rounded-xl border border-violet-100 space-y-3">
                         <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">

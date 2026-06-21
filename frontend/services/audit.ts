@@ -17,7 +17,15 @@ export interface AuditLogResponse {
     account_username?: string
     action: string
     action_display: string
+    activity_summary?: string
     resource_id?: string
+    resource_type?: string
+    resource_label?: string
+    status?: 'success' | 'failed' | 'denied' | 'pending' | string
+    http_method?: string
+    path?: string
+    status_code?: number
+    metadata?: Record<string, unknown>
     query_text?: string
     ip_address?: string
     created_at: string
@@ -35,7 +43,15 @@ export interface AuditLogDetailResponse {
     }
     action: string
     action_display: string
+    activity_summary?: string
     resource_id?: string
+    resource_type?: string
+    resource_label?: string
+    status?: 'success' | 'failed' | 'denied' | 'pending' | string
+    http_method?: string
+    path?: string
+    status_code?: number
+    metadata?: Record<string, unknown>
     query_text?: string
     ip_address?: string
     user_agent?: string
@@ -56,6 +72,7 @@ export interface AuditStatisticsResponse {
     most_active_user?: string
     most_common_action?: string
     actions_breakdown: Record<string, number>
+    status_breakdown?: Record<string, number>
     users_breakdown: Record<string, number>
 }
 
@@ -151,8 +168,13 @@ function buildActivityItem(log: AuditLogResponse): ActivityItem {
  */
 export async function getAuditLogs(params?: {
     action?: string
+    status?: string
     account_id?: string
+    username?: string
     resource_id?: string
+    resource_type?: string
+    http_method?: string
+    status_code?: string
     start_date?: string
     end_date?: string
     search?: string
@@ -173,8 +195,13 @@ export async function getAuditLogs(params?: {
 }> {
     const queryParams = new URLSearchParams()
     if (params?.action) queryParams.append('action', params.action)
+    if (params?.status) queryParams.append('status', params.status)
     if (params?.account_id) queryParams.append('account_id', params.account_id)
+    if (params?.username) queryParams.append('username', params.username)
     if (params?.resource_id) queryParams.append('resource_id', params.resource_id)
+    if (params?.resource_type) queryParams.append('resource_type', params.resource_type)
+    if (params?.http_method) queryParams.append('http_method', params.http_method)
+    if (params?.status_code) queryParams.append('status_code', params.status_code)
     if (params?.start_date) queryParams.append('start_date', params.start_date)
     if (params?.end_date) queryParams.append('end_date', params.end_date)
     if (params?.search) queryParams.append('search', params.search)
@@ -252,6 +279,8 @@ export async function getAuditStatistics(): Promise<{
 export async function exportAuditLogs(params?: {
     format?: 'csv' | 'json'
     action?: string
+    status?: string
+    resource_type?: string
     start_date?: string
     end_date?: string
 }): Promise<{
@@ -262,6 +291,8 @@ export async function exportAuditLogs(params?: {
     const queryParams = new URLSearchParams()
     queryParams.append('format', params?.format || 'csv')
     if (params?.action) queryParams.append('action', params.action)
+    if (params?.status) queryParams.append('status', params.status)
+    if (params?.resource_type) queryParams.append('resource_type', params.resource_type)
     if (params?.start_date) queryParams.append('start_date', params.start_date)
     if (params?.end_date) queryParams.append('end_date', params.end_date)
 

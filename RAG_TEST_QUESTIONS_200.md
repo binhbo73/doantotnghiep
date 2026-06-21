@@ -441,9 +441,7 @@ Nguồn: `01-Mẫu biểu theo dõi dự án.docx`.
 // dừng lại ở đây , mai t iếp tục
 ### E.10. Bộ phận Chất lượng An toàn
 
-S041. **[CHẤT LƯỢNG AN TOÀN]** Khi nghi ngờ thiết bị có thể xảy ra sự cố, công nhân viên phải báo ngay cho ai?  
-Ý trả lời ngắn cần kiểm tra: Tổ trưởng.  
-Nguồn: `4.1 Qui định về an toàn & vệ sinh lao động.docx`.
+
 
 S042. **[CHẤT LƯỢNG AN TOÀN]** Trước khi sửa máy, sau khi ngắt công tắc điện còn phải đặt thêm gì?  
 Ý trả lời ngắn cần kiểm tra: Biển báo.  

@@ -412,9 +412,16 @@ class DepartmentService(BaseService):
                 action='CREATE',
                 user_id=requested_by_user_id,
                 resource_id=str(dept.id),
-                resource_type='Department',
-                query_text=f"Created department: {name}",
-                details={'name': name, 'parent_id': parent_id, 'manager_id': manager_id}
+                resource_type='departments',
+                query_text=f"Tạo phòng ban: {name}",
+                details={
+                    'resource_name': name,
+                    'resource_label': f"Phòng ban: {name}",
+                    'context_label': 'Tạo phòng ban',
+                    'department_name': name,
+                    'parent_department_name': getattr(parent_dept, 'name', None),
+                    'manager_id': manager_id,
+                }
             )
             # Keep the legacy manager FK and the new M2M relation in sync.
             if manager is not None:
@@ -509,9 +516,15 @@ class DepartmentService(BaseService):
                 action='UPDATE',
                 user_id=requested_by_user_id,
                 resource_id=str(dept_id),
-                resource_type='Department',
-                query_text=f"Updated department: {dept.name}",
-                details={'updates': updates}
+                resource_type='departments',
+                query_text=f"Cập nhật phòng ban: {dept.name}",
+                details={
+                    'resource_name': dept.name,
+                    'resource_label': f"Phòng ban: {dept.name}",
+                    'context_label': 'Cập nhật phòng ban',
+                    'department_name': dept.name,
+                    'updates': updates,
+                }
             )
 
             # If manager changed to a specific user, update their profile.department
@@ -705,9 +718,15 @@ class DepartmentService(BaseService):
                 action='DELETE',
                 user_id=requested_by_user_id,
                 resource_id=str(dept_id),
-                resource_type='Department',
-                query_text=f"Deleted department subtree: {dept.name}",
-                details={'impact': impact},
+                resource_type='departments',
+                query_text=f"Xóa phòng ban: {dept.name}",
+                details={
+                    'resource_name': dept.name,
+                    'resource_label': f"Phòng ban: {dept.name}",
+                    'context_label': 'Xóa phòng ban',
+                    'department_name': dept.name,
+                    'impact': impact,
+                },
             )
             logger.info("Department cascade soft-deleted: %s operation=%s", dept_id, operation.id)
             return impact
@@ -825,12 +844,18 @@ class DepartmentService(BaseService):
                 'roles_restored': 0,
             }
             self.audit_log_action(
-                action='UPDATE',
+                action='RESTORE',
                 user_id=requested_by_user_id,
                 resource_id=str(dept_id),
-                resource_type='Department',
-                query_text=f"Restored department subtree: {dept.name}",
-                details={'restore': result},
+                resource_type='departments',
+                query_text=f"Khôi phục phòng ban: {dept.name}",
+                details={
+                    'resource_name': dept.name,
+                    'resource_label': f"Phòng ban: {dept.name}",
+                    'context_label': 'Khôi phục phòng ban',
+                    'department_name': dept.name,
+                    'restore': result,
+                },
             )
             return result
 

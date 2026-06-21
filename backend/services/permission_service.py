@@ -881,21 +881,76 @@ class PermissionService(BaseService):
             granted_by_user_id: Who made the change
         """
         try:
-            query_text = f"{action}"
+            role = None
+            permission = None
+            target_user = None
+
             if role_id:
-                query_text += f" role_id={role_id}"
-            if target_user_id:
-                query_text += f" user_id={target_user_id}"
+                role = self.permission_repo.get_role_by_id(role_id)
             if permission_code:
-                query_text += f" permission={permission_code}"
+                permission = self.permission_repo.get_by_code(permission_code)
+            if target_user_id:
+                try:
+                    target_user = self.user_repo.get_by_id(target_user_id)
+                except Exception:
+                    target_user = None
+
+            query_text = f"{action}"
+            resource_type = 'permissions'
+            resource_id = str(permission.id) if permission else None
+            resource_name = permission.name if permission else permission_code
+            context_label = 'Theo dõi thay đổi quyền hạn'
+
+            if action in {'GRANT_ROLE', 'REVOKE_ROLE'} and target_user:
+                resource_type = 'users'
+                resource_id = str(target_user.id)
+                resource_name = getattr(target_user, 'username', None) or str(target_user)
+                role_name = getattr(role, 'name', None) or getattr(role, 'code', None)
+                verb = 'Gán vai trò' if action == 'GRANT_ROLE' else 'Thu hồi vai trò'
+                context_label = f"{verb} {role_name} cho người dùng {resource_name}"
+                query_text = context_label
+            elif role:
+                resource_type = 'roles'
+                resource_id = str(role.id)
+                resource_name = role.name
+                permission_name = getattr(permission, 'name', None) or permission_code
+                if action == 'ASSIGN_PERMISSION':
+                    context_label = f"Gán quyền {permission_name} cho vai trò {role.name}"
+                elif action == 'REMOVE_PERMISSION':
+                    context_label = f"Gỡ quyền {permission_name} khỏi vai trò {role.name}"
+                else:
+                    context_label = f"Cập nhật quyền của vai trò {role.name}"
+                query_text = context_label
+            elif permission:
+                if action == 'CREATE':
+                    context_label = f"Tạo quyền hạn {permission.name}"
+                elif action == 'UPDATE_PERMISSION':
+                    context_label = f"Cập nhật quyền hạn {permission.name}"
+                elif action == 'DELETE_PERMISSION':
+                    context_label = f"Xóa quyền hạn {permission.name}"
+                query_text = context_label
             
             self.audit_log_action(
                 action=action,
                 user_id=granted_by_user_id,
-                resource_id=str(role_id) if role_id else None,
-                resource_type='Permission',
+                resource_id=resource_id,
+                resource_type=resource_type,
                 query_text=query_text,
-                details={'target_user_id': target_user_id, 'permission_code': permission_code}
+                details={
+                    'resource_name': resource_name,
+                    'resource_label': (
+                        f"Vai trò: {role.name}" if role else
+                        f"Quyền: {permission.name}" if permission else
+                        f"Người dùng: {resource_name}" if target_user else
+                        resource_name
+                    ),
+                    'context_label': context_label,
+                    'target_user_id': str(target_user_id) if target_user_id else None,
+                    'role_name': getattr(role, 'name', None),
+                    'role_code': getattr(role, 'code', None),
+                    'permission_name': getattr(permission, 'name', None),
+                    'permission_code': permission_code,
+                }
             )
         except Exception as e:
             logger.warning(f"Could not log permission audit: {str(e)}")

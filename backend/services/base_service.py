@@ -513,6 +513,14 @@ class BaseService:
             # account field can be NULL in AuditLog
             # Don't use self.repository.get_by_id() - it might be wrong repository type (DocumentRepository, etc)
             account = None
+            if user_id:
+                try:
+                    from django.apps import apps
+
+                    Account = apps.get_model('users', 'Account')
+                    account = Account.objects.filter(id=user_id).first()
+                except Exception:
+                    account = None
             
             return self.audit_log_repository.log_action(
                 account=account,

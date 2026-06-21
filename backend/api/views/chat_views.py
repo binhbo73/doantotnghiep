@@ -561,19 +561,34 @@ class MessageSendView(BaseViewSet):
             )
             serializer.is_valid(raise_exception=True)
             bot_message = serializer.save()
-            
-            # Log audit
+            request._skip_request_audit = True
+
             try:
-                from apps.operations.models import AuditLog
-                AuditLog.objects.create(
+                from repositories.audit_log_repository import AuditLogRepository
+                conversation = getattr(bot_message, 'conversation', None)
+                conversation_title = getattr(conversation, 'title', None) or 'Cuộc chat hiện tại'
+                AuditLogRepository().log_action(
                     account=request.user,
-                    action='CREATE',
-                    resource_id=str(bot_message.id),
-                    query_text=f"Sent message in conversation",
+                    action='CHAT_MESSAGE',
+                    resource_id=getattr(conversation, 'id', None),
+                    resource_type='chat_sessions',
+                    query_text=f'Gửi tin nhắn trong cuộc chat: {conversation_title}',
+                    details={
+                        'attempted_action': 'CHAT_MESSAGE',
+                        'conversation_title': conversation_title,
+                        'chat_question': str(request.data.get('content') or '')[:200],
+                        'message_id': str(bot_message.id),
+                        'document_count': len(request.data.get('document_ids') or []),
+                        'folder_count': len(request.data.get('folder_ids') or []),
+                    },
+                    status='success',
+                    http_method=request.method,
+                    path=request.path,
+                    status_code=status.HTTP_201_CREATED,
                 )
-            except Exception as e:
-                logger.warning(f"Failed to log audit for message create: {e}")
-            
+            except Exception as audit_error:
+                logger.warning(f"Failed to log audit for message create: {audit_error}")
+
             logger.info(f"User {request.user.id} sent message in conversation")
             
             return self.success_response(
@@ -1040,10 +1055,69 @@ class ChatStreamView(View):
         for permission_code in (PermissionCodes.CHAT_SEND, PermissionCodes.RAG_QUERY):
             has_permission = await sync_to_async(user_has_permission)(user, permission_code)
             if not has_permission:
+                try:
+                    from repositories.audit_log_repository import AuditLogRepository
+                    await sync_to_async(AuditLogRepository().log_action)(
+                        account=user,
+                        action='ACCESS_DENIED',
+                        resource_type='chat_sessions',
+                        query_text=f'Không được phép gửi tin nhắn chat ({permission_code})',
+                        details={
+                            'attempted_action': 'CHAT_MESSAGE',
+                            'missing_permission': permission_code,
+                            'rag_mode': rag_mode,
+                        },
+                        status='denied',
+                        http_method='POST',
+                        path=request.path,
+                        status_code=403,
+                    )
+                except Exception as audit_error:
+                    logger.warning(f'Failed to log denied chat stream audit: {audit_error}')
                 return JsonResponse({'error': f'You need {permission_code} permission'}, status=403)
 
         from services.chat_service import ChatService
         chat_service = ChatService()
+
+        conversation_uuid = None
+        conversation_title = 'Cuộc chat hiện tại'
+        if conversation_id:
+            try:
+                conversation_uuid = UUID(str(conversation_id))
+                conversation = await Conversation.objects.filter(
+                    id=conversation_uuid,
+                    account=user,
+                    is_deleted=False,
+                ).afirst()
+                if conversation and conversation.title:
+                    conversation_title = conversation.title
+            except (TypeError, ValueError):
+                conversation_uuid = None
+
+        try:
+            from repositories.audit_log_repository import AuditLogRepository
+            await sync_to_async(AuditLogRepository().log_action)(
+                account=user,
+                action='CHAT_MESSAGE',
+                resource_id=conversation_uuid,
+                resource_type='chat_sessions',
+                query_text=f'Gửi tin nhắn trong cuộc chat: {conversation_title}',
+                details={
+                    'attempted_action': 'CHAT_MESSAGE',
+                    'conversation_title': conversation_title,
+                    'chat_question': content[:200],
+                    'document_count': len(document_ids),
+                    'folder_count': len(folder_ids),
+                    'rag_mode': rag_mode,
+                    'current_page': current_page,
+                },
+                status='success',
+                http_method='POST',
+                path=request.path,
+                status_code=200,
+            )
+        except Exception as audit_error:
+            logger.warning(f'Failed to log chat stream audit: {audit_error}')
 
         # 4. Async generator: bridge sync llama generator → async stream
         async def async_stream_generator():

@@ -144,6 +144,7 @@ class PermissionListView(APIView):
                 data=serializer.validated_data,
                 requested_by_user_id=request.user.id if hasattr(request, 'user') else None
             )
+            request._skip_request_audit = True
             
             return Response(
                 ResponseBuilder.created(data=result, resource_type="Permission"),
@@ -214,6 +215,7 @@ class PermissionListView(APIView):
                 data=serializer.validated_data,
                 requested_by_user_id=request.user.id if hasattr(request, 'user') else None
             )
+            request._skip_request_audit = True
             
             return Response(
                 ResponseBuilder.success(data=result, message="Permission updated successfully"),
@@ -257,6 +259,7 @@ class PermissionListView(APIView):
                 permission_id=permission_id,
                 requested_by_user_id=request.user.id if hasattr(request, 'user') else None
             )
+            request._skip_request_audit = True
             
             return Response(
                 ResponseBuilder.success(message="Permission deleted successfully"),
@@ -312,6 +315,7 @@ class RoleManagementView(APIView):
             
             role_service = RoleService()
             result = role_service.create_role(data=serializer.validated_data, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
+            request._skip_request_audit = True
             
             return Response(ResponseBuilder.success(data=result, message="Role created successfully"), status=status.HTTP_201_CREATED)
         except ParseError as e:
@@ -331,6 +335,7 @@ class RoleManagementView(APIView):
             
             role_service = RoleService()
             result = role_service.update_role(role_id=role_id, data=serializer.validated_data, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
+            request._skip_request_audit = True
             
             return Response(ResponseBuilder.success(data=result, message="Role updated successfully"), status=status.HTTP_200_OK)
         except NotFoundError as e:
@@ -352,6 +357,7 @@ class RoleManagementView(APIView):
         try:
             role_service = RoleService()
             role_service.delete_role(role_id=role_id, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
+            request._skip_request_audit = True
             
             return Response(ResponseBuilder.success(message="Role deleted successfully"), status=status.HTTP_204_NO_CONTENT)
         except NotFoundError as e:
@@ -400,6 +406,7 @@ class RolePermissionsView(APIView):
             
             role_service = RoleService()
             result = role_service.add_permission_to_role(role_id=role_id, permission_id=perm_id, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
+            request._skip_request_audit = True
             
             return Response(ResponseBuilder.success(data=result, message="Permission added to role"), status=status.HTTP_200_OK)
         except NotFoundError as e:
@@ -421,6 +428,7 @@ class RolePermissionsView(APIView):
         try:
             role_service = RoleService()
             role_service.remove_permission_from_role(role_id=role_id, permission_id=permission_id, requested_by_user_id=request.user.id if hasattr(request, 'user') else None)
+            request._skip_request_audit = True
             
             return Response(ResponseBuilder.success(message="Permission removed from role"), status=status.HTTP_204_NO_CONTENT)
         except NotFoundError as e:

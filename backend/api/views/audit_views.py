@@ -72,30 +72,63 @@ class AuditLogListView(BaseReadOnlyViewSet):
     permission_classes = [IsAuthenticated, HasAnyPermission]
     required_permissions = [PermissionCodes.AUDIT_LOG_VIEW]
     pagination_class = AuditLogPagination
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['query_text', 'account__username']
+    filter_backends = [filters.OrderingFilter]
     ordering_fields = ['created_at', 'action']
     ordering = ['-created_at']
     
     def get_queryset(self):
         """Apply filters to queryset"""
         queryset = super().get_queryset()
+        queryset = queryset.exclude(
+            Q(resource_type__in=['audit-logs', 'auth_me'])
+            | Q(path__startswith='/api/v1/audit-logs')
+            | Q(path='/api/v1/auth/me')
+        )
+        supporting_suffixes = (
+            '/assets',
+            '/chunks',
+        )
+        for suffix in supporting_suffixes:
+            queryset = queryset.exclude(path__endswith=suffix)
         
         # Get query parameters
         action = self.request.query_params.get('action', '').strip()
+        log_status = self.request.query_params.get('status', '').strip().lower()
         account_id = self.request.query_params.get('account_id', '').strip()
+        username = self.request.query_params.get('username', '').strip()
         resource_id = self.request.query_params.get('resource_id', '').strip()
+        resource_type = self.request.query_params.get('resource_type', '').strip()
+        http_method = self.request.query_params.get('http_method', '').strip().upper()
+        status_code = self.request.query_params.get('status_code', '').strip()
         start_date = self.request.query_params.get('start_date', '').strip()
         end_date = self.request.query_params.get('end_date', '').strip()
         
         if action:
             queryset = queryset.filter(action=action.upper())
+
+        if log_status:
+            queryset = queryset.filter(status=log_status)
+
+        if resource_type:
+            queryset = queryset.filter(resource_type=resource_type)
+
+        if http_method:
+            queryset = queryset.filter(http_method=http_method)
+
+        if status_code:
+            try:
+                queryset = queryset.filter(status_code=int(status_code))
+            except (ValueError, TypeError):
+                pass
         
         if account_id:
             try:
                 queryset = queryset.filter(account_id=account_id)
             except (ValueError, TypeError):
                 pass
+
+        if username:
+            queryset = queryset.filter(account__username__icontains=username)
         
         if resource_id:
             try:
@@ -199,6 +232,12 @@ class RecentActivityView(APIView):
             user_id = request.query_params.get('user_id', '').strip()
             
             queryset = AuditLog.objects.select_related('account').order_by('-created_at')
+            queryset = queryset.exclude(
+                Q(resource_type__in=['audit-logs', 'auth_me'])
+                | Q(path__startswith='/api/v1/audit-logs')
+                | Q(path='/api/v1/auth/me')
+            )
+            queryset = queryset.exclude(Q(path__endswith='/assets') | Q(path__endswith='/chunks'))
             
             if user_id:
                 queryset = queryset.filter(account_id=user_id)
@@ -262,6 +301,11 @@ class AuditLogStatisticsView(APIView):
                 count=Count('id')
             ).order_by('-count')
             actions_breakdown = {item['action']: item['count'] for item in actions}
+
+            statuses = AuditLog.objects.values('status').annotate(
+                count=Count('id')
+            ).order_by('-count')
+            status_breakdown = {item['status'] or 'unknown': item['count'] for item in statuses}
             
             users = AuditLog.objects.filter(
                 account__isnull=False
@@ -278,6 +322,7 @@ class AuditLogStatisticsView(APIView):
                 'most_active_user': most_active_user,
                 'most_common_action': most_common_action,
                 'actions_breakdown': actions_breakdown,
+                'status_breakdown': status_breakdown,
                 'users_breakdown': users_breakdown,
             }
             
@@ -313,6 +358,8 @@ class AuditLogExportView(APIView):
             import csv
             
             action = request.query_params.get('action', '').strip()
+            log_status = request.query_params.get('status', '').strip().lower()
+            resource_type = request.query_params.get('resource_type', '').strip()
             start_date = request.query_params.get('start_date', '').strip()
             end_date = request.query_params.get('end_date', '').strip()
             file_format = request.query_params.get('format', 'csv').lower()
@@ -321,6 +368,12 @@ class AuditLogExportView(APIView):
             
             if action:
                 queryset = queryset.filter(action=action.upper())
+
+            if log_status:
+                queryset = queryset.filter(status=log_status)
+
+            if resource_type:
+                queryset = queryset.filter(resource_type=resource_type)
             
             if start_date:
                 try:
@@ -342,8 +395,9 @@ class AuditLogExportView(APIView):
                 
                 writer = csv.writer(response)
                 writer.writerow([
-                    'ID', 'User', 'Action', 'Resource ID', 'Query Text',
-                    'IP Address', 'Created At'
+                    'ID', 'User', 'Action', 'Status', 'Resource Type',
+                    'Resource ID', 'Method', 'Path', 'Status Code',
+                    'Query Text', 'IP Address', 'Created At'
                 ])
                 
                 for log in queryset:
@@ -351,7 +405,12 @@ class AuditLogExportView(APIView):
                         str(log.id),
                         log.account.username if log.account else 'System',
                         log.action,
+                        log.status,
+                        log.resource_type or '',
                         str(log.resource_id) if log.resource_id else '',
+                        log.http_method or '',
+                        log.path or '',
+                        log.status_code or '',
                         log.query_text or '',
                         log.ip_address or '',
                         log.created_at.isoformat(),

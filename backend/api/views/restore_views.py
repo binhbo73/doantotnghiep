@@ -334,11 +334,10 @@ class DeletedRecordsView(APIView):
         return apps.get_model(config["app"], config["model"])
 
     @staticmethod
-    def _has_restore_permission(user, permission_code):
+    def _has_restore_permission(user, _permission_code):
         return (
             getattr(user, "is_superuser", False)
             or user_has_permission(user, PermissionCodes.SYSTEM_ADMIN)
-            or user_has_permission(user, permission_code)
         )
 
     @staticmethod

@@ -340,9 +340,17 @@ class UserProfileAdminDetailView(APIView):
                     account=request.user,
                     action='UPDATE_USER_PROFILE',
                     resource_id=str(updated_profile.id),
+                    resource_type='users',
                     query_text=f"Admin updated user {user_id}. Fields: {', '.join(changed_fields)}",
-                    request=request
+                    request=request,
+                    metadata={
+                        'resource_name': updated_profile.full_name,
+                        'resource_label': f"Người dùng: {updated_profile.full_name}",
+                        'context_label': 'Cập nhật hồ sơ người dùng',
+                        'department_name': getattr(updated_profile.department, 'name', None),
+                    },
                 )
+                request._skip_request_audit = True
             except Exception as e:
                 logger.error(f"Failed to log user profile update: {str(e)}")
             

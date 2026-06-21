@@ -436,15 +436,20 @@ class DocumentUploadView(APIView):
             try:
                 from services.audit_service import AuditService
                 AuditService().log(
-                    action='DOCUMENT_UPLOAD',
+                    action='UPLOAD',
                     account=request.user,
                     resource_id=str(document.id),
-                    resource_type='Document',
+                    resource_type='documents',
+                    query_text=f"Tải lên tài liệu: {document.original_name}",
                     metadata={
+                        'resource_name': document.original_name,
+                        'resource_label': f"Tài liệu: {document.original_name}",
+                        'context_label': 'Tải lên tài liệu',
+                        'document_name': document.original_name,
                         'file_name': document.original_name,
                         'file_size': document.file_size,
-                        'folder_id': folder_id,
-                        'department_id': department_id,
+                        'folder_name': getattr(getattr(document, 'folder', None), 'name', None),
+                        'department_name': getattr(getattr(document, 'department', None), 'name', None),
                         'access_scope': document.access_scope,
                         'status': document.status,
                     }
@@ -965,10 +970,17 @@ class DocumentDownloadView(APIView):
             from services.audit_service import AuditService
             audit_service = AuditService()
             audit_service.log(
-                action='DOCUMENT_DOWNLOAD',
+                action='DOWNLOAD',
                 account=request.user,
                 resource_id=doc_id,
-                resource_type='Document',
+                resource_type='documents',
+                query_text=f"Tải xuống tài liệu: {file_data['filename']}",
+                metadata={
+                    'resource_name': file_data['filename'],
+                    'resource_label': f"Tài liệu: {file_data['filename']}",
+                    'context_label': 'Tải xuống tài liệu',
+                    'document_name': file_data['filename'],
+                },
             )
             
             logger.info(f"User {request.user.id} downloaded document {doc_id}")

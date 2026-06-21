@@ -175,7 +175,7 @@ export function RoleManagementPage() {
             </p>
           </div>
           <div className="flex items-center ml-4 gap-2">
-            {canManagePermissions && <button
+            {/* {canManagePermissions && <button
               type="button"
               onClick={() => setIsCreatePermissionDialogOpen(true)}
               className="px-3 py-1.5 rounded-lg font-medium text-xs transition whitespace-nowrap flex items-center gap-1"
@@ -186,7 +186,7 @@ export function RoleManagementPage() {
               }}
             >
               <span>🔐</span> Tạo quyền hạn mới
-            </button>}
+            </button>} */}
 
             {canManageRoles && <button
               onClick={() => setIsCreateDialogOpen(true)}

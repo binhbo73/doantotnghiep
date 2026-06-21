@@ -160,7 +160,7 @@ function translateRestoreError(message: string) {
 }
 
 export default function DeletedRecordsPage() {
-    const { hasPermission, hasAnyPermission } = useRBAC()
+    const { hasPermission } = useRBAC()
     const [selectedResource, setSelectedResource] = useState<DeletedResource>('documents')
     const [records, setRecords] = useState<DeletedRecord[]>([])
     const [page, setPage] = useState(1)
@@ -180,23 +180,7 @@ export default function DeletedRecordsPage() {
 
     const visibleResourceKeys = visibleResources.map((item) => item.key).join('|')
 
-    const canAccessRestoreCenter = hasAnyPermission([
-        'system_admin',
-        'user_delete',
-        'user_reset_password',
-        'user_change_role',
-        'department_manage',
-        'folder_delete',
-        'folder_update',
-        'document_delete',
-        'document_update',
-        'document_share',
-        'role_manage',
-        'permission_manage',
-        'chat_create',
-        'chat_send',
-        'audit_log_view',
-    ])
+    const canAccessRestoreCenter = hasPermission('system_admin')
 
     const selectedConfig = useMemo(
         () => RESOURCE_CONFIGS.find((item) => item.key === selectedResource) || RESOURCE_CONFIGS[0],

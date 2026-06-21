@@ -3,7 +3,10 @@ AuditLogRepository - Specific queries for AuditLog model.
 Centralized audit logging to replace scattered AuditLog.objects.create() calls.
 """
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import timedelta
+import json
+from django.db.models import Q
+from django.utils import timezone
 from apps.operations.models import AuditLog
 from .base_repository import BaseRepository
 import logging
@@ -49,7 +52,10 @@ class AuditLogRepository(BaseRepository):
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
         details: Optional[Dict] = None,
-        status: str = 'success'
+        status: str = 'success',
+        http_method: Optional[str] = None,
+        path: Optional[str] = None,
+        status_code: Optional[int] = None,
     ) -> bool:
         """
         Create audit log entry for an action.
@@ -87,14 +93,30 @@ class AuditLogRepository(BaseRepository):
             - Handles None values gracefully
         """
         try:
+            if self._is_duplicate_read(
+                account=account,
+                action=action,
+                resource_id=resource_id,
+                resource_type=resource_type,
+                status=status,
+                path=path,
+            ):
+                return True
+
             # Prepare data - all fields optional (only include fields that AuditLog model supports)
             log_data = {
                 'account': account,
                 'action': action or 'UNKNOWN',
                 'resource_id': resource_id,
+                'resource_type': resource_type,
+                'status': status or 'success',
                 'query_text': query_text,
                 'ip_address': ip_address,
                 'user_agent': user_agent,
+                'metadata': self._json_safe(details or {}),
+                'http_method': http_method,
+                'path': path,
+                'status_code': status_code,
             }
             
             # Remove None values for cleaner audit logs
@@ -111,6 +133,48 @@ class AuditLogRepository(BaseRepository):
                 exc_info=True
             )
             return False
+
+    def _is_duplicate_read(
+        self,
+        account: Optional[Any],
+        action: str,
+        resource_id: Optional[str],
+        resource_type: Optional[str],
+        status: str,
+        path: Optional[str],
+    ) -> bool:
+        if action != 'READ' or status != 'success' or not resource_type:
+            return False
+
+        recent_cutoff = timezone.now() - timedelta(seconds=20)
+        filters = Q(
+            action='READ',
+            status='success',
+            resource_type=resource_type,
+            created_at__gte=recent_cutoff,
+        )
+
+        if account is None:
+            filters &= Q(account__isnull=True)
+        else:
+            filters &= Q(account=account)
+
+        if resource_id:
+            filters &= Q(resource_id=resource_id)
+        else:
+            filters &= Q(resource_id__isnull=True)
+
+        if path:
+            filters &= Q(path=path)
+
+        return self.model_class.objects.filter(filters).exists()
+
+    @staticmethod
+    def _json_safe(value: Dict) -> Dict:
+        try:
+            return json.loads(json.dumps(value, default=str))
+        except Exception:
+            return {'raw': str(value)}
     
     def get_user_actions(self, account_id: str, limit: int = 100) -> list:
         """

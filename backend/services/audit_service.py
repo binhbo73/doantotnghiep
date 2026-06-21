@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from repositories.audit_log_repository import AuditLogRepository
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -29,7 +30,7 @@ class AuditService:
             action='CREATE_DOCUMENT',
             account=request.user,
             resource_id=str(doc.id),
-            resource_type='Document',
+            resource_type='documents',
             metadata={'filename': doc.name}
         )
     """
@@ -39,7 +40,9 @@ class AuditService:
     
     def log(self, action: str, account, resource_id: str = None, 
             resource_type: str = None, query_text: str = None,
-            metadata: dict = None, ip_address: str = None, user_agent: str = None):
+            metadata: dict = None, ip_address: str = None, user_agent: str = None,
+            status: str = 'success', http_method: str = None, path: str = None,
+            status_code: int = None):
         """
         Log an audit action to database.
         
@@ -47,7 +50,7 @@ class AuditService:
             action (str): Action type (e.g., 'CREATE_ROLE')
             account: User performing action
             resource_id (str): ID of affected resource
-            resource_type (str): Type of affected resource (e.g., 'Role', 'Document')
+            resource_type (str): Type of affected resource (e.g., 'roles', 'documents')
             metadata (dict): Additional data (optional)
             ip_address (str): Client IP address (optional)
         
@@ -62,6 +65,12 @@ class AuditService:
                 action=action,
                 account=account,
                 resource_id=resource_id,
+                resource_type=resource_type,
+                status=status,
+                http_method=http_method,
+                path=path,
+                status_code=status_code,
+                metadata=json.loads(json.dumps(metadata or {}, default=str)),
                 query_text=query_text,
                 ip_address=ip_address,
                 user_agent=user_agent
@@ -76,9 +85,10 @@ class AuditService:
             
         except Exception as e:
             # Log errors but don't fail the main operation
+            username = getattr(account, 'username', 'system')
             logger.error(
                 f"Failed to create audit log: {str(e)} "
-                f"(Action: {action}, User: {account.username})"
+                f"(Action: {action}, User: {username})"
             )
             return None
     
@@ -107,7 +117,7 @@ class AuditService:
             action='CHANGE_ROLE',
             account=account,
             resource_id=user_id,
-            resource_type='Account',
+            resource_type='accounts',
             metadata={
                 'old_roles': old_roles,
                 'new_roles': new_roles
@@ -151,8 +161,12 @@ class AuditService:
             action='UPLOAD',
             account=account,
             resource_id=document_id,
-            resource_type='Document',
+            resource_type='documents',
             metadata={
+                'resource_name': filename,
+                'resource_label': f"Tài liệu: {filename}",
+                'context_label': 'Tải lên tài liệu',
+                'document_name': filename,
                 'filename': filename,
                 'size': size
             }
@@ -164,8 +178,12 @@ class AuditService:
             action='DOWNLOAD',
             account=account,
             resource_id=document_id,
-            resource_type='Document',
+            resource_type='documents',
             metadata={
+                'resource_name': filename,
+                'resource_label': f"Tài liệu: {filename}",
+                'context_label': 'Tải xuống tài liệu',
+                'document_name': filename,
                 'filename': filename
             }
         )

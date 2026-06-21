@@ -2089,7 +2089,11 @@ Cách làm việc:
         citations: List[Dict[str, Any]],
     ) -> str:
         """Ensure the UI has at least one inline marker to attach a citation popup."""
-        if not citations or self._extract_referenced_citation_numbers(answer_text):
+        if (
+            not citations
+            or self._extract_referenced_citation_numbers(answer_text)
+            or self._answer_indicates_no_information(answer_text)
+        ):
             return answer_text
 
         first_citation = next(
@@ -2584,6 +2588,25 @@ Cách làm việc:
             })
         return references
 
+    def _answer_indicates_no_information(self, answer_text: str) -> bool:
+        """Return True when the final answer clearly states the documents lack evidence."""
+        if not answer_text:
+            return False
+        normalized = self._normalize_query_text(answer_text)
+        negative_patterns = [
+            r'\btai lieu khong co thong tin\b',
+            r'\bkhong co thong tin\b',
+            r'\bkhong tim thay\b',
+            r'\bkhong co trong tai lieu\b',
+            r'\bkhong du thong tin\b',
+            r'\btai lieu hien khong cung cap\b',
+            r'\bkhong du thong tin\b',
+            r'\bkhong the tim thay thong tin\b',
+            r'\bkhong the xac dinh\b',
+            r'\btai lieu tham khao khong co\b',
+        ]
+        return any(re.search(pattern, normalized) for pattern in negative_patterns)
+
     def _extract_answer_context_for_citation(self, text: str, citation_id: Any) -> str:
         """Return the sentence/paragraph that the model attached to a citation chip."""
         if citation_id is None:
@@ -2907,9 +2930,25 @@ Cách làm việc:
         """Convert retrieved chunks into frontend-ready source cards."""
         citations: List[Dict[str, Any]] = []
         seen = set()
+        if self._answer_indicates_no_information(answer_text):
+            return []
+
         referenced_numbers = self._extract_referenced_citation_numbers(answer_text)
         source_references = self._extract_source_references(answer_text)
         source_reference_map = {ref['number']: ref for ref in source_references}
+
+        if not referenced_numbers and answer_text:
+            # If the answer contains no explicit citation markers, infer the best supporting
+            # citations from the answer text itself so we do not expose unrelated documents.
+            inferred_attributions = self._build_fact_attribution(answer_text, candidates)
+            inferred_numbers = {
+                int(item['best_citation'])
+                for item in inferred_attributions
+                if item.get('best_citation') and str(item.get('best_citation')).isdigit()
+            }
+            if inferred_numbers:
+                referenced_numbers = inferred_numbers
+
         doc_name_map: Dict[str, str] = {}
         doc_file_type_map: Dict[str, str] = {}
         missing_doc_ids = list({

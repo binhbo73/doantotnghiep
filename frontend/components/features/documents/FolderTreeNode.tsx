@@ -17,6 +17,8 @@ interface FolderTreeNodeProps {
     onUploadToFolder?: (folder: FolderResponse) => void
     onCreateSubfolder?: (folder: FolderResponse) => void
     onDeleteFolder?: (folder: FolderResponse) => void
+    onDocumentDeleted?: (documentId: string) => void | Promise<void>
+    onVersionCreated?: () => void
     deletingFolderId?: string | null
     searchQuery?: string
     departmentMap?: Record<string, string>
@@ -79,6 +81,8 @@ export function FolderTreeNodeComponent({
     onUploadToFolder,
     onCreateSubfolder,
     onDeleteFolder,
+    onDocumentDeleted,
+    onVersionCreated,
     deletingFolderId,
     searchQuery = '',
     departmentMap = {},
@@ -328,6 +332,8 @@ export function FolderTreeNodeComponent({
                                     onUploadToFolder={onUploadToFolder}
                                     onCreateSubfolder={onCreateSubfolder}
                                     onDeleteFolder={onDeleteFolder}
+                                    onDocumentDeleted={onDocumentDeleted}
+                                    onVersionCreated={onVersionCreated}
                                     deletingFolderId={deletingFolderId}
                                     searchQuery={searchQuery}
                                     departmentMap={departmentMap}
@@ -360,6 +366,8 @@ export function FolderTreeNodeComponent({
                                             onSelect={() => onSelectDocument(doc, folder)}
                                             folderName={folder.name}
                                             departmentName={departmentMap[doc.department || doc.department_id || '']}
+                                            onDocumentDeleted={onDocumentDeleted}
+                                            onVersionCreated={onVersionCreated}
                                         />
                                     </div>
                                 ))}

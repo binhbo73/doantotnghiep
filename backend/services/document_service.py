@@ -616,8 +616,16 @@ class DocumentService(BaseService):
                     action='DELETE',
                     user_id=user_id,
                     resource_id=str(document_id),
-                    resource_type='Document',
-                    query_text=f"Deleted document {document_id}"
+                    resource_type='documents',
+                    query_text=f"Xóa tài liệu: {document.original_name or document.filename}",
+                    details={
+                        'resource_name': document.original_name or document.filename,
+                        'resource_label': f"Tài liệu: {document.original_name or document.filename}",
+                        'context_label': 'Xóa tài liệu',
+                        'document_name': document.original_name or document.filename,
+                        'folder_name': getattr(getattr(document, 'folder', None), 'name', None),
+                        'department_name': getattr(getattr(document, 'department', None), 'name', None),
+                    }
                 )
 
             # Keep source files, extracted assets and Qdrant vectors intact.
@@ -668,12 +676,28 @@ class DocumentService(BaseService):
     ):
         """Log document action to AuditLog - Use BaseService.audit_log_action instead"""
         try:
+            document = self.document_repo.get_by_id(document_id)
+            document_name = (
+                getattr(document, 'original_name', None)
+                or getattr(document, 'filename', None)
+                or 'Tài liệu'
+            )
+            folder = getattr(document, 'folder', None)
+            department = getattr(document, 'department', None) or getattr(folder, 'department', None)
             self.audit_log_action(
                 action=action,
                 user_id=user_id,
                 resource_id=str(document_id),
-                resource_type='Document',
-                query_text=f"{action} document {document_id}"
+                resource_type='documents',
+                query_text=f"{action} tài liệu: {document_name}",
+                details={
+                    'resource_name': document_name,
+                    'resource_label': f"Tài liệu: {document_name}",
+                    'context_label': 'Cập nhật tài liệu' if action not in {'READ', 'UPLOAD', 'DELETE'} else None,
+                    'document_name': document_name,
+                    'folder_name': getattr(folder, 'name', None),
+                    'department_name': getattr(department, 'name', None),
+                }
             )
         except Exception as e:
             logger.warning(f"Could not log audit: {str(e)}")

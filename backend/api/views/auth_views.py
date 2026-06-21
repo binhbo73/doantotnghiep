@@ -599,9 +599,14 @@ class ChangePasswordView(APIView):
                 AuditLog.log_action(
                     account=request.user,
                     action='CHANGE_PASSWORD',
-                    resource_type='Account',
+                    resource_type='accounts',
                     resource_id=str(request.user.id),
-                    query_text=f"User {request.user.username} changed password",
+                    query_text=f"Đổi mật khẩu tài khoản: {request.user.username}",
+                    metadata={
+                        'resource_name': request.user.username,
+                        'resource_label': f"Tài khoản: {request.user.username}",
+                        'context_label': 'Đổi mật khẩu',
+                    },
                     ip_address=ip_address,
                     user_agent=request.META.get('HTTP_USER_AGENT', '')
                 )

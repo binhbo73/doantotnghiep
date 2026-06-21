@@ -13,6 +13,8 @@ interface OtherDocumentsProps {
     selectedDocId: string | null
     onToggle: () => void
     onSelectDocument: (doc: FolderDocumentResponse, folder?: FolderResponse) => void
+    onDocumentDeleted?: (documentId: string) => void | Promise<void>
+    onVersionCreated?: () => void
     searchQuery?: string
     departmentMap?: Record<string, string>
     showPersonal?: boolean
@@ -25,6 +27,8 @@ interface CategoryProps {
     documents: FolderDocumentResponse[]
     selectedDocId: string | null
     onSelectDocument: (doc: FolderDocumentResponse) => void
+    onDocumentDeleted?: (documentId: string) => void | Promise<void>
+    onVersionCreated?: () => void
     searchQuery?: string
     departmentMap?: Record<string, string>
 }
@@ -37,6 +41,8 @@ function DocumentCategory({
     documents,
     selectedDocId,
     onSelectDocument,
+    onDocumentDeleted,
+    onVersionCreated,
     searchQuery = '',
     // departmentMap not used here directly; DocumentRow will receive departmentName via parent
     departmentMap = {},
@@ -67,6 +73,8 @@ function DocumentCategory({
                         onSelect={() => onSelectDocument(doc)}
                         depth={2}
                         departmentName={departmentMap[doc.department || doc.department_id || '']}
+                        onDocumentDeleted={onDocumentDeleted}
+                        onVersionCreated={onVersionCreated}
                     />
                 ))}
             </div>
@@ -79,6 +87,8 @@ export function OtherDocuments({
     selectedDocId,
     onToggle,
     onSelectDocument,
+    onDocumentDeleted,
+    onVersionCreated,
     searchQuery = '',
     departmentMap = {},
     showPersonal = true,
@@ -122,6 +132,8 @@ export function OtherDocuments({
                             documents={otherDocuments.departmentDocs}
                             selectedDocId={selectedDocId}
                             onSelectDocument={onSelectDocument}
+                            onDocumentDeleted={onDocumentDeleted}
+                            onVersionCreated={onVersionCreated}
                             searchQuery={searchQuery}
                             departmentMap={departmentMap}
                         />
@@ -136,6 +148,8 @@ export function OtherDocuments({
                             documents={otherDocuments.personalDocs}
                             selectedDocId={selectedDocId}
                             onSelectDocument={onSelectDocument}
+                            onDocumentDeleted={onDocumentDeleted}
+                            onVersionCreated={onVersionCreated}
                             searchQuery={searchQuery}
                             departmentMap={departmentMap}
                         />
@@ -150,6 +164,8 @@ export function OtherDocuments({
                             documents={otherDocuments.companyDocs}
                             selectedDocId={selectedDocId}
                             onSelectDocument={onSelectDocument}
+                            onDocumentDeleted={onDocumentDeleted}
+                            onVersionCreated={onVersionCreated}
                             searchQuery={searchQuery}
                             departmentMap={departmentMap}
                         />
