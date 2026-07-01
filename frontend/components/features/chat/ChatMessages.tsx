@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { formatRelativeTime, formatAbsoluteShort } from '@/lib/time'
-import { Zap, Star, Copy, Share2, ExternalLink } from 'lucide-react'
+import { Zap, Star, Copy, Share2, ExternalLink, LoaderCircle } from 'lucide-react'
 import { KnowledgeCard } from './KnowledgeCard'
 import { useFeedback } from '@/hooks/useFeedback'
 import { useToast } from '@/hooks/useToast'
@@ -83,6 +83,7 @@ export interface Message {
     factAttribution?: CitationAttribution[]
     timestamp?: Date
     isLoading?: boolean
+    processingStatus?: string
 }
 
 type Citation = NonNullable<Message['citations']>[number]
@@ -632,6 +633,20 @@ interface ChatMessagesProps {
     feedbackLoading?: Map<string, boolean>
 }
 
+const ProcessingStatus = ({ status }: { status?: string }) => (
+    <div className="not-prose rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+        <div className="flex items-center gap-2 text-sm font-medium">
+            <LoaderCircle size={16} className="shrink-0 animate-spin text-primary" />
+            <span className="leading-5">{status || 'Đang xử lý yêu cầu...'}</span>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+            <span className="h-1.5 rounded-full bg-primary" />
+            <span className="h-1.5 rounded-full bg-primary/50" />
+            <span className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-700" />
+        </div>
+    </div>
+)
+
 export const ChatMessages: React.FC<ChatMessagesProps> = ({
     messages = [],
     isLoading = false,
@@ -653,6 +668,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
     const bottomRef = useRef<HTMLDivElement | null>(null)
     const previousMessageCountRef = useRef(0)
     const previousLastMessageIdRef = useRef<string | null>(null)
+    const hasInlineLoadingMessage = messages.some((message) => message.role === 'assistant' && message.isLoading)
     const [activeCitation, setActiveCitation] = useState<{
         key: string
         citation: Citation
@@ -949,7 +965,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                 </div>
             )}
 
-            {messages.map((message, index) => (
+            {messages.map((message) => (
                 <div key={message.id} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} items-start gap-4`}>
                     {message.role === 'assistant' && (
                         <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shrink-0 shadow-lg shadow-primary/20">
@@ -972,18 +988,13 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                         ) : (
                             <div className="glass-nugget p-6 rounded-2xl shadow-sm space-y-4 bg-white/70 dark:bg-slate-800/70 backdrop-blur-sm border border-outline-variant/10 dark:border-slate-700/20">
                                 <div className="prose prose-sm dark:prose-invert max-w-none space-y-4">
-                                    {message.isLoading ? (
-                                        <div className="space-y-3">
-                                            {[1, 2, 3].map((i) => (
-                                                <div
-                                                    key={i}
-                                                    className="h-4 bg-slate-200 dark:bg-slate-700 rounded animate-pulse"
-                                                    style={{ width: `${Math.random() * 40 + 60}%` }}
-                                                />
-                                            ))}
-                                        </div>
+                                    {message.isLoading && !message.content ? (
+                                        <ProcessingStatus status={message.processingStatus} />
                                     ) : (
                                         <>
+                                            {message.processingStatus && (
+                                                <ProcessingStatus status={message.processingStatus} />
+                                            )}
                                             {parseMessageContentBlocks(message.content).map((block, blockIndex) => {
                                                 if (block.type === 'table') {
                                                     const maxColumns = Math.max(block.headers.length, ...block.rows.map((row) => row.length))
@@ -1186,7 +1197,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
                 </div>
             ))}
 
-            {isLoading && (
+            {isLoading && !hasInlineLoadingMessage && (
                 <div className="flex justify-start items-center gap-4 opacity-50">
                     <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-slate-700 animate-pulse" />
                     <div className="h-4 w-32 bg-slate-200 dark:bg-slate-700 rounded-full animate-pulse" />

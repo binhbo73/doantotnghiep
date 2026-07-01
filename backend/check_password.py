@@ -9,13 +9,12 @@ django.setup()
 
 from apps.users.models import Account
 
-admin = Account.objects.get(username='admin')
-print(f"Admin ID: {admin.id}")
-print(f"Admin password hash: {admin.password[:50]}...")
+username = os.environ.get("CHECK_PASSWORD_USERNAME", "admin").strip()
+candidate = os.environ.get("CHECK_PASSWORD_CANDIDATE", "")
+if not candidate or candidate.startswith("change-me-"):
+    raise RuntimeError("Set CHECK_PASSWORD_CANDIDATE before running this diagnostic")
 
-# Try different passwords
-test_passwords = ['admin123', 'Admin12345@', 'password', 'admin', '123456']
-for pwd in test_passwords:
-    result = admin.check_password(pwd)
-    sys.stdout.write(f"  - '{pwd}': {result}\n")
-    sys.stdout.flush()
+account = Account.objects.get(username=username)
+result = account.check_password(candidate)
+sys.stdout.write(f"Password matches account '{username}': {result}\n")
+sys.stdout.flush()

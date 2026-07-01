@@ -257,6 +257,8 @@ export const useChat = (options: UseChatOptions = {}) => {
                     role: 'assistant',
                     content: '',
                     timestamp: new Date(),
+                    isLoading: true,
+                    processingStatus: 'Đang gửi câu hỏi tới máy chủ...',
                 }
                 setMessages((prev) => [...prev, initialBotMsg])
 
@@ -298,18 +300,17 @@ export const useChat = (options: UseChatOptions = {}) => {
                     content,
                     (chunk) => {
                         fullContent += chunk
+                        updateBotMessage({ isLoading: false, processingStatus: undefined })
                         flushStreamToUI()
                     },
                     conversationId,
                     attachments?.documentIds,
                     attachments?.folderIds,
                     (status) => {
-                        // Hiển thị status (VD: "Đang tìm tài liệu...") nếu LLM chưa gửi token nào
-                        if (!fullContent) {
-                            setMessages((prev) =>
-                                prev.map(msg => msg.id === botMsgId ? { ...msg, content: `_⏳ ${status}_` } : msg)
-                            )
-                        }
+                        updateBotMessage({
+                            processingStatus: status,
+                            isLoading: !fullContent,
+                        })
                     },
                     (citations) => {
                         flushStreamToUI(true)
@@ -325,6 +326,7 @@ export const useChat = (options: UseChatOptions = {}) => {
                     ragMode,
                 )
                 flushStreamToUI(true)
+                updateBotMessage({ isLoading: false, processingStatus: undefined })
 
                 // 5. Cập nhật danh sách hội thoại
                 // KHÔNG gọi fetchMessages ở đây — backend có thể chưa kịp lưu message
@@ -338,6 +340,17 @@ export const useChat = (options: UseChatOptions = {}) => {
             } catch (error) {
                 logger.error('Streaming error', error)
                 showError('Lỗi kết nối máy chủ. Vui lòng thử lại.')
+                setMessages((prev) =>
+                    prev.map(msg => msg.role === 'assistant' && msg.isLoading
+                        ? {
+                            ...msg,
+                            isLoading: false,
+                            processingStatus: undefined,
+                            content: msg.content || 'Không thể nhận câu trả lời từ máy chủ. Vui lòng thử lại.',
+                        }
+                        : msg
+                    )
+                )
             } finally {
                 setIsLoading(false)
             }

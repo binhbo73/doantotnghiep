@@ -16,6 +16,7 @@ import logging
 import re
 import time
 import unicodedata
+import uuid
 from typing import List, Dict, Any, Optional, Tuple, Generator
 from django.apps import apps
 from django.conf import settings
@@ -1789,6 +1790,17 @@ Cách làm việc:
             f"avg_similarity={avg_sim:.3f}"
         )
 
+    def _create_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
+        """Create embeddings in a batch while preserving the old fallback path."""
+        if not texts:
+            return []
+        if hasattr(self.embedding, 'create_embeddings'):
+            try:
+                return self.embedding.create_embeddings(texts)
+            except Exception as exc:
+                logger.debug(f"[EMBEDDING_BATCH] fallback to single calls: {exc}")
+        return [self.embedding.create_embedding(text) for text in texts]
+
     def _verify_answer_grounding(self, answer_text, candidates, threshold=0.45):
         """Post-generation check: verify each claim has supporting evidence via embedding similarity."""
         import math
@@ -1802,8 +1814,8 @@ Cách làm việc:
         if not chunk_texts:
             return {'grounded': True, 'ungrounded_claims': [], 'avg_similarity': 1.0}
         try:
-            claim_embs = [self.embedding.create_embedding(cl) for cl in claims]
-            chunk_embs = [self.embedding.create_embedding(ct) for ct in chunk_texts]
+            claim_embs = self._create_embeddings_batch(claims)
+            chunk_embs = self._create_embeddings_batch(chunk_texts)
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning(f"[GROUNDING] Embedding failed: {e}")
@@ -1891,8 +1903,8 @@ Cách làm việc:
                 })
 
         try:
-            claim_embs = [self.embedding.create_embedding(cl) for cl in claims]
-            chunk_embs = [self.embedding.create_embedding(ct) for ct in chunk_texts]
+            claim_embs = self._create_embeddings_batch(claims)
+            chunk_embs = self._create_embeddings_batch(chunk_texts)
         except Exception as e:
             logger.warning(f"[GROUNDING] Embedding failed: {e}")
             grounded = not exact_unsupported and citation_coverage >= 0.65
@@ -3449,39 +3461,40 @@ Cách làm việc:
             logger.debug("[DOC_TITLE_SCOPE] failed to load document names: %s", exc)
             return []
 
-        matches: List[Tuple[int, str, str]] = []
+        matches: List[Tuple[int, int, str, str]] = []
         for row in rows:
             raw_names = [
                 row.get('original_name') or '',
                 row.get('filename') or '',
             ]
             for raw_name in raw_names:
-                name_norm = self._normalize_query_text(raw_name)
-                if not name_norm:
-                    continue
-                stem_norm = re.sub(
-                    r'\s+(pdf|docx?|xlsx?|pptx?|txt|md|csv)$',
-                    '',
-                    name_norm,
-                ).strip()
-                for candidate_name in {name_norm, stem_norm}:
-                    if not candidate_name:
+                for candidate_name in self._document_title_variants(raw_name):
+                    title_tokens = self._document_title_tokens(candidate_name)
+                    if len(title_tokens) < 3:
                         continue
-                    token_count = len(candidate_name.split())
-                    # Require a real title-like match, not a generic extension
-                    # or one-word fragment.
-                    if token_count < 3:
-                        continue
+                    score = 0
                     if candidate_name in query_norm:
-                        matches.append((len(candidate_name), str(row['id']), raw_name))
+                        score = 1000 + len(candidate_name)
+                    else:
+                        query_tokens = self._document_title_tokens(query_norm)
+                        overlap = len(set(title_tokens) & set(query_tokens))
+                        coverage = overlap / max(1, len(set(title_tokens)))
+                        if overlap >= 3 and coverage >= 0.72:
+                            score = int(coverage * 900) + overlap
+                    if score:
+                        matches.append((score, len(candidate_name), str(row['id']), raw_name))
                         break
 
         if not matches:
             return []
 
         matches.sort(reverse=True)
-        best_len = matches[0][0]
-        scoped_ids = [doc_id for length, doc_id, _name in matches if length == best_len]
+        best_score = matches[0][0]
+        scoped_ids = [
+            doc_id
+            for score, _length, doc_id, _name in matches
+            if score >= best_score - 25
+        ]
         unique_ids = list(dict.fromkeys(scoped_ids))
         logger.info(
             "[DOC_TITLE_SCOPE] query matched %s document(s): %s",
@@ -3489,6 +3502,92 @@ Cách làm việc:
             unique_ids,
         )
         return unique_ids
+
+    def _document_title_variants(self, raw_name: str) -> List[str]:
+        """Return normalized title variants for generic title scoping."""
+        name_norm = self._normalize_query_text(raw_name)
+        if not name_norm:
+            return []
+
+        stem_norm = re.sub(
+            r'\s+(pdf|docx?|xlsx?|pptx?|txt|md|csv)$',
+            '',
+            name_norm,
+        ).strip()
+
+        variants = {name_norm, stem_norm}
+        for value in list(variants):
+            without_numeric_prefix = re.sub(
+                r'^(?:\d+[\s._-]*)+(?:\s*[-._]\s*)?',
+                '',
+                value,
+            ).strip()
+            if without_numeric_prefix:
+                variants.add(without_numeric_prefix)
+
+        return [value for value in variants if len(value.split()) >= 3]
+
+    @staticmethod
+    def _document_title_tokens(text: str) -> List[str]:
+        stop_words = {
+            'pdf', 'doc', 'docx', 'xlsx', 'pptx', 'txt', 'md', 'csv',
+            'noi', 'dung', 'cua', 've', 'cho', 'toi', 'hay', 'xem',
+            'tai', 'lieu', 'file', 'van', 'ban',
+        }
+        return [
+            token
+            for token in re.findall(r'\w+', text or '')
+            if len(token) >= 3 and token not in stop_words and not token.isdigit()
+        ]
+
+    def _is_document_overview_query(self, query: str) -> bool:
+        """Detect generic requests for the overall contents of a named document."""
+        q = self._normalize_query_text(query)
+        if not q:
+            return False
+        overview_patterns = (
+            r'\b(noi dung|tom tat|tong quan|khai quat|noi dung chinh|y chinh)\b',
+            r'\b(tai lieu|file|van ban)\b.*\b(noi ve gi|viet ve gi|trinh bay gi|co noi dung gi)\b',
+            r'\b(cho biet|neu|trinh bay)\b.*\b(noi dung|tong quan|tom tat)\b',
+        )
+        return any(re.search(pattern, q) for pattern in overview_patterns)
+
+    def _retrieve_document_overview_candidates(
+        self,
+        document_ids: List[str],
+        max_chunks: int = 12,
+    ) -> List[Dict[str, Any]]:
+        """Fetch contiguous chunks for small named documents without semantic narrowing."""
+        if not document_ids:
+            return []
+        try:
+            DocumentChunk = apps.get_model('documents', 'DocumentChunk')
+            rows = (
+                DocumentChunk.objects.filter(
+                    document_id__in=document_ids,
+                    node_type='detail',
+                    is_current=True,
+                    is_deleted=False,
+                )
+                .order_by('document_id', 'chunk_index')
+                .values('id', 'document_id', 'content', 'page_number', 'chunk_index', 'metadata')[:max_chunks]
+            )
+            candidates = []
+            for offset, row in enumerate(rows):
+                candidates.append({
+                    'chunk_id': str(row['id']),
+                    'document_id': str(row['document_id']),
+                    'score': 2.1 - (offset * 0.02),
+                    'source': 'document_overview',
+                    'snippet': row.get('content') or '',
+                    'page': row.get('page_number'),
+                    'chunk_index': row.get('chunk_index'),
+                    'metadata': row.get('metadata') or {},
+                })
+            return candidates
+        except Exception as exc:
+            logger.warning("[DOCUMENT_OVERVIEW] failed: %s", exc)
+            return []
 
     def _expand_amendment_document_scope(self, document_ids: List[str]) -> List[str]:
         """Include ancestor documents that contribute inherited effective chunks."""
@@ -3635,6 +3734,7 @@ Cách làm việc:
         snippet_chars: int = 900,
         rag_mode: str = 'fast',
         current_page: int = None,
+        request_id: str = '',
     ) -> Tuple[str, List[Dict]]:
         """
         Thực hiện Hybrid RAG search (BM25 + Vector) → rerank → build context string.
@@ -3658,6 +3758,7 @@ Cách làm việc:
                 query,
                 resolved_doc_ids,
             )
+            matched_title_doc_ids = title_scoped_ids or []
             if title_scoped_ids:
                 resolved_doc_ids = self._expand_amendment_document_scope(title_scoped_ids)
                 explicit_doc_ids = title_scoped_ids
@@ -3679,15 +3780,25 @@ Cách làm việc:
 
             t_route_start = time.monotonic()
             exact_table_candidates = self._retrieve_exact_table_candidates(query, resolved_doc_ids)
+            document_overview_candidates: List[Dict[str, Any]] = []
+            if (
+                not exact_table_candidates
+                and matched_title_doc_ids
+                and self._is_document_overview_query(query)
+            ):
+                document_overview_candidates = self._retrieve_document_overview_candidates(
+                    matched_title_doc_ids,
+                    max_chunks=int(getattr(settings, 'RAG_DOCUMENT_OVERVIEW_MAX_CHUNKS', 12)),
+                )
             attribute_section_candidates: List[Dict[str, Any]] = []
-            if not exact_table_candidates:
+            if not exact_table_candidates and not document_overview_candidates:
                 attribute_section_candidates = self._retrieve_attribute_section_candidates(
                     query,
                     resolved_doc_ids,
                     max_chunks=int(getattr(settings, 'RAG_ATTRIBUTE_SECTION_MAX_CHUNKS', 16)),
                 )
             exact_heading_candidates: List[Dict[str, Any]] = []
-            if not exact_table_candidates and not attribute_section_candidates:
+            if not exact_table_candidates and not document_overview_candidates and not attribute_section_candidates:
                 exact_heading_candidates = self._retrieve_exact_heading_section_candidates(
                     query,
                     resolved_doc_ids,
@@ -3699,6 +3810,13 @@ Cách làm việc:
                     int(getattr(settings, 'RAG_EXACT_TABLE_SNIPPET_CHARS', 5000)),
                 )
                 candidates = exact_table_candidates
+                t_route_done = (time.monotonic() - t_route_start) * 1000
+            elif document_overview_candidates:
+                snippet_chars = max(
+                    snippet_chars,
+                    int(getattr(settings, 'RAG_DOCUMENT_OVERVIEW_SNIPPET_CHARS', 3000)),
+                )
+                candidates = document_overview_candidates
                 t_route_done = (time.monotonic() - t_route_start) * 1000
             elif attribute_section_candidates:
                 snippet_chars = max(
@@ -3759,10 +3877,18 @@ Cách làm việc:
             chunk_candidates_ctx = [c for c in candidates if c.get('source') != 'asset']
             if exact_table_candidates:
                 chunk_candidates_ctx = exact_table_candidates
+            elif document_overview_candidates:
+                chunk_candidates_ctx = document_overview_candidates
             elif attribute_section_candidates:
-                chunk_candidates_ctx = attribute_section_candidates
+                if self._is_list_style_query(query) or self._is_internal_document_query(query):
+                    chunk_candidates_ctx = self._expand_candidates_with_neighbors(attribute_section_candidates, query)
+                else:
+                    chunk_candidates_ctx = attribute_section_candidates
             elif exact_heading_candidates:
-                chunk_candidates_ctx = exact_heading_candidates
+                if self._is_list_style_query(query) or self._is_internal_document_query(query):
+                    chunk_candidates_ctx = self._expand_candidates_with_neighbors(exact_heading_candidates, query)
+                else:
+                    chunk_candidates_ctx = exact_heading_candidates
             elif not is_spreadsheet_retrieval:
                 chunk_candidates_ctx = self._expand_candidates_with_neighbors(chunk_candidates_ctx, query)
             chunk_candidates_ctx = self._expand_candidates_with_effective_revision_links(
@@ -3779,8 +3905,8 @@ Cách làm việc:
             if not is_spreadsheet_retrieval:
                 candidates = self._stitch_sequential_chunks(candidates)
             # Self-RAG: relevance check, re-retrieve if too few relevant
-            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_table_candidates or attribute_section_candidates or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
-            if not exact_table_candidates and not attribute_section_candidates and not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
+            relevance = {'passed': True} if (is_spreadsheet_retrieval or exact_table_candidates or document_overview_candidates or attribute_section_candidates or exact_heading_candidates) else self._self_rag_relevance_check(query, candidates)
+            if not exact_table_candidates and not document_overview_candidates and not attribute_section_candidates and not exact_heading_candidates and not is_spreadsheet_retrieval and not relevance['passed'] and len(resolved_doc_ids) > 0:
                 logger.info("[SELF_RAG] Re-retrieving with expanded strategy...")
                 try:
                     router = self._get_router()
@@ -4039,6 +4165,7 @@ Cách làm việc:
 
             logger.info(
                 f"[CONTEXT_PROFILE] "
+                f"request_id={request_id or '-'} "
                 f"query='{query[:40]}...' "
                 f"chunks={len(candidates)} docs={len(doc_name_map)} "
                 f"context_chars={context_chars_used}/{max_context_chars} "
@@ -4209,6 +4336,7 @@ Cách làm việc:
         """
         import time
         t0 = time.monotonic()
+        request_id = uuid.uuid4().hex[:12]
 
         try:
             # ── BƯỚC 1: Quản lý Conversation ─────────────────────────────────
@@ -4221,7 +4349,7 @@ Cách làm việc:
                 conversation = self.conversation_repo.create_conversation(account_id=user_id, title=query[:50])
 
             t1 = time.monotonic()
-            logger.debug(f"[ask_stream] step1 conversation ready: {(t1-t0)*1000:.1f}ms")
+            logger.debug(f"[ask_stream] request_id={request_id} step1 conversation ready: {(t1-t0)*1000:.1f}ms")
 
             # ── BƯỚC 2: Lưu tin nhắn User ─────────────────────────────────────
             self.message_repo.create_user_message(
@@ -4231,7 +4359,7 @@ Cách làm việc:
             )
 
             t2 = time.monotonic()
-            logger.debug(f"[ask_stream] step2 user_message saved: {(t2-t1)*1000:.1f}ms")
+            logger.debug(f"[ask_stream] request_id={request_id} step2 user_message saved: {(t2-t1)*1000:.1f}ms")
 
             # ── BƯỚC 3: Lấy lịch sử tin nhắn ─────────────────────────────────
             messages_for_llm = self.message_repo.get_message_history(conversation.id, as_dicts=True)
@@ -4240,7 +4368,8 @@ Cách làm việc:
 
             t3 = time.monotonic()
             logger.debug(
-                f"[ask_stream] step3 history loaded ({len(messages_for_llm)} msgs): {(t3-t2)*1000:.1f}ms"
+                f"[ask_stream] request_id={request_id} step3 history loaded "
+                f"({len(messages_for_llm)} msgs): {(t3-t2)*1000:.1f}ms"
             )
 
             # ── BƯỚC 4: Resolve document IDs & RAG Retrieval ──────────────────
@@ -4254,7 +4383,8 @@ Cách làm việc:
 
             t4 = time.monotonic()
             logger.debug(
-                f"[ask_stream] step4 resolved {len(resolved_ids)} doc IDs: {(t4-t3)*1000:.1f}ms"
+                f"[ask_stream] request_id={request_id} step4 resolved "
+                f"{len(resolved_ids)} doc IDs: {(t4-t3)*1000:.1f}ms"
             )
 
             context_str = ''
@@ -4262,7 +4392,12 @@ Cách làm việc:
             has_rag_scope = bool(resolved_ids)
 
             if has_rag_scope:
-                yield {'status': 'Đang tìm kiếm thông tin trong tài liệu...'}
+                scope_label = (
+                    f"{len(resolved_ids)} tài liệu"
+                    if len(resolved_ids) <= 20
+                    else f"{len(resolved_ids)} tài liệu"
+                )
+                yield {'status': f'Đang tìm kiếm trong {scope_label}...'}
                 context_str, rag_candidates = self._retrieve_context(
                     query=query,
                     resolved_doc_ids=resolved_ids,
@@ -4273,16 +4408,22 @@ Cách làm việc:
                     snippet_chars=self._get_context_snippet_chars(query),
                     rag_mode=rag_mode,
                     current_page=current_page,
+                    request_id=request_id,
                 )
                 t5 = time.monotonic()
                 logger.debug(
-                    f"[ask_stream] step5 RAG retrieved {len(rag_candidates)} chunks: {(t5-t4)*1000:.1f}ms"
+                    f"[ask_stream] request_id={request_id} step5 RAG retrieved "
+                    f"{len(rag_candidates)} chunks: {(t5-t4)*1000:.1f}ms"
                 )
                 logger.info(
                     f"[ask_stream] 🔍 RAG ACTIVE — {len(resolved_ids)} docs, "
                     f"{len(rag_candidates)} chunks retrieved"
                 )
-                yield {'status': 'Đang tổng hợp câu trả lời...'}
+                logger.info(
+                    f"[ask_stream] request_id={request_id} RAG_ACTIVE "
+                    f"docs={len(resolved_ids)} chunks={len(rag_candidates)}"
+                )
+                yield {'status': f'Đã chọn {len(rag_candidates)} đoạn liên quan, đang tổng hợp câu trả lời...'}
             else:
                 logger.debug("[ask_stream] ℹ️ RAG INACTIVE — không có tài liệu đính kèm, chat thuần")
                 yield {'status': 'Đang tạo câu trả lời...'}
@@ -4326,9 +4467,10 @@ Cách làm việc:
 
             t_pre_llm = time.monotonic()
             logger.debug(
-                f"[ask_stream] total pre-LLM overhead: {(t_pre_llm-t0)*1000:.1f}ms "
+                f"[ask_stream] request_id={request_id} total pre-LLM overhead: {(t_pre_llm-t0)*1000:.1f}ms "
                 f"(RAG={'ON' if use_rag else 'OFF'})"
             )
+            yield {'status': 'Đang stream câu trả lời từ mô hình...'}
 
             # ── BƯỚC 6: Stream LLM ────────────────────────────────────────────
             full_response = ''
@@ -4347,7 +4489,7 @@ Cách làm việc:
                 ):
                     if first_chunk:
                         logger.debug(
-                            f"[ask_stream] first chunk received: "
+                            f"[ask_stream] request_id={request_id} first chunk received: "
                             f"{(time.monotonic()-t_pre_llm)*1000:.1f}ms after LLM call"
                         )
                         first_chunk = False
@@ -4371,7 +4513,7 @@ Cách làm việc:
                             yield full_response
                         yield {'citations': citations}
                     except Exception as cite_err:
-                        logger.error(f"[ask_stream] Citation build failed: {cite_err}", exc_info=True)
+                        logger.error(f"[ask_stream] request_id={request_id} Citation build failed: {cite_err}", exc_info=True)
                         # Fallback: yield basic citations without advanced logic
                         fallback = []
                         for i, c in enumerate(rag_candidates[:5], 1):

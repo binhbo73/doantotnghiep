@@ -644,8 +644,8 @@ export function DocumentsPermissionsWorkspace({
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div>
                         <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">Quick ACL actions</p>
-                        <h3 className="mt-1 text-[14px] font-extrabold text-slate-900">Cấp quyền nhanh cho folder hoặc document</h3>
-                        <p className="mt-1 text-[11px] text-slate-500">Chọn đúng ngữ cảnh rồi dùng form bên dưới để add permission.</p>
+                        <h3 className="mt-1 text-[14px] font-extrabold text-slate-900">Cấp quyền nhanh cho thư mục hoặc tài liệu</h3>
+                        <p className="mt-1 text-[11px] text-slate-500">Chọn đúng ngữ cảnh rồi dùng form bên dưới để thêm quyền.</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                         <button

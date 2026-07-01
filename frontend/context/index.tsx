@@ -62,8 +62,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 const isAuth = authService.isAuthenticated()
                 console.log('🔍 [AuthProvider] Auth check on mount:', {
                     isAuthenticated: isAuth,
-                    hasToken: !!authService.getAuthToken(),
-                    tokenValue: authService.getAuthToken()?.substring(0, 30)
+                    hasToken: !!authService.getAuthToken()
                 })
 
                 if (isAuth) {

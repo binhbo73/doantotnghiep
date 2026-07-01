@@ -963,6 +963,7 @@ class QueryRouter:
                             'parent_summary_id': str(summary_node.id),
                             'parent_summary_score': summary_score,
                             'detail_score': detail_score,
+                            '_embedding': embedding,
                         }
             
             detail_ranked = sorted(

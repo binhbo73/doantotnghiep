@@ -14,7 +14,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rag_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     volumes:
@@ -37,7 +37,7 @@ services:
       - "${QDRANT_PORT:-6333}:6333"
       - "6334:6334"
     environment:
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY must be set in .env}
     volumes:
       - qdrant_data:/qdrant/storage
       - qdrant_snapshots:/qdrant/snapshots
@@ -57,12 +57,12 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rag_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      SECRET_KEY: ${SECRET_KEY:-django-insecure-change-me-in-production}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
       DEBUG: "true"
       ALLOWED_HOSTS: "*"
       APP_NAME: RAG System API
@@ -73,7 +73,7 @@ services:
       UPLOAD_DIR: /app/uploads
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY must be set in .env}
       QDRANT_PERSIST_DIRECTORY: /app/qdrant_data
       QDRANT_ASSET_VECTOR_SIZE: "1024"
       LLM_BASE_URL: http://llama-server:8080/v1
@@ -113,10 +113,20 @@ services:
       RAG_QDRANT_TEXT_PREVIEW_CHARS: "1000"
       RAG_RERANK_SNIPPET_CHARS: "1800"
       QUERY_REWRITE_ENABLED: "true"
-      QUERY_REWRITE_LLM_ENABLED: "true"
-      RAG_HYDE_ENABLED: "true"
-      RAG_QUERY_DECOMPOSITION_ENABLED: "true"
-      RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED: "true"
+      QUERY_REWRITE_LLM_ENABLED: "false"
+      RAG_HYDE_ENABLED: "false"
+      RAG_QUERY_DECOMPOSITION_ENABLED: "false"
+      RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED: "false"
+      RAG_LLM_MAX_TOKENS: "512"
+      RAG_LLM_MAX_TOKENS_LIST: "768"
+      RAG_RETRIEVAL_TOP_K: "3"
+      RAG_RETRIEVAL_TOP_K_LIST: "5"
+      RAG_CONTEXT_SNIPPET_CHARS: "1000"
+      RAG_CONTEXT_SNIPPET_CHARS_LIST: "1400"
+      RAG_CONTEXT_MAX_CHARS: "3500"
+      RAG_CONTEXT_MAX_CHARS_LIST: "4500"
+      RAG_CONTEXT_MAX_CHUNKS: "6"
+      RAG_CONTEXT_MAX_CHUNKS_LIST: "8"
       CELERY_TASK_TIME_LIMIT: "1800"
       CELERY_TASK_SOFT_TIME_LIMIT: "1500"
       RAG_RAPTOR_TASK_TIME_LIMIT: "1800"
@@ -131,7 +141,7 @@ services:
       ASSET_OCR_ENGINE: "tesseract"
       ASSET_OCR_LANGUAGES: "vie+eng"
       ASSET_PADDLEOCR_LANG: "vi"
-      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-true}
+      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-false}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
       ASSET_TASK_TIME_LIMIT: "1800"
@@ -143,15 +153,22 @@ services:
       VL_MODEL_TEMPERATURE: "0.3"
       LLM_CONTEXT_WINDOW: ${LLM_CONTEXT_WINDOW:-4096}
       # Email
-      EMAIL_BACKEND: django.core.mail.backends.smtp.EmailBackend
-      SMTP_HOST: smtp.gmail.com
-      SMTP_PORT: 587
-      SMTP_USE_TLS: "True"
-      SMTP_USERNAME: phuongbinh732004@gmail.com
-      SMTP_PASSWORD: fabe nefa wgdp benz
-      EMAIL_SENDER: phuongbinh732004@gmail.com
-      APP_URL: http://localhost:3000
-      FRONTEND_URL: http://localhost:3000
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-True}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_SENDER: ${EMAIL_SENDER:-noreply@localhost}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      # Local seed/diagnostic scripts (values remain in the git-ignored .env)
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_MANAGER_PASSWORD: ${SEED_MANAGER_PASSWORD:-}
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-}
+      SEED_EXTENDED_USER_PASSWORD: ${SEED_EXTENDED_USER_PASSWORD:-}
+      CHECK_PASSWORD_USERNAME: ${CHECK_PASSWORD_USERNAME:-admin}
+      CHECK_PASSWORD_CANDIDATE: ${CHECK_PASSWORD_CANDIDATE:-}
     volumes:
       - ./backend:/app
       - ./models:/app/models:ro
@@ -199,14 +216,15 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rag_system}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY must be set in .env}
       QDRANT_ASSET_VECTOR_SIZE: "1024"
       LLM_BASE_URL: http://llama-server:8080/v1
       LLM_MODEL: Qwen3-4B-Instruct-2507-Q4_K_M.gguf
@@ -234,10 +252,20 @@ services:
       RAG_QDRANT_TEXT_PREVIEW_CHARS: "1000"
       RAG_RERANK_SNIPPET_CHARS: "1800"
       QUERY_REWRITE_ENABLED: "true"
-      QUERY_REWRITE_LLM_ENABLED: "true"
-      RAG_HYDE_ENABLED: "true"
-      RAG_QUERY_DECOMPOSITION_ENABLED: "true"
-      RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED: "true"
+      QUERY_REWRITE_LLM_ENABLED: "false"
+      RAG_HYDE_ENABLED: "false"
+      RAG_QUERY_DECOMPOSITION_ENABLED: "false"
+      RAG_SELF_RAG_RELEVANCE_CHECK_ENABLED: "false"
+      RAG_LLM_MAX_TOKENS: "512"
+      RAG_LLM_MAX_TOKENS_LIST: "768"
+      RAG_RETRIEVAL_TOP_K: "3"
+      RAG_RETRIEVAL_TOP_K_LIST: "5"
+      RAG_CONTEXT_SNIPPET_CHARS: "1000"
+      RAG_CONTEXT_SNIPPET_CHARS_LIST: "1400"
+      RAG_CONTEXT_MAX_CHARS: "3500"
+      RAG_CONTEXT_MAX_CHARS_LIST: "4500"
+      RAG_CONTEXT_MAX_CHUNKS: "6"
+      RAG_CONTEXT_MAX_CHUNKS_LIST: "8"
       CELERY_ENABLED: "true"
       CELERY_TASK_TIME_LIMIT: "1800"
       CELERY_TASK_SOFT_TIME_LIMIT: "1500"
@@ -251,7 +279,7 @@ services:
       ASSET_OCR_ENGINE: "tesseract"
       ASSET_OCR_LANGUAGES: "vie+eng"
       ASSET_PADDLEOCR_LANG: "vi"
-      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-true}
+      ASSET_VL_CAPTION_ENABLED: ${ASSET_VL_CAPTION_ENABLED:-false}
       ASSET_EMBED_CAPTIONS: "true"
       ASSET_CAPTION_METHOD: "vlm"
       ASSET_TASK_TIME_LIMIT: "1800"
@@ -344,6 +372,7 @@ services:
 
   # 7. Llama.cpp Server - Vision Model (Qwen2.5-VL-3B)
   llama-vl-server:
+    profiles: ["vision"]
     image: ghcr.io/ggml-org/llama.cpp:full-cuda12-b7869
     container_name: rag_llama_vl_server
     restart: unless-stopped

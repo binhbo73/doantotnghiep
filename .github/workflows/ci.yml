@@ -36,6 +36,8 @@ jobs:
           CHROMA_HOST: "localhost"
           CHROMA_PORT: "8000"
           SECRET_KEY: "test_secret_key"
+          POSTGRES_PASSWORD: "test_postgres_password"
+          QDRANT_API_KEY: "test_qdrant_api_key"
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
           pytest test/test_basic.py

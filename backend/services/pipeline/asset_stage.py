@@ -50,7 +50,7 @@ class AssetPipelineStage(PipelineStage):
         self.ocr_engine = getattr(settings, 'ASSET_OCR_ENGINE', 'tesseract')
         self.ocr_languages = getattr(settings, 'ASSET_OCR_LANGUAGES', 'vie+eng')
         self.paddleocr_lang = getattr(settings, 'ASSET_PADDLEOCR_LANG', 'vi')
-        self.vl_caption_enabled = getattr(settings, 'ASSET_VL_CAPTION_ENABLED', True)
+        self.vl_caption_enabled = getattr(settings, 'ASSET_VL_CAPTION_ENABLED', False)
         self.embed_captions = getattr(settings, 'ASSET_EMBED_CAPTIONS', True)
         self.max_images = getattr(settings, 'ASSET_MAX_IMAGES_PER_DOC', 50)
         self.min_image_bytes = getattr(settings, 'ASSET_MIN_IMAGE_SIZE_BYTES', 1024)

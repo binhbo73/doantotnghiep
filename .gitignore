@@ -168,6 +168,9 @@ temp/
 *~
 
 # Archives & Backups
+backups/*
+!backups/.gitkeep
+*.dump
 *.zip
 *.tar.gz
 *.tar

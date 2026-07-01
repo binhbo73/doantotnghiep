@@ -84,7 +84,7 @@ class PasswordResetTokenRepository(BaseRepository):
         try:
             return self.model_class.objects.select_related('account').get(token=token)
         except self.model_class.DoesNotExist:
-            logger.warning(f"Invalid password reset token: {token[:10]}...")
+            logger.warning("Invalid password reset token")
             return None
         except Exception as e:
             logger.error(f"Error retrieving reset token: {str(e)}")

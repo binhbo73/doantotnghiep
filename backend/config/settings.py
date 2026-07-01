@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 import json
 from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -16,9 +17,21 @@ env_file = BASE_DIR / '.env.local'
 if not env_file.exists():
     env_file = BASE_DIR / '.env'
 load_dotenv(env_file)
+# Use the repository-level .env as a fallback for shared runtime secrets.
+# Existing process variables and backend-local overrides keep precedence.
+load_dotenv(BASE_DIR.parent / '.env')
+
+
+def required_env(name: str) -> str:
+    """Read a required secret/config value without an insecure source-code fallback."""
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise ImproperlyConfigured(f"Required environment variable {name} is not set")
+    return value
+
 
 # SECURITY
-SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-hy)noycf61-^32x=vy4@b7*vxo1+a++1d7%d%ff1^(ya&ekle)")
+SECRET_KEY = required_env("SECRET_KEY")
 DEBUG = os.environ.get("DEBUG", "True").lower() in ["true", "1", "yes"]
 
 ALLOWED_HOSTS_STR = os.environ.get("ALLOWED_HOSTS", '["*"]')
@@ -83,7 +96,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.environ.get("POSTGRES_DB", "rag_system"),
         "USER": os.environ.get("POSTGRES_USER", "postgres"),
-        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "postgres"),
+        "PASSWORD": required_env("POSTGRES_PASSWORD"),
         "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
         "PORT": os.environ.get("POSTGRES_PORT", "5433"),
         "CONN_MAX_AGE": int(os.environ.get("CONN_MAX_AGE", "0")),
@@ -228,7 +241,7 @@ LLAMA_RETRY_TIMES = int(os.environ.get("LLAMA_RETRY_TIMES", "3"))
 # ============================================================
 QDRANT_HOST = os.environ.get("QDRANT_HOST", "localhost")
 QDRANT_PORT = os.environ.get("QDRANT_PORT", "6333")
-QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "qdrant")
+QDRANT_API_KEY = required_env("QDRANT_API_KEY")
 QDRANT_URL = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
 QDRANT_COLLECTION = os.environ.get("QDRANT_COLLECTION", "documents")
 QDRANT_VECTOR_SIZE = EMBEDDING_DIMENSION
@@ -372,13 +385,13 @@ TEMP_UPLOAD_DIR = BASE_DIR / "uploads" / "temp"
 TEMP_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Email
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.environ.get("SMTP_PORT", "587"))
 EMAIL_USE_TLS = os.environ.get("SMTP_USE_TLS", "True").lower() in ["true", "1"]
-EMAIL_HOST_USER = os.environ.get("SMTP_USERNAME", "phuongbinh732004@gmail.com")
-EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "fabe nefa wgdp benz")
-DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER)
+EMAIL_HOST_USER = os.environ.get("SMTP_USERNAME", "")
+EMAIL_HOST_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_SENDER", EMAIL_HOST_USER or "noreply@localhost")
 
 FRONTEND_URL = os.environ.get("APP_URL", "http://localhost:3000")
 # RAG Pipeline Settings
@@ -432,7 +445,7 @@ ASSET_OCR_ENABLED = os.environ.get("ASSET_OCR_ENABLED", "true").lower() in ["tru
 ASSET_OCR_ENGINE = os.environ.get("ASSET_OCR_ENGINE", "tesseract")
 ASSET_OCR_LANGUAGES = os.environ.get("ASSET_OCR_LANGUAGES", "vie+eng")
 ASSET_PADDLEOCR_LANG = os.environ.get("ASSET_PADDLEOCR_LANG", "vi")
-ASSET_VL_CAPTION_ENABLED = os.environ.get("ASSET_VL_CAPTION_ENABLED", "true").lower() in ["true", "1", "yes"]
+ASSET_VL_CAPTION_ENABLED = os.environ.get("ASSET_VL_CAPTION_ENABLED", "false").lower() in ["true", "1", "yes"]
 ASSET_EMBED_CAPTIONS = os.environ.get("ASSET_EMBED_CAPTIONS", "true").lower() in ["true", "1", "yes"]
 ASSET_CAPTION_METHOD = os.environ.get("ASSET_CAPTION_METHOD", "vl-model")  # 'vl-model' or 'rule-based'
 ASSET_MAX_IMAGES_PER_DOC = int(os.environ.get("ASSET_MAX_IMAGES_PER_DOC", "50"))

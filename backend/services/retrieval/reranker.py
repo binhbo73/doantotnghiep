@@ -246,6 +246,24 @@ class Reranker:
         except Exception:
             return None
 
+    def _embed_texts(self, texts: List[str]) -> List[Optional[List[float]]]:
+        """Embed a batch of texts, falling back to per-text calls if needed."""
+        if not texts or not self.embedding_client:
+            return []
+        try:
+            if hasattr(self.embedding_client, 'create_embeddings'):
+                return self.embedding_client.create_embeddings(texts)
+        except Exception as e:
+            logger.debug(f"Batch candidate embedding failed, falling back to single calls: {e}")
+
+        embeddings: List[Optional[List[float]]] = []
+        for text in texts:
+            try:
+                embeddings.append(self.embedding_client.create_embedding(text))
+            except Exception:
+                embeddings.append(None)
+        return embeddings
+
     @staticmethod
     def _cosine_similarity(a: List[float], b: List[float]) -> float:
         if not a or not b or len(a) != len(b):
@@ -298,15 +316,21 @@ class Reranker:
         if len(candidates) <= 1:
             return candidates
 
-        # Ensure embeddings exist
-        for c in candidates:
-            if not c.get('_embedding') and self.embedding_client:
-                snippet = c.get('snippet') or ''
-                if snippet:
-                    try:
-                        c['_embedding'] = self.embedding_client.create_embedding(snippet)
-                    except Exception:
-                        pass
+        # Ensure embeddings exist. Use the batch API so semantic rerank keeps
+        # the same scoring behavior without paying one model call per chunk.
+        missing: List[tuple] = []
+        for index, c in enumerate(candidates):
+            if c.get('_embedding') or not self.embedding_client:
+                continue
+            snippet = c.get('snippet') or ''
+            if snippet:
+                missing.append((index, snippet))
+
+        if missing:
+            embeddings = self._embed_texts([snippet for _index, snippet in missing])
+            for (index, _snippet), embedding in zip(missing, embeddings):
+                if embedding:
+                    candidates[index]['_embedding'] = embedding
 
         kept: List[int] = []
         for i, c in enumerate(candidates):

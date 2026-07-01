@@ -53,7 +53,7 @@ export async function loginAndGetToken(username: string, password: string): Prom
         const refreshToken = data?.data?.refresh_token || data?.refresh_token
 
         if (!token) {
-            logger.error('No access_token in login response', { response: data })
+            logger.error('No access_token in login response')
             throw new Error('No token in login response')
         }
 
@@ -152,7 +152,7 @@ export async function refreshAccessToken(): Promise<string | null> {
             const newAccessToken = data?.data?.access || data?.access
 
             if (!newAccessToken) {
-                logger.error('No access token in refresh response', { response: data })
+                logger.error('No access token in refresh response')
                 return null
             }
 

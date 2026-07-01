@@ -126,8 +126,8 @@ export function setAuthData(data: LoginData) {
         const storedAccessToken = localStorage.getItem('auth_token')
         if (!storedAccessToken || storedAccessToken !== access_token) {
             console.error('❌ [setAuthData] Failed to store access_token in localStorage!', {
-                stored: storedAccessToken?.substring(0, 30),
-                original: access_token.substring(0, 30),
+                storedLength: storedAccessToken?.length,
+                originalLength: access_token.length,
                 match: storedAccessToken === access_token
             })
         } else {

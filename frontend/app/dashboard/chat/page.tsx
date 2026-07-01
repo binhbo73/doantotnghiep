@@ -153,6 +153,8 @@ export default function ChatPage() {
                         </button>
                     </div>
 
+                    
+
                     {/* Messages */}
                     <ChatMessages
                         messages={messages}

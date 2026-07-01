@@ -22,8 +22,6 @@ export function ApiExampleComponent() {
                 // Test 2: Check auth
                 if (authService.isAuthenticated()) {
                     console.log('✅ User is authenticated')
-                    const token = authService.getAuthToken()
-                    console.log('Token:', token?.substring(0, 20) + '...')
                 } else {
                     console.log('ℹ️  User is not authenticated')
                 }
